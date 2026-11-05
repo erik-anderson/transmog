@@ -1,5 +1,8 @@
 //! One debugger controller with acknowledged dock/window ownership transfer.
 use super::DesktopState;
+#[path = "debugger_workspace/presentation.rs"]
+mod presentation;
+use presentation::{DebuggerLayout, Presentation};
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::{collections::HashMap, sync::Mutex, time::Duration};
@@ -28,7 +31,11 @@ pub(super) fn install_shortcut(window: &tauri::WebviewWindow) {
 }
 
 #[derive(Default)]
-pub(super) struct DebuggerWindows(Mutex<HashMap<String, Entry>>, AtomicBool);
+pub(super) struct DebuggerWindows(
+    Mutex<HashMap<String, Entry>>,
+    AtomicBool,
+    Mutex<HashMap<String, Presentation>>,
+);
 struct Entry {
     paused: std::collections::BTreeSet<String>,
     application: Application,
@@ -44,8 +51,30 @@ pub(super) struct ReadyView {
     #[serde(flatten)]
     workspace: DebuggerWorkspaceView,
     view_state: serde_json::Value,
+    layout: DebuggerLayout,
 }
 impl DebuggerWindows {
+    pub fn forget_layout(&self, label: &str) {
+        self.2.lock().unwrap().remove(label);
+    }
+    fn placement(&self, owner: &str) -> String {
+        self.2
+            .lock()
+            .unwrap()
+            .get(owner)
+            .map_or_else(|| "window".into(), |value| value.placement.clone())
+    }
+    fn remember(&self, owner: &str, entry: &Entry) {
+        if entry.placement != "closed" {
+            self.2
+                .lock()
+                .unwrap()
+                .entry(owner.into())
+                .or_default()
+                .placement
+                .clone_from(&entry.placement);
+        }
+    }
     pub fn contains(&self, label: &str) -> bool {
         label.starts_with("debugger-") && self.application(label).is_some()
     }
@@ -72,6 +101,7 @@ impl DebuggerWindows {
                 .filter_map(|owner| entries.remove(&owner).map(|entry| (owner, entry)))
                 .collect();
             for (owner, entry) in &removed {
+                self.remember(owner, entry);
                 let _ = entry.application.close_debugger_workspace();
                 let _ = app.emit_to(owner.as_str(), "debugger-placement", "closed");
             }
@@ -101,6 +131,9 @@ impl DebuggerWindows {
         // itself calls release through the native window event handler.
         let mut entries = self.0.lock().unwrap();
         let previous = entries.remove(owner);
+        if let Some(entry) = &previous {
+            self.remember(owner, entry);
+        }
         application
             .close_debugger_workspace()
             .map_err(|error| error.message)?;
@@ -116,6 +149,7 @@ pub(super) fn command_allowed(command: &str) -> bool {
             | "open_debugger"
             | "toggle_debugger"
             | "debugger_seen"
+            | "debugger_layout"
             | "acknowledge_debugger"
             | "debugger_workspace"
             | "debugger_file"
@@ -147,7 +181,7 @@ pub(super) async fn ensure_ready(window: &tauri::WebviewWindow) -> Result<Applic
         .contains_key(&owner);
     if !exists {
         place_debugger(
-            "window".into(),
+            app.state::<DebuggerWindows>().placement(&owner),
             None,
             window.clone(),
             app.clone(),
@@ -200,7 +234,11 @@ pub(super) async fn toggle_debugger(
         .iter()
         .any(|(owner, entry)| owner.as_str() == window.label() || entry.surface == window.label());
     place_debugger(
-        if open { "closed" } else { "window" }.into(),
+        if open {
+            "closed".into()
+        } else {
+            app.state::<DebuggerWindows>().placement(window.label())
+        },
         None,
         window,
         app,
@@ -486,15 +524,50 @@ pub(super) async fn acknowledge_debugger(
     Ok(ReadyView {
         workspace,
         view_state,
+        layout: debugger_layout(None, window)?,
     })
 }
 #[tauri::command]
-pub(super) fn debugger_workspace(
-    window: tauri::WebviewWindow,
-) -> Result<DebuggerWorkspaceView, String> {
-    controlled(&window, true)?
+pub(super) fn debugger_workspace(window: tauri::WebviewWindow) -> Result<ReadyView, String> {
+    let workspace = controlled(&window, true)?
         .debugger_workspace()
-        .map_err(|e| e.message)
+        .map_err(|e| e.message)?;
+    Ok(ReadyView {
+        workspace,
+        view_state: serde_json::Value::Null,
+        layout: debugger_layout(None, window)?,
+    })
+}
+#[tauri::command]
+pub(super) fn debugger_layout(
+    layout: Option<DebuggerLayout>,
+    window: tauri::WebviewWindow,
+) -> Result<DebuggerLayout, String> {
+    controlled(&window, layout.is_none())?;
+    let windows = window.state::<DebuggerWindows>();
+    let owner = windows
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(_, entry)| {
+            entry.surface == window.label()
+                || entry
+                    .pending
+                    .as_ref()
+                    .is_some_and(|pending| pending.0 == window.label())
+        })
+        .map(|(owner, _)| owner.clone())
+        .ok_or("Debugger surface is unavailable")?;
+    let mut remembered = windows.2.lock().unwrap();
+    let presentation = remembered.entry(owner).or_default();
+    if let Some(layout) = layout {
+        if !layout.valid() {
+            return Err("Invalid debugger layout".into());
+        }
+        presentation.layout = layout;
+    }
+    Ok(presentation.layout.clone())
 }
 #[tauri::command]
 pub(super) fn debugger_file(

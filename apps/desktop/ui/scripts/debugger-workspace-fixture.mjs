@@ -10,6 +10,14 @@ export function installDebuggerWorkspaceFixture() {
       paused: null,
       epoch: 0,
       closed: false,
+      layout: {
+        sourcesSplit: 18,
+        inspectorSplit: 22,
+        consoleSplit: 70,
+        sourcesVisible: true,
+        inspectorVisible: true,
+        consoleVisible: true,
+      },
       policy: "none",
       actions: [],
       info: {
@@ -63,6 +71,7 @@ export function installDebuggerWorkspaceFixture() {
       targets: debug.open ? [debug.info, ...(debug.extraTargets ?? [])] : [],
       breakpoints: debug.points,
       viewState: debug.viewState ?? null,
+      layout: debug.layout,
     });
     const emit = (event, request = 0) =>
       debug.events.push({ session: debug.info.session, invocation: 1, request, event });
@@ -87,10 +96,23 @@ export function installDebuggerWorkspaceFixture() {
       debug.paused = debug.events.at(-1);
     };
     if (command === "debugger_seen") return debug.seen;
-    if (command === "toggle_debugger")
-      return globalThis.__debuggerWorkspaceCommand("place_debugger", {
+    if (command === "debugger_layout") {
+      if (args.layout) debug.layout = args.layout;
+      return structuredClone(debug.layout);
+    }
+    if (command === "toggle_debugger") {
+      await globalThis.__debuggerWorkspaceCommand("place_debugger", {
         placement: debug.open ? "closed" : "bottom",
       });
+      if (debug.holdToggleReply) {
+        debug.holdToggleReply = false;
+        await new Promise((done) => {
+          debug.finishToggle = done;
+        });
+        delete debug.finishToggle;
+      }
+      return;
+    }
     if (command === "open_debugger") {
       if (!debug.open)
         await globalThis.__debuggerWorkspaceCommand("place_debugger", { placement: "bottom" });
@@ -122,6 +144,13 @@ export function installDebuggerWorkspaceFixture() {
       return view();
     }
     if (command === "debugger_workspace") return view();
+    if (command === "debugger_file" && debug.holdSourceRead) {
+      debug.holdSourceRead = false;
+      await new Promise((done) => {
+        debug.releaseSourceRead = done;
+      });
+      delete debug.releaseSourceRead;
+    }
     if (command === "debugger_file")
       return args.id.endsWith(".js")
         ? "function run() {\n  const value = 42;\n  return value;\n}"

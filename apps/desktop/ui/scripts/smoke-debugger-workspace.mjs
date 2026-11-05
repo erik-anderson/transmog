@@ -171,7 +171,30 @@ export async function checkNativeDebuggerWorkspace({
     assert.equal((await invoke("debugger_workspace")).open, true);
     await dock.getByRole("button", { name: "Close debugger and continue execution" }).click();
   }
+  await invoke("place_debugger", { placement: "bottom" });
+  await dock.locator(".monaco-editor").waitFor();
+  await dock.getByRole("separator", { name: "Resize sources", exact: true }).press("ArrowRight");
+  await dock.getByRole("button", { name: "Dock", exact: true }).click();
+  await dock.getByRole("button", { name: "Dock to right", exact: true }).click();
+  await dock.getByRole("button", { name: "Hide console (Escape)", exact: true }).click();
+  await wait(
+    async () => (await invoke("debugger_layout")).consoleVisible === false,
+    "saved hidden console",
+  );
+  await page.keyboard.press("F12");
+  await dock.waitFor({ state: "detached" });
+  await page.keyboard.press("F12");
+  await dock.locator(".monaco-editor").waitFor();
+  await wait(
+    () => page.locator("app-shell").evaluate((element) => element.debuggerPlacement === "right"),
+    "remembered right dock",
+  );
+  assert.equal(await dock.evaluate((element) => element.debuggerSourcesSplit), "20");
+  assert.equal(await dock.evaluate((element) => element.debuggerConsoleVisible), false);
+  await dock.evaluate((element) => element.toggleConsole());
+  await dock.getByRole("button", { name: "Close debugger and continue execution" }).click();
   return {
+    layoutRestored: true,
     normalTrafficPauses: true,
     queuedTrafficWaits: true,
     pausedDockTransfer: true,

@@ -872,6 +872,15 @@ breakpoint; an outline is pending.
 The open workspace catches `debugger;` statements and attaches to newly created
 workers before initialization. Use **Dock** to move it beside Traffic or into a
 separate window. Moving preserves execution and the console draft.
+The dock position, pane sizes and visibility return when reopened during the app
+session. **View** shows or hides Sources, Inspector and Console; **Escape** toggles
+the Console. Drag pane dividers to resize them. Compact docks show code, Sources
+or Inspector one at a time so the editor remains usable.
+
+Use **Ctrl+P** to open a source and **Ctrl+Shift+F** to search saved and installed
+sources without activating them. Open files appear as tabs; **Alt+Left/Right**
+moves through source history. The Sources tree groups files into package folders
+and marks the selected file.
 
 Switch between mapped TypeScript and running JavaScript when a verified source
 map is available. The Console runs JavaScript in the selected paused frame, or

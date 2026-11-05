@@ -1,6 +1,15 @@
 import "../pane-divider/pane-divider.js";
 import { debuggerToggleKey } from "./shortcuts.js";
 import { evidence } from "./models.js";
+import {
+  sourceKey,
+  sourceTree,
+  matchingFiles,
+  searchSources,
+  type DebuggerFile as File,
+  type SourceNode,
+  type SourceResult,
+} from "./navigation.js";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { PropertyTree, type PropertyRow } from "./properties.js";
 import type {
@@ -24,16 +33,13 @@ import type {
 import type { DeveloperEvidence } from "../script-diagnostics/models.js";
 import "../script-diagnostics/script-diagnostics.js";
 import { describeError } from "../utilities.js";
-interface File {
-  id: string;
-  group: string;
-  package: string;
-  path: string;
-  artifact: string;
-  source: string;
-  language: string;
-  state: string;
-  counterpart: string | null;
+interface DebuggerLayout {
+  sourcesSplit: number;
+  inspectorSplit: number;
+  consoleSplit: number;
+  sourcesVisible: boolean;
+  inspectorVisible: boolean;
+  consoleVisible: boolean;
 }
 interface Point {
   artifact?: string;
@@ -50,6 +56,7 @@ interface View {
   targets: DebugSessionInfo[];
   breakpoints: Point[];
   viewState?: SavedView;
+  layout?: DebuggerLayout;
 }
 interface SavedView {
   groups?: Array<[string, boolean]>;
@@ -65,17 +72,45 @@ interface SavedView {
   input: string;
   console: Array<{ id: number; input: string; output: string; thrown: boolean }>;
   states: Array<[string, Monaco.editor.ICodeEditorViewState | null]>;
-}
-interface SourceGroup {
-  open: boolean;
-  key: string;
-  label: string;
-  files: File[];
+  tabs?: string[];
+  history?: string[];
+  historyIndex?: number;
 }
 export class DebuggerWorkspace extends WebUIElement {
   @attr({ attribute: "data-theme" }) theme = "system";
   @attr({ mode: "boolean" }) standalone = false;
-  @observable debuggerSources: SourceGroup[] = [];
+  @observable debuggerSources: SourceNode[] = [];
+  @observable debuggerTabs: Array<{
+    key: string;
+    file: File;
+    label: string;
+    selected: boolean;
+    tabIndex: number;
+  }> = [];
+  @observable debuggerCanBack = false;
+  @observable debuggerCanForward = false;
+  @observable debuggerSourcesVisible = true;
+  @observable debuggerInspectorVisible = true;
+  @observable debuggerConsoleVisible = true;
+  @observable debuggerSourcesSplit = "18";
+  @observable debuggerSourcesShare = "18%";
+  @observable debuggerInspectorSplit = "78";
+  @observable debuggerInspectorShare = "22%";
+  @observable debuggerCompact = false;
+  @observable debuggerCompactPane = "source";
+  @observable debuggerNavigationTitle = "Open source";
+  @observable debuggerNavigationQuery = "";
+  @observable debuggerNavigationStatus = "";
+  @observable debuggerNavigationResults: SourceResult[] = [];
+  navigationDialog!: HTMLDialogElement;
+  navigationInput!: HTMLInputElement;
+  consolePrompt!: HTMLTextAreaElement;
+  private navigationSearch = false;
+  private navigationGeneration = 0;
+  private navigationTimer = 0;
+  private history: string[] = [];
+  private historyIndex = -1;
+  private resizeObserver: ResizeObserver | null = null;
   @observable debuggerTargets: DebugSessionInfo[] = [];
   @observable debuggerTarget = "";
   @observable debuggerSourceLabel = "Select a source";
@@ -108,10 +143,267 @@ export class DebuggerWorkspace extends WebUIElement {
   @observable debuggerConditionSource = "";
   @observable debuggerConsoleSplit = "70";
   @observable debuggerConsoleShare = "30%";
-  resizeConsole(event: CustomEvent<{ value: number }>): void {
-    const value = Math.max(45, Math.min(80, event.detail.value));
+  resizeConsole(event: CustomEvent<{ value: number; committed?: boolean }>): void {
+    const value = Math.max(45, Math.min(85, event.detail.value));
     this.debuggerConsoleSplit = String(value);
     this.debuggerConsoleShare = `${100 - value}%`;
+    if (event.detail.committed !== false) {
+      void this.saveLayout();
+    }
+  }
+  private applyLayout(layout?: DebuggerLayout): void {
+    if (!layout) {
+      return;
+    }
+    this.debuggerSourcesSplit = String(layout.sourcesSplit);
+    this.debuggerSourcesShare = `${layout.sourcesSplit}%`;
+    this.debuggerInspectorSplit = String(100 - layout.inspectorSplit);
+    this.debuggerInspectorShare = `${layout.inspectorSplit}%`;
+    this.debuggerConsoleSplit = String(layout.consoleSplit);
+    this.debuggerConsoleShare = `${100 - layout.consoleSplit}%`;
+    this.debuggerSourcesVisible = layout.sourcesVisible;
+    this.debuggerInspectorVisible = layout.inspectorVisible;
+    this.debuggerConsoleVisible = layout.consoleVisible;
+  }
+  private async saveLayout(): Promise<void> {
+    try {
+      await invoke("debugger_layout", {
+        layout: {
+          sourcesSplit: Number(this.debuggerSourcesSplit),
+          inspectorSplit: 100 - Number(this.debuggerInspectorSplit),
+          consoleSplit: Number(this.debuggerConsoleSplit),
+          sourcesVisible: this.debuggerSourcesVisible,
+          inspectorVisible: this.debuggerInspectorVisible,
+          consoleVisible: this.debuggerConsoleVisible,
+        },
+      });
+    } catch (error) {
+      if (this.isConnected) {
+        this.debuggerError = describeError(error);
+      }
+    }
+  }
+  resizeSidebar(side: string, event: CustomEvent<{ value: number; committed?: boolean }>): void {
+    if (side === "sources") {
+      const value = Math.max(15, Math.min(40, event.detail.value));
+      this.debuggerSourcesSplit = String(value);
+      this.debuggerSourcesShare = `${value}%`;
+    } else {
+      const value = Math.max(60, Math.min(85, event.detail.value));
+      this.debuggerInspectorSplit = String(value);
+      this.debuggerInspectorShare = `${100 - value}%`;
+    }
+    if (event.detail.committed !== false) {
+      void this.saveLayout();
+    }
+  }
+  toggleSidebar(side: string): void {
+    if (this.debuggerCompact) {
+      this.debuggerCompactPane = this.debuggerCompactPane === side ? "source" : side;
+    } else if (side === "sources") {
+      this.debuggerSourcesVisible = !this.debuggerSourcesVisible;
+    } else {
+      this.debuggerInspectorVisible = !this.debuggerInspectorVisible;
+    }
+    this.$flushUpdates();
+    if (this.debuggerCompactPane === "source") {
+      this.editor?.focus();
+    }
+    void this.saveLayout();
+  }
+  showCode(): void {
+    this.debuggerCompactPane = "source";
+  }
+  toggleConsole(): void {
+    this.debuggerConsoleVisible = !this.debuggerConsoleVisible;
+    this.$flushUpdates();
+    if (this.debuggerConsoleVisible) {
+      this.consolePrompt.focus();
+    } else {
+      this.editor?.focus();
+    }
+    void this.saveLayout();
+  }
+  private updateNavigation(): void {
+    const selected = this.selected ? sourceKey(this.selected) : "";
+    this.debuggerSources = sourceTree(this.files, this.sourceGroups, selected);
+    const tabs = this.debuggerTabs.map((tab) => ({
+      ...tab,
+      file: this.files.find((file) => sourceKey(file) === tab.key) ?? tab.file,
+    }));
+    this.debuggerTabs = tabs.map((tab) => {
+      const name = tab.file.path.split("/").at(-1)!;
+      const duplicates = tabs.filter((other) => other.file.path.split("/").at(-1) === name);
+      const samePath = duplicates.filter(
+        (other) => other.file.package === tab.file.package && other.file.path === tab.file.path,
+      );
+      return {
+        ...tab,
+        label:
+          duplicates.length > 1
+            ? `${tab.file.package}/${tab.file.path}${samePath.length > 1 ? ` · ${tab.file.state}` : ""}`
+            : name,
+        selected: tab.key === selected,
+        tabIndex: tab.key === selected ? 0 : -1,
+      };
+    });
+    this.debuggerCanBack = this.historyIndex > 0;
+    this.debuggerCanForward = this.historyIndex < this.history.length - 1;
+  }
+  async navigateHistory(direction: number): Promise<void> {
+    let index = this.historyIndex + direction;
+    while (index >= 0 && index < this.history.length) {
+      const file = this.files.find((file) => sourceKey(file) === this.history[index]);
+      if (file) {
+        this.historyIndex = index;
+        await this.openFile(file, true, false);
+        return;
+      }
+      index += direction;
+    }
+  }
+  async closeTab(key: string): Promise<void> {
+    const index = this.debuggerTabs.findIndex((tab) => tab.key === key);
+    this.debuggerTabs = this.debuggerTabs.filter((tab) => tab.key !== key);
+    if (this.selected && sourceKey(this.selected) === key) {
+      const next = this.debuggerTabs[Math.max(0, index - 1)];
+      if (next) {
+        await this.openFile(next.file);
+      } else {
+        this.selected = null;
+        this.editor?.setModel(null);
+        this.model?.dispose();
+        this.model = null;
+        this.debuggerSourceLabel = "Select a source";
+        this.debuggerCanSwitch = false;
+        this.updateNavigation();
+      }
+    }
+    this.$flushUpdates();
+    const selected = this.debuggerTabs.find((tab) => tab.selected);
+    if (selected) {
+      this.shadowRoot?.getElementById(`source-tab-${selected.key}`)?.focus();
+    } else {
+      this.editor?.focus();
+    }
+  }
+  async tabsKey(event: KeyboardEvent): Promise<void> {
+    if (
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey ||
+      !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)
+    ) {
+      return;
+    }
+    const tabs = this.debuggerTabs;
+    if (!tabs.length) {
+      return;
+    }
+    event.preventDefault();
+    const current = tabs.findIndex((tab) => tab.selected);
+    const index =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? tabs.length - 1
+          : (current + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+    const tab = tabs[index]!;
+    await this.openFile(tab.file);
+    this.shadowRoot?.getElementById(`source-tab-${tab.key}`)?.focus();
+  }
+  openNavigation(search = false): void {
+    this.navigationSearch = search;
+    this.debuggerNavigationTitle = search ? "Search sources" : "Open source";
+    this.debuggerNavigationQuery = "";
+    this.debuggerNavigationStatus = search
+      ? "Search saved and installed sources without activating them."
+      : "";
+    this.debuggerNavigationResults = search ? [] : matchingFiles(this.files, "");
+    this.navigationDialog.showModal();
+    this.navigationInput.focus();
+  }
+  closeNavigation(): void {
+    this.navigationGeneration++;
+    window.clearTimeout(this.navigationTimer);
+    this.navigationDialog.close();
+  }
+  navigationCanceled(): void {
+    this.navigationGeneration++;
+    window.clearTimeout(this.navigationTimer);
+  }
+  navigationInputChanged(event: Event): void {
+    this.debuggerNavigationQuery = (event.target as HTMLInputElement).value;
+    window.clearTimeout(this.navigationTimer);
+    const generation = ++this.navigationGeneration;
+    if (!this.navigationSearch) {
+      this.debuggerNavigationResults = matchingFiles(this.files, this.debuggerNavigationQuery);
+      return;
+    }
+    this.debuggerNavigationResults = [];
+    this.debuggerNavigationStatus = this.debuggerNavigationQuery.trim()
+      ? "Searching…"
+      : "Enter text to search sources.";
+    if (!this.debuggerNavigationQuery.trim()) {
+      return;
+    }
+    this.navigationTimer = window.setTimeout(() => {
+      void this.searchCatalog(generation);
+    }, 150);
+  }
+  private async searchCatalog(generation: number): Promise<void> {
+    const current = (): boolean =>
+      this.isConnected && this.navigationDialog.open && generation === this.navigationGeneration;
+    const found = await searchSources(
+      this.files,
+      this.debuggerNavigationQuery,
+      (file) => invoke<string>("debugger_file", { id: file.id, artifact: file.artifact }),
+      current,
+    );
+    if (!current()) {
+      return;
+    }
+    this.debuggerNavigationResults = found.results;
+    this.debuggerNavigationStatus = `${found.results.length} results${found.limited ? " · some sources or matches omitted" : ""}`;
+  }
+  navigationKey(event: KeyboardEvent): void {
+    if (event.isComposing) {
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      const result = this.debuggerNavigationResults.find((result) => result.selected);
+      if (result) {
+        void this.openNavigationResult(result);
+      }
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const results = this.debuggerNavigationResults;
+      const index = results.findIndex((result) => result.selected);
+      const next = (index + (event.key === "ArrowDown" ? 1 : -1) + results.length) % results.length;
+      this.debuggerNavigationResults = results.map((result, index) => ({
+        ...result,
+        selected: index === next,
+      }));
+      this.$flushUpdates();
+      const selected = this.debuggerNavigationResults[next];
+      if (selected) {
+        this.shadowRoot
+          ?.getElementById(`source-result-${selected.key}`)
+          ?.scrollIntoView({ block: "nearest" });
+      }
+    }
+  }
+  async openNavigationResult(result: SourceResult): Promise<void> {
+    this.closeNavigation();
+    await this.openFile(result.file);
+    if (this.isSelected(result.file)) {
+      if (result.line) {
+        this.editor?.setPosition({ lineNumber: result.line, column: 1 });
+        this.editor?.revealLineInCenter(result.line);
+      }
+      this.editor?.focus();
+    }
   }
   diagnostics?: ScriptDiagnostics;
   consoleOutput!: HTMLElement;
@@ -141,7 +433,7 @@ export class DebuggerWorkspace extends WebUIElement {
   private decorations: Monaco.editor.IEditorDecorationsCollection | null = null;
   private files: File[] = [];
   private sourceGroups = new Map<string, boolean>();
-  sourceGroupToggled(group: SourceGroup, event: Event): void {
+  sourceGroupToggled(group: { key: string }, event: Event): void {
     this.sourceGroups.set(group.key, (event.target as HTMLDetailsElement).open);
   }
   private points: Point[] = [];
@@ -178,6 +470,10 @@ export class DebuggerWorkspace extends WebUIElement {
       this.debuggerError = describeError(error);
     });
     document.addEventListener("keydown", this.toggleShortcut, true);
+    this.resizeObserver = new ResizeObserver(([entry]) => {
+      this.debuggerCompact = (entry?.contentRect.width ?? 1000) < 620;
+    });
+    this.resizeObserver.observe(this);
     this.addEventListener("keydown", this.shortcutListener, true);
     void this.start();
   }
@@ -189,6 +485,7 @@ export class DebuggerWorkspace extends WebUIElement {
         return;
       }
       this.apply(view);
+      this.applyLayout(view.layout);
       const { monaco } = await loadMonaco();
       await waitForStyles(this.sourceStyles);
       if (!this.isConnected || version !== this.generation) {
@@ -262,6 +559,14 @@ export class DebuggerWorkspace extends WebUIElement {
         this.debuggerConsole = saved.console;
         this.serial = Math.max(0, ...saved.console.map((row) => row.id));
         this.states = new Map(saved.states);
+        this.history = saved.history ?? [];
+        this.historyIndex = saved.historyIndex ?? this.history.length - 1;
+        this.debuggerTabs = (saved.tabs ?? []).flatMap((key) => {
+          const file = this.files.find((file) => sourceKey(file) === key);
+          return file
+            ? [{ key, file, label: file.path.split("/").at(-1)!, selected: false, tabIndex: -1 }]
+            : [];
+        });
         this.$flushUpdates();
         if (saved.diagnostics) {
           this.diagnostics?.restoreView(saved.diagnostics);
@@ -306,28 +611,7 @@ export class DebuggerWorkspace extends WebUIElement {
     );
     this.files = view.files;
     this.points = view.breakpoints;
-    const groups = new Map<string, SourceGroup>();
-    for (const file of this.files) {
-      const key = `${file.group}/${file.package}`;
-      let group = groups.get(key);
-      if (!group) {
-        group = { key, label: `${file.group} · ${file.package}`, files: [], open: false };
-        groups.set(key, group);
-      }
-      group.files.push(file);
-    }
-    this.debuggerSources = [...groups.values()]
-      .map((group) => ({
-        ...group,
-        open:
-          this.sourceGroups.get(group.key) ??
-          group.files.some((file) => file.state === "Loaded" || file.group === "User scripts"),
-      }))
-      .sort(
-        (left, right) =>
-          Number(right.label.startsWith("User scripts")) -
-            Number(left.label.startsWith("User scripts")) || left.label.localeCompare(right.label),
-      );
+    this.updateNavigation();
     this.debuggerTargets = view.targets;
     if (!view.targets.some((t) => t.session === this.debuggerTarget)) {
       this.debuggerTarget = view.targets[0]?.session ?? "";
@@ -512,6 +796,7 @@ export class DebuggerWorkspace extends WebUIElement {
       }
       await this.loadPositions();
       this.renderPoints();
+      this.$flushUpdates();
       this.debuggerClosed = this.views.get(this.debuggerTarget)?.stream.closed ?? true;
       const outcome = this.views.get(this.debuggerTarget)?.outcome;
       this.debuggerSummary = outcome?.summary ?? "";
@@ -558,7 +843,7 @@ export class DebuggerWorkspace extends WebUIElement {
   private isSelected(file: File): boolean {
     return this.selected?.id === file.id && this.selected.artifact === file.artifact;
   }
-  async openFile(file: File, remember = true): Promise<void> {
+  async openFile(file: File, remember = true, record = true): Promise<void> {
     const generation = ++this.sourceGeneration;
     try {
       const text = await invoke<string>("debugger_file", { id: file.id, artifact: file.artifact });
@@ -581,6 +866,19 @@ export class DebuggerWorkspace extends WebUIElement {
       this.editor.setModel(this.model);
       previous?.dispose();
       this.selected = file;
+      const key = sourceKey(file);
+      if (record && this.history[this.historyIndex] !== key) {
+        this.history = [...this.history.slice(0, this.historyIndex + 1), key].slice(-64);
+        this.historyIndex = this.history.length - 1;
+      }
+      if (!this.debuggerTabs.some((tab) => tab.key === key)) {
+        this.debuggerTabs = [
+          ...this.debuggerTabs.slice(-15),
+          { key, file, label: file.path.split("/").at(-1)!, selected: true, tabIndex: 0 },
+        ];
+      }
+      this.debuggerCompactPane = "source";
+      this.updateNavigation();
       this.debuggerError = "";
       if (remember) {
         this.preferredRepresentation = file.language;
@@ -596,6 +894,10 @@ export class DebuggerWorkspace extends WebUIElement {
       }
       await this.loadPositions();
       this.renderPoints();
+      this.$flushUpdates();
+      this.shadowRoot
+        ?.getElementById(`source-tab-${key}`)
+        ?.scrollIntoView({ block: "nearest", inline: "nearest" });
     } catch (error) {
       this.debuggerError = describeError(error);
     }
@@ -1013,6 +1315,9 @@ export class DebuggerWorkspace extends WebUIElement {
         input: this.debuggerInput,
         console: this.debuggerConsole,
         states: [...this.states].slice(-64),
+        tabs: this.debuggerTabs.map((tab) => tab.key),
+        history: this.history,
+        historyIndex: this.historyIndex,
         diagnostics: this.diagnostics?.saveView(),
         scroll: this.consoleOutput.scrollTop,
       };
@@ -1023,7 +1328,41 @@ export class DebuggerWorkspace extends WebUIElement {
   }
   keyboard(event: KeyboardEvent): void {
     if (
+      !event.defaultPrevented &&
+      !event.isComposing &&
+      !this.conditionDialog.open &&
+      !this.navigationDialog.open
+    ) {
+      if (
+        event.ctrlKey &&
+        !event.altKey &&
+        !event.metaKey &&
+        (event.key.toLowerCase() === "p" || (event.shiftKey && event.key.toLowerCase() === "f"))
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        this.openNavigation(event.shiftKey);
+        return;
+      }
+      if (
+        event.altKey &&
+        !event.ctrlKey &&
+        (event.key === "ArrowLeft" || event.key === "ArrowRight")
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        void this.navigateHistory(event.key === "ArrowLeft" ? -1 : 1);
+        return;
+      }
+      if (event.key === "Escape" && event.eventPhase !== Event.CAPTURING_PHASE) {
+        event.preventDefault();
+        this.toggleConsole();
+        return;
+      }
+    }
+    if (
       this.conditionDialog.open ||
+      this.navigationDialog.open ||
       event.defaultPrevented ||
       event.isComposing ||
       event.repeat ||
@@ -1126,6 +1465,9 @@ export class DebuggerWorkspace extends WebUIElement {
     this.decorations?.set(decorations);
   }
   disconnectedCallback(): void {
+    this.resizeObserver?.disconnect();
+    window.clearTimeout(this.navigationTimer);
+    this.navigationGeneration++;
     document.removeEventListener("keydown", this.toggleShortcut, true);
     this.removeEventListener("keydown", this.shortcutListener, true);
     this.focusUnlisten?.();

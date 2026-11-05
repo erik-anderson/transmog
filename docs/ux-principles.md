@@ -164,6 +164,9 @@ when changing the experience.
   lifetimes, and unresolved statements are cleaned up after verified source changes.
   Keep debugger discovery beside Scripts and Extensions; reveal the top shortcut
   after its first open in the current session. F12 toggles it, including from editors.
+  Preserve debugger placement and pane choices through close/reopen. Keep source
+  navigation searchable without activating workers, and let compact docks switch
+  panes instead of squeezing the editor between fixed sidebars.
 - Keep inspection and repair available when a saved configuration becomes invalid.
   Preserve authored choices and explain recovery instead of silently substituting
   a configuration with different trust, privacy or authorization consequences.

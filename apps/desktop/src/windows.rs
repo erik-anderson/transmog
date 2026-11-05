@@ -2746,6 +2746,7 @@ pub fn run() {
                 debugger_workspace::debugger_seen,
                 debugger_workspace::acknowledge_debugger,
                 debugger_workspace::debugger_workspace,
+                debugger_workspace::debugger_layout,
                 debugger_workspace::debugger_file,
             debugger_workspace::debugger_breakpoint_positions,
                 debugger_workspace::workspace_breakpoints,
@@ -2921,6 +2922,7 @@ pub fn run() {
         .on_window_event(move |window, event| {
             if matches!(event,tauri::WindowEvent::Destroyed) {
                 window.state::<debugger_workspace::DebuggerWindows>().release(window.label(),window.app_handle());
+                window.state::<debugger_workspace::DebuggerWindows>().forget_layout(window.label());
             }
             if matches!(event, tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Focused(_)) {
                 let state = window.state::<DesktopState>();

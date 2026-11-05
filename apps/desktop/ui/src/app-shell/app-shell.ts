@@ -67,6 +67,7 @@ export class AppShell extends WebUIElement {
   private debuggerNativeShortcut?: UnlistenFn;
   private debuggerAccessError?: UnlistenFn;
   private debuggerToggling = false;
+  private debuggerTogglePending = false;
   debuggerDock!: DebuggerWorkspace;
   async openDebugger(): Promise<void> {
     try {
@@ -80,14 +81,20 @@ export class AppShell extends WebUIElement {
     this.debuggerShare = `${event.detail.value}%`;
   }
   private async toggleDebugger(): Promise<void> {
+    this.debuggerTogglePending = !this.debuggerTogglePending;
     if (this.debuggerToggling) {
       return;
     }
     this.debuggerToggling = true;
     try {
-      await invoke("toggle_debugger");
-    } catch (error) {
-      this.diagnosticText = describeError(error);
+      while (this.debuggerTogglePending && this.isConnected) {
+        this.debuggerTogglePending = false;
+        try {
+          await invoke("toggle_debugger");
+        } catch (error) {
+          this.diagnosticText = describeError(error);
+        }
+      }
     } finally {
       this.debuggerToggling = false;
     }

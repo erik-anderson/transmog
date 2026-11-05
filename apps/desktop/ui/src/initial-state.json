@@ -2200,5 +2200,21 @@
   "navigateSources": false,
   "debuggerButtonLabel": "Debugger",
   "debuggerConsoleSplit": "70",
-  "debuggerConsoleShare": "30%"
+  "debuggerConsoleShare": "30%",
+  "debuggerTabs": [],
+  "debuggerCanBack": false,
+  "debuggerCanForward": false,
+  "debuggerSourcesVisible": true,
+  "debuggerInspectorVisible": true,
+  "debuggerConsoleVisible": true,
+  "debuggerSourcesSplit": "18",
+  "debuggerSourcesShare": "18%",
+  "debuggerInspectorSplit": "78",
+  "debuggerInspectorShare": "22%",
+  "debuggerCompact": false,
+  "debuggerCompactPane": "source",
+  "debuggerNavigationTitle": "Open source",
+  "debuggerNavigationQuery": "",
+  "debuggerNavigationStatus": "",
+  "debuggerNavigationResults": []
 }

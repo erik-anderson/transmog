@@ -51,19 +51,23 @@ async function continueExecution(panel) {
   await panel.getByRole("button", { name: "Continue (F8)", exact: true }).click();
 }
 async function surface() {
-  let active;
+  let panel;
   await waitFor(
-    () => {
-      active = browser
+    async () => {
+      const active = browser
         .contexts()
         .flatMap((context) => context.pages())
         .find((candidate) => candidate !== page && !candidate.isClosed());
-      return !!active;
+      const candidate = (active ?? page).locator("debugger-workspace");
+      if (await candidate.isVisible().catch(() => false)) {
+        panel = candidate;
+        return true;
+      }
+      return false;
     },
     "debugger window",
     20000,
   );
-  const panel = active.locator("debugger-workspace");
   await panel.locator(".monaco-editor").waitFor();
   return panel;
 }

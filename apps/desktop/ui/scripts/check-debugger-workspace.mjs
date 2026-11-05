@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
+import { checkDebuggerNavigation } from "./check-debugger-navigation.mjs";
 
 export async function checkDebuggerWorkspace(page, root) {
   const shortcut = page.getByRole("button", { name: "Debugger", exact: true });
@@ -20,6 +21,7 @@ export async function checkDebuggerWorkspace(page, root) {
   const workspace = page.locator("debugger-workspace");
   await workspace.locator(".monaco-editor").waitFor();
   await shortcut.waitFor();
+  await checkDebuggerNavigation(page, workspace);
   await workspace.evaluate((element) => element.editor.focus());
   await page.keyboard.press("F12");
   await workspace.waitFor({ state: "detached" });
