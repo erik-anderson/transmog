@@ -7,7 +7,9 @@ scripts belong to the proxy application; visualizers belong to their capture
 window. A detached surface receives the existing authority, never a new proxy or
 visualizer instance. Native code commits a move only after the destination has
 loaded its editor and acknowledged readiness. Commands from the previous surface
-are then rejected. A failed handoff restores the previous placement.
+are then rejected. Editing pauses while the snapshot moves and resumes after
+restoration. A failed or canceled handoff restores the previous placement and
+rejects late readiness acknowledgments.
 
 Each surface transfers bounded value leases with its Console state. The destination
 keeps live result roots and releases old scope and property handles. Native pause

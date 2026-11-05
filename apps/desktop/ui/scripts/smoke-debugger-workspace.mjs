@@ -53,7 +53,10 @@ export async function checkNativeDebuggerWorkspace({
   await wait(
     () =>
       surface
-        .evaluate((element) => !!element.editor && element.debuggerTargets.length > 0)
+        .evaluate(
+          (element) =>
+            !element.debuggerTransition && !!element.editor && element.debuggerTargets.length > 0,
+        )
         .catch(() => false),
     "attached editor",
   );
@@ -207,10 +210,47 @@ export async function checkNativeDebuggerWorkspace({
     .getByRole("combobox", { name: "Console workers", exact: true })
     .selectOption("selected");
   await surface.getByRole("combobox", { name: "Console level", exact: true }).selectOption("warn");
+  await page.evaluate(() => {
+    const prototype = customElements.get("debugger-workspace").prototype;
+    const original = prototype.start;
+    prototype.start = function () {
+      const destination = this;
+      return new Promise((resolve, reject) => {
+        globalThis.__finishDebuggerHandoff = () => {
+          prototype.start = original;
+          delete globalThis.__finishDebuggerHandoff;
+          original.call(destination).then(resolve, reject);
+        };
+      });
+    };
+  });
   await surface.evaluate((element) => element.place("bottom"));
-  const dock = page.locator("debugger-workspace");
+  await page.waitForFunction(() => !!globalThis.__finishDebuggerHandoff);
+  assert.equal(await surface.locator(".workspace").evaluate((element) => element.inert), true);
+  await detached.keyboard.type("must not replace the draft");
+  assert.equal(
+    await surface.evaluate((element) => element.debuggerInput),
+    "Array.from({length:64},(_,i)=>({i}))",
+  );
+  // Cancel from the destination before it acknowledges ownership, then retry.
+  await invoke("place_debugger", { placement: "closed" });
   await wait(
-    () => dock.evaluate((element) => element.debuggerPaused).catch(() => false),
+    () => surface.evaluate((element) => !element.debuggerTransition && element.debuggerPaused),
+    "restored source after canceled handoff",
+  );
+  await page.evaluate(() => globalThis.__finishDebuggerHandoff());
+  const dock = page.locator("debugger-workspace");
+  await dock.waitFor({ state: "detached" });
+  assert.equal(
+    await surface.getByRole("textbox", { name: "Immediate expression" }).inputValue(),
+    "Array.from({length:64},(_,i)=>({i}))",
+  );
+  await surface.evaluate((element) => element.place("bottom"));
+  await wait(
+    () =>
+      dock
+        .evaluate((element) => !element.debuggerTransition && element.debuggerPaused)
+        .catch(() => false),
     "paused dock",
   );
   assert.equal(
@@ -284,7 +324,10 @@ export async function checkNativeDebuggerWorkspace({
   await wait(
     () =>
       dock
-        .evaluate((element) => !!element.editor && element.debuggerTargets.length > 0)
+        .evaluate(
+          (element) =>
+            !element.debuggerTransition && !!element.editor && element.debuggerTargets.length > 0,
+        )
         .catch(() => false),
     "reopened idle worker",
   );
@@ -325,7 +368,10 @@ export async function checkNativeDebuggerWorkspace({
     await wait(
       () =>
         dock
-          .evaluate((element) => !!element.editor && element.debuggerTargets.length > 0)
+          .evaluate(
+            (element) =>
+              !element.debuggerTransition && !!element.editor && element.debuggerTargets.length > 0,
+          )
           .catch(() => false),
       "rapid reopen",
     );
@@ -334,7 +380,12 @@ export async function checkNativeDebuggerWorkspace({
   }
   await invoke("place_debugger", { placement: "bottom" });
   await dock.locator(".monaco-editor").waitFor();
+  await wait(
+    () => dock.evaluate((element) => !element.debuggerTransition),
+    "ready layout controls",
+  );
   await dock.getByRole("separator", { name: "Resize sources", exact: true }).press("ArrowRight");
+  assert.equal(await dock.evaluate((element) => element.debuggerSourcesSplit), "20");
   await dock.getByRole("button", { name: "Dock", exact: true }).click();
   await dock.getByRole("button", { name: "Dock to right", exact: true }).click();
   await dock.getByRole("button", { name: "Hide console (Escape)", exact: true }).click();
@@ -349,6 +400,10 @@ export async function checkNativeDebuggerWorkspace({
   await wait(
     () => page.locator("app-shell").evaluate((element) => element.debuggerPlacement === "right"),
     "remembered right dock",
+  );
+  await wait(
+    () => dock.evaluate((element) => !element.debuggerTransition),
+    "ready restored layout",
   );
   assert.equal(await dock.evaluate((element) => element.debuggerSourcesSplit), "20");
   assert.equal(await dock.evaluate((element) => element.debuggerConsoleVisible), false);

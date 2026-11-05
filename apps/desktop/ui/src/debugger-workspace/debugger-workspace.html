@@ -1,6 +1,7 @@
 <template shadowrootmode="open" @keydown="{keyboard(e)}">
   <link w-ref="{sourceStyles}" rel="stylesheet" href="/monaco.css" />
   <section
+    ?inert="{{debuggerTransition}}"
     class="workspace"
     aria-label="Debugger"
     data-console-share="{{debuggerConsoleShare}}"
@@ -624,6 +625,7 @@
     </section>
   </section>
   <dialog
+    ?inert="{{debuggerTransition}}"
     w-ref="{navigationDialog}"
     class="source-dialog"
     aria-labelledby="debug-navigation-heading"
@@ -665,7 +667,7 @@
       >
     </div>
   </dialog>
-  <dialog w-ref="{conditionDialog}" aria-labelledby="debug-condition-heading" @cancel="{cancelCondition(e)}">
+  <dialog ?inert="{{debuggerTransition}}" w-ref="{conditionDialog}" aria-labelledby="debug-condition-heading" @cancel="{cancelCondition(e)}">
     <form @submit="{saveCondition(e)}" aria-busy="{{debuggerConditionSaving}}">
       <h2 id="debug-condition-heading">{{debuggerConditionTitle}}</h2>
       <p class="condition-source">{{debuggerConditionSource}}</p>
@@ -705,4 +707,5 @@
       </footer>
     </form>
   </dialog>
+  <if condition="debuggerTransition"><p class="transition-status" role="status">{{debuggerTransition}}</p></if>
 </template>

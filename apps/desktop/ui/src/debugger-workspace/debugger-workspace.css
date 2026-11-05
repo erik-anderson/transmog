@@ -1,4 +1,5 @@
 :host {
+  position: relative;
   display: block;
   min-width: 0;
   min-height: 0;
@@ -6,6 +7,17 @@
   container-type: inline-size;
   color: var(--text);
   background: var(--panel);
+}
+.transition-status {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: 1rem;
+  background: var(--panel);
+  color: var(--text);
+  z-index: 5;
 }
 * {
   box-sizing: border-box;

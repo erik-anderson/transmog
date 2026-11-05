@@ -2909,7 +2909,7 @@ pub fn run() {
         })
         .on_page_load(|webview, payload| {
             if payload.event()==tauri::webview::PageLoadEvent::Started {
-                webview.state::<debugger_workspace::DebuggerWindows>().release(webview.label(),webview.app_handle());
+                webview.state::<debugger_workspace::DebuggerWindows>().release_on_navigation(webview.label(),webview.app_handle());
             }
             if payload.event() == tauri::webview::PageLoadEvent::Started
                 && let Some(state) = webview.try_state::<DesktopState>()

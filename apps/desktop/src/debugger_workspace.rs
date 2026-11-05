@@ -45,6 +45,20 @@ struct Entry {
     generation: u64,
     view_state: serde_json::Value,
 }
+impl Entry {
+    fn accepts(&self, surface: &str, generation: u64) -> bool {
+        self.generation == generation
+            && self.pending.as_ref().map_or_else(
+                || self.surface == surface,
+                |pending| pending.0 == surface && pending.2 == generation,
+            )
+    }
+    fn cancel_pending(&mut self) -> Option<String> {
+        let pending = self.pending.take()?;
+        self.generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
+        Some(pending.0)
+    }
+}
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct ReadyView {
@@ -54,6 +68,21 @@ pub(super) struct ReadyView {
     layout: DebuggerLayout,
 }
 impl DebuggerWindows {
+    fn owner(&self, surface: &str) -> String {
+        self.0
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(owner, entry)| {
+                owner.as_str() == surface
+                    || entry.surface == surface
+                    || entry
+                        .pending
+                        .as_ref()
+                        .is_some_and(|pending| pending.0 == surface)
+            })
+            .map_or_else(|| surface.to_owned(), |(owner, _)| owner.clone())
+    }
     pub fn forget_layout(&self, label: &str) {
         self.2.lock().unwrap().remove(label);
     }
@@ -89,6 +118,32 @@ impl DebuggerWindows {
             .map(|entry| entry.application.clone())
     }
     pub fn release(&self, label: &str, app: &tauri::AppHandle) {
+        self.release_surface(label, app, true);
+    }
+    pub fn release_on_navigation(&self, label: &str, app: &tauri::AppHandle) {
+        // A destination's initial navigation precedes its acknowledgment.
+        self.release_surface(label, app, false);
+    }
+    fn release_surface(&self, label: &str, app: &tauri::AppHandle, cancel_pending: bool) {
+        let pending: Vec<_> = self
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(owner, entry)| {
+                cancel_pending
+                    && owner.as_str() != label
+                    && entry.surface != label
+                    && entry
+                        .pending
+                        .as_ref()
+                        .is_some_and(|pending| pending.0 == label)
+            })
+            .map(|(owner, entry)| (owner.clone(), entry.generation))
+            .collect();
+        for (owner, generation) in pending {
+            rollback(app, &owner, generation);
+        }
         let removed: Vec<_> = {
             let mut entries = self.0.lock().unwrap();
             let owners: Vec<_> = entries
@@ -171,7 +226,12 @@ pub(super) async fn ensure_ready(window: &tauri::WebviewWindow) -> Result<Applic
         entries
             .iter()
             .find(|(owner, entry)| {
-                owner.as_str() == window.label() || entry.surface == window.label()
+                owner.as_str() == window.label()
+                    || entry.surface == window.label()
+                    || entry
+                        .pending
+                        .as_ref()
+                        .is_some_and(|pending| pending.0 == window.label())
             })
             .map_or_else(|| window.label().to_owned(), |(owner, _)| owner.clone())
     };
@@ -295,17 +355,9 @@ pub(super) async fn place_debugger(
         return Err("Debugger view state is too large".into());
     }
     let windows = app.state::<DebuggerWindows>();
-    let owner = {
-        let entries = windows.0.lock().unwrap();
-        entries
-            .iter()
-            .find(|(owner, entry)| {
-                owner.as_str() == window.label() || entry.surface == window.label()
-            })
-            .map_or_else(|| window.label().into(), |(owner, _)| owner.clone())
-    };
+    let owner = windows.owner(window.label());
     let application = if window.label().starts_with("debugger-") {
-        controlled(&window, false)?
+        controlled(&window, placement == "closed")?
     } else {
         state.window_application(&window).map_err(|e| e.message)?
     };
@@ -325,8 +377,7 @@ pub(super) async fn place_debugger(
             |entry| entry.surface.clone(),
         );
     if placement == "closed" {
-        let previous = windows.retire(&owner, &app, &application)?;
-        return destroy_surfaces(&app, previous);
+        return close_debugger(&windows, &owner, &window, &app, &application);
     }
     let destination = if placement == "window" {
         child.clone()
@@ -344,7 +395,11 @@ pub(super) async fn place_debugger(
             generation: 0,
             view_state: serde_json::Value::Null,
         });
+        if entry.pending.is_some() {
+            return Err("Debugger is moving. Wait for it to finish.".into());
+        }
         if entry.surface == destination && entry.placement != "closed" {
+            let _ = app.emit_to(&entry.surface, "debugger-moving", false);
             entry.placement.clone_from(&placement);
             drop(entries);
             if destination == owner {
@@ -357,12 +412,10 @@ pub(super) async fn place_debugger(
             }
             return Ok(());
         }
-        if entry.pending.is_some() {
-            return Err("Debugger is moving. Wait for it to finish.".into());
-        }
         entry.generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
         entry.view_state = view_state;
         entry.pending = Some((destination.clone(), placement.clone(), entry.generation));
+        let _ = app.emit_to(&entry.surface, "debugger-moving", true);
         entry.generation
     };
     let result = if placement == "window" {
@@ -382,6 +435,32 @@ pub(super) async fn place_debugger(
     });
     Ok(())
 }
+fn close_debugger(
+    windows: &DebuggerWindows,
+    owner: &str,
+    window: &tauri::WebviewWindow,
+    app: &tauri::AppHandle,
+    application: &Application,
+) -> Result<(), String> {
+    let pending = windows
+        .0
+        .lock()
+        .unwrap()
+        .get(owner)
+        .filter(|entry| {
+            entry.surface != window.label()
+                && entry
+                    .pending
+                    .as_ref()
+                    .is_some_and(|pending| pending.0 == window.label())
+        })
+        .map(|entry| entry.generation);
+    if let Some(generation) = pending {
+        rollback(app, owner, generation);
+        return Ok(());
+    }
+    destroy_surfaces(app, windows.retire(owner, app, application)?)
+}
 fn validate_destination(
     windows: &DebuggerWindows,
     app: &tauri::AppHandle,
@@ -390,14 +469,12 @@ fn validate_destination(
     generation: u64,
     placement: &str,
 ) -> Result<(), String> {
-    let current = windows.0.lock().unwrap().get(owner).is_some_and(|entry| {
-        entry.generation == generation
-            && (entry
-                .pending
-                .as_ref()
-                .is_some_and(|pending| pending.2 == generation)
-                || entry.surface == destination)
-    });
+    let current = windows
+        .0
+        .lock()
+        .unwrap()
+        .get(owner)
+        .is_some_and(|entry| entry.accepts(destination, generation));
     if !current {
         if placement == "window"
             && let Some(child) = app.get_webview_window(destination)
@@ -414,11 +491,12 @@ fn rollback(app: &tauri::AppHandle, owner: &str, generation: u64) {
         let mut entries = windows.0.lock().unwrap();
         let recovery = entries.get_mut(owner).and_then(|entry| {
             if entry.pending.as_ref().is_some_and(|p| p.2 == generation) {
-                let pending = entry.pending.take().unwrap();
+                let pending = entry.cancel_pending().unwrap();
                 Some((
-                    pending.0,
+                    pending,
                     entry.placement.clone(),
                     entry.application.clone(),
+                    entry.surface.clone(),
                 ))
             } else {
                 None
@@ -426,19 +504,20 @@ fn rollback(app: &tauri::AppHandle, owner: &str, generation: u64) {
         });
         if recovery
             .as_ref()
-            .is_some_and(|(_, placement, _)| placement == "closed")
+            .is_some_and(|(_, placement, _, _)| placement == "closed")
         {
             entries.remove(owner);
-            if let Some((_, _, application)) = &recovery {
+            if let Some((_, _, application, _)) = &recovery {
                 let _ = application.close_debugger_workspace();
             }
         }
-        if let Some((_, placement, _)) = &recovery {
+        if let Some((_, placement, _, surface)) = &recovery {
+            let _ = app.emit_to(surface.as_str(), "debugger-moving", false);
             let _ = app.emit_to(owner, "debugger-placement", placement);
         }
         recovery
     };
-    if let Some((pending, _, _)) = recovery
+    if let Some((pending, _, _, _)) = recovery
         && pending.starts_with("debugger-")
         && let Some(child) = app.get_webview_window(&pending)
     {
@@ -491,12 +570,7 @@ pub(super) async fn acknowledge_debugger(
             let _ = application.close_debugger_workspace();
             return Err("Debugger handoff expired".into());
         };
-        if entry.generation != generation
-            || entry
-                .pending
-                .as_ref()
-                .is_some_and(|p| p.0 != window.label())
-        {
+        if !entry.accepts(window.label(), generation) {
             return Err("Debugger handoff superseded".into());
         }
         if placement == "window" {
@@ -789,4 +863,35 @@ async fn create_window(app: tauri::AppHandle, label: String) -> Result<(), Strin
     .await
     .map_err(|e| e.to_string())
     .and_then(std::convert::identity)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canceled_handoff_rejects_late_destination_acknowledgments() {
+        let generation = NEXT_GENERATION.fetch_add(1, Ordering::Relaxed);
+        let mut entry = Entry {
+            paused: std::collections::BTreeSet::default(),
+            application: Application::new(transmog_app::AppConfig::default()).unwrap(),
+            surface: "main".into(),
+            placement: "bottom".into(),
+            pending: Some(("debugger-main".into(), "window".into(), generation)),
+            generation,
+            view_state: serde_json::Value::Null,
+        };
+        assert!(entry.accepts("debugger-main", generation));
+        assert!(!entry.accepts("main", generation));
+        assert!(!entry.accepts("another-window", generation));
+        assert_eq!(entry.cancel_pending().as_deref(), Some("debugger-main"));
+        assert_ne!(entry.generation, generation);
+        assert!(!entry.accepts("debugger-main", generation));
+        assert!(!entry.accepts("debugger-main", entry.generation));
+        assert!(!entry.accepts("main", generation));
+        assert!(entry.accepts("main", entry.generation));
+        let canceled = entry.generation;
+        assert_eq!(entry.cancel_pending(), None);
+        assert_eq!(entry.generation, canceled);
+    }
 }

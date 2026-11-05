@@ -40,7 +40,11 @@ async function paused(panel, after = 0) {
   await waitFor(
     () =>
       panel
-        .evaluate((element, previous) => element.debuggerPaused && element.pause > previous, after)
+        .evaluate(
+          (element, previous) =>
+            !element.debuggerTransition && element.debuggerPaused && element.pause > previous,
+          after,
+        )
         .catch(() => false),
     "native engine pause",
     20000,
@@ -69,6 +73,7 @@ async function surface() {
     20000,
   );
   await panel.locator(".monaco-editor").waitFor();
+  await waitFor(() => panel.evaluate((element) => !element.debuggerTransition), "ready debugger");
   return panel;
 }
 async function closeDebugger(panel) {
@@ -348,7 +353,32 @@ try {
           authoring: element.authoringStatus,
           issues: element.typeScriptIssues,
         })),
-        panels: await page.locator("debugger-workspace").allTextContents(),
+        surfaces: await Promise.all(
+          browser
+            .contexts()
+            .flatMap((context) => context.pages())
+            .map(async (surface) => ({
+              url: surface.url(),
+              shell: await surface
+                .locator("app-shell")
+                .evaluate((element) => ({
+                  diagnostic: element.diagnosticText,
+                  placement: element.debuggerPlacement,
+                  docked: element.debuggerDocked,
+                }))
+                .catch(String),
+              panels: await surface
+                .locator("debugger-workspace")
+                .evaluateAll((elements) =>
+                  elements.map((element) => ({
+                    error: element.debuggerError,
+                    transition: element.debuggerTransition,
+                    editor: !!element.editor,
+                  })),
+                )
+                .catch(String),
+            })),
+        ),
       },
       null,
       2,

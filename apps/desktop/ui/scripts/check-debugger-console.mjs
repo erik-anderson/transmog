@@ -2,6 +2,33 @@ import assert from "node:assert/strict";
 
 export async function checkDebuggerConsole(page, workspace) {
   const prompt = workspace.getByRole("textbox", { name: "Immediate expression", exact: true });
+  await prompt.fill("draft during handoff");
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.workspaceDebug.holdMove = true;
+  });
+  await workspace.evaluate((element) => {
+    globalThis.__pendingDebuggerMove = element.place("window");
+  });
+  await page.waitForFunction(() => !!globalThis.__workspaceFixture.workspaceDebug.failMove);
+  assert.equal(await workspace.locator(".workspace").evaluate((element) => element.inert), true);
+  await page.keyboard.type("must not replace the draft");
+  assert.equal(
+    await workspace.evaluate((element) => element.debuggerInput),
+    "draft during handoff",
+  );
+  await page.evaluate(async () => {
+    const debug = globalThis.__workspaceFixture.workspaceDebug;
+    debug.failMove();
+    await globalThis.__pendingDebuggerMove;
+    delete debug.failMove;
+    delete globalThis.__pendingDebuggerMove;
+  });
+  await workspace.getByRole("alert").filter({ hasText: "Debugger move failed" }).first().waitFor();
+  assert.equal(await workspace.locator(".workspace").evaluate((element) => element.inert), false);
+  assert.equal(await prompt.inputValue(), "draft during handoff");
+  await workspace.evaluate((element) => {
+    element.debuggerError = "";
+  });
   const logs = await page.evaluate(() => {
     const debug = globalThis.__workspaceFixture.workspaceDebug;
     const previous = structuredClone(debug.logs);
@@ -78,6 +105,7 @@ export async function checkDebuggerConsole(page, workspace) {
     return (
       current !== globalThis.__previousDebuggerWidget &&
       current?.debuggerPaused &&
+      !current.debuggerTransition &&
       !current.debuggerClosed
     );
   });
@@ -171,6 +199,7 @@ export async function checkDebuggerConsole(page, workspace) {
     return (
       current !== globalThis.__previousDebuggerWidget &&
       current?.debuggerPaused &&
+      !current.debuggerTransition &&
       !current.debuggerClosed
     );
   });

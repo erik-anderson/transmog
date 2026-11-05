@@ -170,6 +170,13 @@ export function installDebuggerWorkspaceFixture() {
         { ...point.breakpoint.location, source: args.id.endsWith(".js") ? js : ts },
       ]);
     if (command === "place_debugger") {
+      if (debug.holdMove) {
+        debug.holdMove = false;
+        state.emitNative("debugger-moving", true);
+        await new Promise((resolve, reject) => {
+          debug.failMove = () => reject(new Error("Debugger move failed"));
+        });
+      }
       debug.open = args.placement !== "closed";
       debug.viewState = args.viewState;
       const shell = document.querySelector("app-shell");
@@ -180,6 +187,9 @@ export function installDebuggerWorkspaceFixture() {
       }
       shell.debuggerPlacement = args.placement === "window" ? "bottom" : args.placement;
       shell.debuggerDocked = debug.open;
+      if (!debug.recreateSurface) {
+        state.emitNative("debugger-moving", false);
+      }
       return;
     }
     if (command === "acknowledge_debugger") {

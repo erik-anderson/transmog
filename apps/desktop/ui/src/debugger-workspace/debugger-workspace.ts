@@ -110,6 +110,7 @@ interface Watch {
   value?: ValueView;
 }
 export class DebuggerWorkspace extends WebUIElement {
+  @observable debuggerTransition = "Opening debugger…";
   @observable debuggerConditionSaving = false;
   @observable debuggerPauseContext = "Paused";
   @observable debuggerRequestLabel = "";
@@ -749,6 +750,14 @@ export class DebuggerWorkspace extends WebUIElement {
     }
   }
   private focusUnlisten: UnlistenFn | null = null;
+  private movingUnlisten: UnlistenFn | null = null;
+  private activeElement(): Element | null {
+    let active = this.ownerDocument.activeElement;
+    while (active?.shadowRoot?.activeElement) {
+      active = active.shadowRoot.activeElement;
+    }
+    return active;
+  }
   private toggleUnlisten: UnlistenFn | null = null;
   private async watchNativeToggle(): Promise<void> {
     const unlisten = await listen("debugger-toggle", () => {
@@ -817,7 +826,16 @@ export class DebuggerWorkspace extends WebUIElement {
   }
   private async start(): Promise<void> {
     const version = ++this.generation;
+    const focus = this.activeElement();
     try {
+      const moving = await listen<boolean>("debugger-moving", (event) => {
+        this.debuggerTransition = event.payload ? "Moving debugger…" : "";
+      });
+      if (!this.isConnected || version !== this.generation) {
+        moving();
+        return;
+      }
+      this.movingUnlisten = moving;
       const view = await invoke<View>("debugger_workspace");
       if (!this.isConnected || version !== this.generation) {
         return;
@@ -976,6 +994,15 @@ export class DebuggerWorkspace extends WebUIElement {
       }, 300);
     } catch (error) {
       this.debuggerError = describeError(error);
+    } finally {
+      if (this.isConnected && version === this.generation) {
+        const restoreFocus = this.activeElement() === focus;
+        this.debuggerTransition = "";
+        this.$flushUpdates();
+        if (restoreFocus) {
+          this.editor?.focus();
+        }
+      }
     }
   }
   private apply(view: View): void {
@@ -1010,6 +1037,8 @@ export class DebuggerWorkspace extends WebUIElement {
       this.debuggerControlSubmitting ||
       this.inspection.registering ||
       this.quietSubmitting ||
+      this.debuggerTransition === "Moving debugger…" ||
+      this.debuggerTransition === "Closing debugger…" ||
       !this.isConnected
     ) {
       return;
@@ -1044,7 +1073,9 @@ export class DebuggerWorkspace extends WebUIElement {
         this.debuggerSubmitting ||
         this.debuggerControlSubmitting ||
         this.inspection.registering ||
-        this.quietSubmitting
+        this.quietSubmitting ||
+        this.debuggerTransition === "Moving debugger…" ||
+        this.debuggerTransition === "Closing debugger…"
       ) {
         return;
       }
@@ -2230,6 +2261,11 @@ export class DebuggerWorkspace extends WebUIElement {
     }
   }
   async place(placement: string): Promise<void> {
+    if (placement !== "closed" && this.debuggerTransition) {
+      return;
+    }
+    this.debuggerTransition = placement === "closed" ? "Closing debugger…" : "Moving debugger…";
+    this.$flushUpdates();
     try {
       await this.pointEdits;
       if (placement !== "closed" && this.evaluationSubmission) {
@@ -2281,6 +2317,7 @@ export class DebuggerWorkspace extends WebUIElement {
       };
       await invoke("place_debugger", { placement, viewState });
     } catch (error) {
+      this.debuggerTransition = "";
       this.debuggerError = describeError(error);
     }
   }
@@ -2501,6 +2538,7 @@ export class DebuggerWorkspace extends WebUIElement {
     document.removeEventListener("keydown", this.toggleShortcut, true);
     this.removeEventListener("keydown", this.shortcutListener, true);
     this.focusUnlisten?.();
+    this.movingUnlisten?.();
     this.toggleUnlisten?.();
     this.focusUnlisten = null;
     this.generation++;
