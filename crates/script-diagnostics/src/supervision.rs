@@ -182,6 +182,8 @@ pub struct Session {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionPage {
+    /// Last native pause epoch, including while idle. Object handles expire across epochs.
+    pub value_generation: u64,
     /// Current native execution controls.
     #[serde(flatten)]
     pub controls: ExecutionControls,
@@ -715,7 +717,10 @@ impl Session {
         let bytes = serde_json::to_vec(&event)
             .map_err(|_| "Invalid debugger event")?
             .len();
-        if bytes > MAX_DEBUG_REPLY_BYTES || event.session != self.id() {
+        if bytes > MAX_DEBUG_REPLY_BYTES
+            || event.session != self.id()
+            || event.value_generation.is_some()
+        {
             return Err("Invalid debugger event identity or extent");
         }
         let mut state = self.state.lock().map_err(|_| "Debugger unavailable")?;
@@ -1051,6 +1056,10 @@ impl Session {
             }
         }
         let stopped = matches!(event.event, DebugEventKind::Stopped { .. });
+        if state.connection.closed() {
+            state.controls.pause_next = false;
+            state.logpoint_at = None;
+        }
         let stop = if stopped {
             state.writer = None;
             state.pending.clear();
@@ -1058,6 +1067,7 @@ impl Session {
         } else {
             None
         };
+        event.value_generation = Some(state.pause);
         match &event.event {
             DebugEventKind::Paused { .. } => state.pause_snapshot = Some(event.clone()),
             DebugEventKind::Resumed | DebugEventKind::Detached | DebugEventKind::Stopped { .. } => {
@@ -1097,12 +1107,15 @@ impl Session {
             return;
         }
         state.connection = Connection::Stopped;
+        state.controls.pause_next = false;
+        state.logpoint_at = None;
         state.paused_at = None;
         state.pause_snapshot = None;
         state.pending.clear();
         state.writer = None;
         self.clock.resume();
         let event = DebugEvent {
+            value_generation: None,
             session: self.id().into(),
             invocation: state.invocation,
             request: 0,
@@ -1133,6 +1146,7 @@ impl Session {
                 .front()
                 .is_none_or(|(sequence, ..)| after.saturating_add(1) < *sequence);
         SessionPage {
+            value_generation: state.pause,
             controls: state.controls,
             exceptions: state.exceptions,
             paused: state.pause_snapshot.clone(),

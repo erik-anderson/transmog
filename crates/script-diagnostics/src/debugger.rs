@@ -379,6 +379,9 @@ pub struct DebugProperty {
 #[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DebugEvent {
+    /// Supervisor-stamped value lifetime; never accepted from an isolated host.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value_generation: Option<u64>,
     /// Authenticated session identity, independent of display labels.
     pub session: String,
     /// Active callback, zero for module initialization.

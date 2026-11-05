@@ -286,6 +286,7 @@ async fn dependent_budgets_exclude_separate_worker_pauses_and_keep_the_active_li
 }
 fn event(session: &Session, event: DebugEventKind) -> DebugEvent {
     DebugEvent {
+        value_generation: None,
         session: session.id().into(),
         invocation: 0,
         request: 0,
@@ -306,16 +307,26 @@ fn native_session_rejects_forged_identity_duplicate_pauses_and_stale_commands() 
     let session = session();
     session.begin(0);
     let mut forged = event(&session, DebugEventKind::Attached);
+    forged.value_generation = Some(1);
+    assert!(session.accept(forged).is_err());
+    let mut forged = event(&session, DebugEventKind::Attached);
     forged.session = "b".repeat(32);
     assert!(session.accept(forged).is_err());
     session
         .accept(event(&session, DebugEventKind::Attached))
         .unwrap();
     session.accept(event(&session, paused())).unwrap();
+    assert_eq!(session.page(0).value_generation, 1);
+    assert_eq!(session.page(0).paused.unwrap().value_generation, Some(1));
     assert!(session.accept(event(&session, paused())).is_err());
     session
         .accept(event(&session, DebugEventKind::Resumed))
         .unwrap();
+    assert_eq!(session.page(0).value_generation, 1);
+    assert_eq!(
+        session.page(0).events.last().unwrap().value_generation,
+        Some(1)
+    );
     assert!(
         session
             .command(DebugAction::Resume {

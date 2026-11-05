@@ -1203,6 +1203,7 @@ fn wire_contract_rejects_unscoped_evaluation_and_implicit_property_execution() {
         );
     }
     let event = DebugEvent {
+        value_generation: None,
         session: SESSION.into(),
         invocation: 1,
         request: 1,

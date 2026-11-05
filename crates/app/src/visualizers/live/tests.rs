@@ -61,6 +61,7 @@ fn retention_pause_accounting_is_scoped_and_survives_reattachment() {
     let emit = |kind| {
         session
             .accept(DebugEvent {
+                value_generation: None,
                 session: session.id().into(),
                 invocation: 0,
                 request: 0,
@@ -86,6 +87,7 @@ fn retention_pause_accounting_is_scoped_and_survives_reattachment() {
     session.completed();
     session
         .accept(DebugEvent {
+            value_generation: None,
             session: session.id().into(),
             invocation: 0,
             request: 0,

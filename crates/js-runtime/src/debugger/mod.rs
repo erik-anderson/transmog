@@ -362,6 +362,7 @@ impl Drop for Debugger {
 impl Client {
     fn emit(&self, request: u64, event: DebugEventKind) {
         let mut event = DebugEvent {
+            value_generation: None,
             session: self.options.borrow().session.clone(),
             invocation: self.invocation.get(),
             request,

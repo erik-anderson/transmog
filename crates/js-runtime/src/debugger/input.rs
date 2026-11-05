@@ -277,6 +277,7 @@ impl<T> InputRouter<T> {
     }
     fn reject(&self, session: String, request: u64, message: &str) -> Result<(), &'static str> {
         (self.sink)(DebugEvent {
+            value_generation: None,
             session,
             invocation: 0,
             request,

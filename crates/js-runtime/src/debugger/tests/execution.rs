@@ -181,7 +181,16 @@ fn pause_next_reaches_user_code_and_continue_to_does_not_persist_a_breakpoint() 
         let mut runtime = Runtime::new(1024 * 1024, 32 * 1024 * 1024).unwrap();
         runtime
             .enable_debugger(
-                options(vec![]),
+                options(vec![SourceBreakpoint {
+                    id: 1,
+                    condition: None,
+                    log_expression: Some("'continue destination'".into()),
+                    location: SourceLocation {
+                        source: SOURCE.into(),
+                        line: 4,
+                        column: 1,
+                    },
+                }]),
                 DebugTransport::new(input, move |event| output.try_send(event).is_ok()),
             )
             .unwrap();
@@ -261,6 +270,9 @@ fn pause_next_reaches_user_code_and_continue_to_does_not_persist_a_breakpoint() 
         reply(&events, 3).event,
         DebugEventKind::Acknowledged
     ));
+    assert!(
+        matches!(event(&events, |event| matches!(event.event, DebugEventKind::Logpoint { .. })).event, DebugEventKind::Logpoint { text, .. } if text == "continue destination")
+    );
     let DebugEventKind::Paused { pause, frames, .. } = event(&events, |event| {
         matches!(event.event, DebugEventKind::Paused { .. })
     })

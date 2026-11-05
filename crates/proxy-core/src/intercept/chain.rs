@@ -1941,6 +1941,7 @@ mod tests {
         for terminal in [false, true] {
             assert!(session.begin(u64::from(terminal)));
             let make = |event| DebugEvent {
+                value_generation: None,
                 session: session.id().into(),
                 invocation: u64::from(terminal),
                 request: 0,
@@ -1964,6 +1965,7 @@ mod tests {
                 tokio::time::sleep(Duration::from_millis(60)).await;
                 owner
                     .accept(DebugEvent {
+                        value_generation: None,
                         session: owner.id().into(),
                         invocation: u64::from(terminal),
                         request: 0,
