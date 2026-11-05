@@ -14,6 +14,8 @@ pub(crate) const OWNER: &str = "debugger-workspace";
 pub(crate) struct Workspace(Arc<Mutex<State>>);
 #[derive(Default)]
 struct State {
+    skip_pauses: bool,
+    controls: BTreeMap<String, bool>,
     policies: BTreeMap<String, ExceptionPolicy>,
     maps: Vec<projections::Map>,
     focus: Option<String>,
@@ -72,6 +74,8 @@ pub struct DebuggerFile {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DebuggerWorkspaceView {
+    /// Temporary suppression shared by current and future workers of this workspace.
+    pub skip_pauses: bool,
     /// Most recent explicit fixture/attachment selection.
     pub focus: Option<String>,
     /// Current product palette, shared by docked and detached surfaces.
@@ -172,6 +176,7 @@ impl Workspace {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         DebugConfiguration {
+            skip_pauses: state.skip_pauses,
             pause_on_start: false,
             persistent: true,
             exceptions: state.policies.get(prefix).copied().unwrap_or_default(),
@@ -319,6 +324,7 @@ impl Application {
             }
         }
         request.configuration.breakpoints = configuration.breakpoints;
+        request.configuration.skip_pauses = configuration.skip_pauses;
         request.configuration.persistent = true;
         request.configuration.pause_on_start = true;
         let info = self.debug_script_test(OWNER, request)?;
@@ -454,6 +460,23 @@ impl Application {
         }
         Ok(request)
     }
+    /// Temporarily suppresses all pauses without changing saved breakpoint intent.
+    /// # Errors
+    /// Rejects a closed workspace or failed native command delivery.
+    pub fn set_workspace_skip_pauses(&self, skip: bool) -> Result<(), AppError> {
+        {
+            let mut state = self
+                .debugger_workspace
+                .0
+                .lock()
+                .map_err(|_| invalid("Debugger unavailable"))?;
+            if !state.open {
+                return Err(invalid("Open the debugger before changing pause settings"));
+            }
+            state.skip_pauses = skip;
+        }
+        self.apply_workspace_breakpoints()
+    }
     /// Opens the application's debugger and subscribes to future traffic workers.
     /// # Errors
     /// Rejects unavailable ownership, invalid input or a failed native operation.
@@ -539,6 +562,8 @@ impl Application {
                 .lock()
                 .map_err(|_| invalid("Debugger unavailable"))?;
             state.open = false;
+            state.skip_pauses = false;
+            state.controls.clear();
             state.focus = None;
             state.bindings.clear();
             state.epoch = state.epoch.wrapping_add(1);
@@ -602,7 +627,11 @@ impl Application {
         state
             .bindings
             .retain(|session, _| retained.contains(session));
+        state
+            .controls
+            .retain(|session, _| retained.contains(session));
         Ok(DebuggerWorkspaceView {
+            skip_pauses: state.skip_pauses,
             focus: state.focus.clone(),
             theme: self.product_state().preferences.theme,
             open: state.open,
@@ -709,6 +738,30 @@ impl Application {
             (state.targets.clone(), state.generation)
         };
         for target in targets {
+            let Some(run) = self
+                .debuggers
+                .owned(OWNER, &target.session)
+                .ok()
+                .filter(|run| run.session.ready_for_commands())
+            else {
+                continue;
+            };
+            {
+                let mut state = self
+                    .debugger_workspace
+                    .0
+                    .lock()
+                    .map_err(|_| invalid("Debugger unavailable"))?;
+                let skip = state.skip_pauses;
+                if state.controls.get(&target.session) != Some(&skip) {
+                    run.session
+                        .command(
+                            transmog_script_diagnostics::debugger::DebugAction::SkipPauses { skip },
+                        )
+                        .map_err(invalid)?;
+                    state.controls.insert(target.session.clone(), skip);
+                }
+            }
             if self
                 .debugger_workspace
                 .0
@@ -1485,12 +1538,31 @@ fn reconcile_points(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn temporary_pause_settings_apply_to_future_workers_and_reset_when_closed() {
+        let application = Application::new(crate::AppConfig::default()).unwrap();
+        assert!(application.set_workspace_skip_pauses(true).is_err());
+        application.open_debugger_workspace().unwrap();
+        application.set_workspace_skip_pauses(true).unwrap();
+        assert!(application.debugger_workspace().unwrap().skip_pauses);
+        assert!(
+            application
+                .debugger_workspace
+                .configuration("script/example/")
+                .skip_pauses
+        );
+        application.close_debugger_workspace().unwrap();
+        application.open_debugger_workspace().unwrap();
+        assert!(!application.debugger_workspace().unwrap().skip_pauses);
+        application.close_debugger_workspace().unwrap();
+    }
     fn point() -> WorkspaceBreakpoint {
         WorkspaceBreakpoint {
             artifact: None,
             file: "script/sample/main.ts".into(),
             breakpoint: SourceBreakpoint {
                 id: 1,
+                log_expression: None,
                 condition: Some("value === 7".into()),
                 location: transmog_script_diagnostics::SourceLocation {
                     source: "file:///sample.ts".into(),

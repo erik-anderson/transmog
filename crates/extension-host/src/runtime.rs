@@ -111,6 +111,7 @@ impl Runtime {
             })?;
             Ok(())
         })();
+        runtime.finish_debug_operation();
         runtime.finish_console();
         initialized?;
         Ok(Self {
@@ -123,6 +124,7 @@ impl Runtime {
         self.engine.begin_debug_operation(invocation);
     }
     pub(super) fn finish_console(&mut self) {
+        self.engine.finish_debug_operation();
         self.engine.finish_console();
     }
     pub(super) fn invoke(&mut self, invocation: &Invocation) -> Result<VisualizationStep, Failure> {

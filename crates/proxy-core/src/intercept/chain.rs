@@ -1928,6 +1928,7 @@ mod tests {
             supervision::Session,
         };
         let session = Session::new(DebugOptions {
+            skip_pauses: false,
             pause_on_start: false,
             persistent: false,
             session: "a".repeat(32),

@@ -24,6 +24,7 @@ use v8::inspector::{
     V8InspectorClientImpl, V8InspectorClientTrustLevel, V8InspectorSession,
 };
 mod completion;
+mod execution;
 mod input;
 #[cfg(test)]
 mod tests;
@@ -84,6 +85,11 @@ struct Client {
     inspector_breakpoints: RefCell<BTreeMap<u32, String>>,
     startup_breakpoints: RefCell<Vec<String>>,
     startup_armed: Cell<bool>,
+    pause_next: Cell<bool>,
+    stepping: Cell<bool>,
+    logpoint_count: Cell<u32>,
+    logpoint_dropped: Cell<u64>,
+    logpoint_epoch: Cell<Instant>,
     values: RefCell<values::Values>,
 }
 
@@ -131,6 +137,15 @@ impl Runtime {
             debugger.client.invocation.set(invocation);
         }
         self.poll_debugger();
+    }
+    /// Flushes omission evidence before a finite fixture's ordinary reply.
+    /// Persistent workers aggregate losses until their idle poll or detach.
+    pub fn finish_debug_operation(&self) {
+        if let Some(debugger) = &self.debugger
+            && !debugger.client.options.borrow().persistent
+        {
+            debugger.client.report_logpoint_loss();
+        }
     }
 
     /// Services breakpoint/policy controls while the host is idle. Paused reads use V8 callbacks.
@@ -182,7 +197,7 @@ impl Debugger {
             let context = v8::Local::new(scope, &runtime.context);
             v8::Global::new(scope, context)
         };
-        let pause_on_start = options.pause_on_start;
+        let pause_on_start = options.pause_on_start && !options.skip_pauses;
         let client = Rc::new(Client {
             runtime_state: super::state(&runtime.isolate),
             options: RefCell::new(options),
@@ -211,6 +226,11 @@ impl Debugger {
             inspector_breakpoints: RefCell::new(BTreeMap::new()),
             startup_breakpoints: RefCell::new(Vec::new()),
             startup_armed: Cell::new(pause_on_start),
+            pause_next: Cell::new(false),
+            stepping: Cell::new(false),
+            logpoint_count: Cell::new(0),
+            logpoint_dropped: Cell::new(0),
+            logpoint_epoch: Cell::new(Instant::now()),
             values: RefCell::new(values::Values::default()),
         });
         let inspector = V8Inspector::create(
@@ -237,6 +257,12 @@ impl Debugger {
             .client
             .dispatch("Debugger.enable", json!({}))
             .and_then(|_| connection.client.dispatch("Runtime.enable", json!({})))
+            .and_then(|_| {
+                connection.client.dispatch(
+                    "Debugger.setSkipAllPauses",
+                    json!({"skip":connection.client.options.borrow().skip_pauses}),
+                )
+            })
             .and_then(|_| connection.client.policy());
         if let Err(error) = configured {
             v8::scope!(let scope, &mut runtime.isolate);
@@ -296,6 +322,7 @@ impl Debugger {
         if self.client.detached.get() || self.client.stopped.get() {
             return;
         }
+        self.client.flush_logpoints();
         if !self.client.options.borrow().persistent
             && self.client.created.get().elapsed() >= Duration::from_millis(SESSION_LEASE_MS)
         {
@@ -522,6 +549,11 @@ impl Client {
         let request = command.request;
         let read_only = matches!(&command.action, DebugAction::Inspect { .. });
         match command.action {
+            DebugAction::SkipPauses { skip } => self.set_skip(request, skip),
+            DebugAction::PauseNext { enabled } => self.schedule_pause(request, enabled),
+            DebugAction::ContinueTo { pause, location } => {
+                self.continue_to(request, pause, &location);
+            }
             DebugAction::Stop => self.stop(request, "Debugger stopped by its owner"),
             DebugAction::Detach => {
                 if self.paused.get() && !self.options.borrow().persistent {
@@ -534,6 +566,7 @@ impl Client {
                 // Inspector can deliver its resumed notification after the detach
                 // acknowledgement. Retire notification delivery before resuming:
                 // the authenticated supervisor has closed this control stream.
+                self.report_logpoint_loss();
                 self.detached.set(true);
                 let _ = self.dispatch("Debugger.setSkipAllPauses", json!({"skip":true}));
                 if self.paused.replace(false) {
@@ -606,9 +639,11 @@ impl Client {
                     ResumeAction::Over => "Debugger.stepOver",
                     ResumeAction::Out => "Debugger.stepOut",
                 };
+                self.stepping.set(action != ResumeAction::Continue);
                 if self.dispatch(method, json!({})).is_ok() {
                     self.emit(request, DebugEventKind::Acknowledged);
                 } else {
+                    self.stepping.set(false);
                     self.reject(request, "This pause cannot resume");
                 }
             }
@@ -640,10 +675,10 @@ impl Client {
                     if let Some(event) = event {
                         self.emit(request, event);
                     } else {
-                        self.reject(request, "Value handle is unavailable in this pause");
+                        self.reject(request, "Value is no longer available");
                     }
                 } else {
-                    self.reject(request, "Property inspection requires a paused engine");
+                    self.reject(request, "Property inspection context is unavailable");
                 }
             }
             DebugAction::Release { pause, handles } => {
@@ -677,8 +712,9 @@ impl Client {
         let Some(frame) = pause["callFrames"][0]["callFrameId"].as_str() else {
             return true;
         };
+        let mut should_pause = false;
         for hit in hits {
-            let condition = {
+            let point = {
                 let bindings = self.inspector_breakpoints.borrow();
                 let id = bindings
                     .iter()
@@ -689,28 +725,38 @@ impl Client {
                         .borrow()
                         .breakpoints
                         .iter()
-                        .find(|b| b.id == id)
-                        .and_then(|b| b.condition.clone())
+                        .find(|point| point.id == id)
+                        .cloned()
                 })
             };
-            let Some(condition) = condition else {
-                return true;
+            let Some(point) = point else {
+                should_pause = true;
+                continue;
             };
-            let result=self.dispatch("Debugger.evaluateOnCallFrame",json!({"callFrameId":frame,"expression":format!("!!(\n{condition}\n)"),"throwOnSideEffect":true,"silent":true,"returnByValue":true,"timeout":50}));
-            match result {
-                Ok(result) if result.get("exceptionDetails").is_none() => {
-                    if result["result"]["value"].as_bool() != Some(false) {
-                        return true;
+            if let Some(condition) = point.condition {
+                let result = self.dispatch("Debugger.evaluateOnCallFrame", json!({"callFrameId":frame,"expression":format!("!!(\n{condition}\n)"),"throwOnSideEffect":true,"silent":true,"returnByValue":true,"timeout":50}));
+                match result {
+                    Ok(result) if result.get("exceptionDetails").is_none() => {
+                        if result["result"]["value"].as_bool() == Some(false) {
+                            continue;
+                        }
+                    }
+                    _ => {
+                        self.condition_failed.set(true);
+                        should_pause = true;
+                        continue;
                     }
                 }
-                _ => {
-                    self.condition_failed.set(true);
-                    return true;
-                }
+            }
+            if let Some(expression) = point.log_expression {
+                self.logpoint(pause, frame, &expression);
+            } else {
+                should_pause = true;
             }
         }
-        false
+        should_pause
     }
+
     fn evaluate(
         &self,
         scope: &mut v8::PinScope<'_, '_>,
@@ -781,7 +827,7 @@ impl Client {
                 },
             );
         }
-        let _ = self.dispatch("Debugger.setSkipAllPauses", json!({"skip":false}));
+        self.restore_pause_mode();
         let retained = result
             .as_ref()
             .ok()
@@ -862,6 +908,14 @@ impl Client {
             self.stop(0, "Inspector pause metadata unavailable");
             return;
         };
+        if self.skip_internal_pause(&raw) {
+            return;
+        }
+        let scheduled = self.pause_next.replace(false);
+        let stepping = self.stepping.replace(false);
+        if scheduled {
+            self.controls(0);
+        }
         let startup = self.startup_armed.replace(false);
         if startup {
             let values = std::mem::take(&mut *self.startup_breakpoints.borrow_mut());
@@ -869,7 +923,12 @@ impl Client {
                 let _ = self.dispatch("Debugger.removeBreakpoint", json!({"breakpointId":id}));
             }
         }
-        if !startup && !self.condition_matches(&raw) {
+        let matched = self.condition_matches(&raw);
+        let exceptional = matches!(
+            raw["reason"].as_str(),
+            Some("exception" | "promiseRejection")
+        );
+        if !startup && !scheduled && !stepping && !exceptional && !matched {
             self.internal_resume.set(true);
             if self.dispatch("Debugger.resume", json!({})).is_ok() {
                 return;
@@ -921,8 +980,10 @@ impl Client {
         } else {
             match raw["reason"].as_str() {
                 Some("exception" | "promiseRejection") => "exception",
-                Some("step") => "step",
                 _ if startup => "first user statement",
+                _ if scheduled => "next callback",
+                Some("step") => "step",
+                _ if stepping => "step",
                 _ => "breakpoint or debugger statement",
             }
         }

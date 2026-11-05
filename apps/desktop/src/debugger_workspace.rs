@@ -157,6 +157,7 @@ pub(super) fn command_allowed(command: &str) -> bool {
             | "workspace_breakpoints"
             | "workspace_debug_session"
             | "workspace_debug_command"
+            | "workspace_skip_pauses"
             | "workspace_restart"
     )
 }
@@ -688,6 +689,16 @@ pub(super) fn workspace_debug_command(
         }
     }
     Ok(result)
+}
+
+#[tauri::command]
+pub(super) fn workspace_skip_pauses(
+    skip: bool,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    controlled(&window, false)?
+        .set_workspace_skip_pauses(skip)
+        .map_err(|error| error.message)
 }
 
 #[tauri::command]

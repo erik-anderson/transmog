@@ -65,7 +65,7 @@ pub const SCRIPT_API_REVISION: u32 = 4;
 /// Maximum accepted source length.
 pub const MAX_SCRIPT_SOURCE_BYTES: usize = 1024 * 1024;
 /// Version of the private host/supervisor wire protocol.
-pub const SCRIPT_HOST_PROTOCOL_VERSION: u32 = 9;
+pub const SCRIPT_HOST_PROTOCOL_VERSION: u32 = 10;
 /// Maximum one-way host protocol frame, including JavaScript source.
 pub const MAX_SCRIPT_HOST_FRAME_BYTES: usize = 68 * 1024 * 1024;
 

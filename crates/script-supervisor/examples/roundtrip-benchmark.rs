@@ -70,6 +70,7 @@ fn main() {
             let session = attached.then(|| {
                 transmog_script_supervisor::DebugSession::new(
                     transmog_script::debugger::DebugOptions {
+                        skip_pauses: false,
                         pause_on_start:false,
                         persistent: false,
                         session: "a".repeat(32),

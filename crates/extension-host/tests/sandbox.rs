@@ -11,6 +11,53 @@ use transmog_extensions::*;
 use worker_tests::WorkerTest;
 
 #[tokio::test]
+async fn debugger_logpoints_complete_visualizers_through_the_authenticated_host_pipe() {
+    use transmog_extensions::debugger::{DebugAction, DebugEventKind, SourceBreakpoint};
+    let test = WorkerTest::acquire(1).await;
+    let snapshot = test.snapshot("export function visualize(){\n const local=7;\n return {kind:'document',document:{title:'Logpoint',status:'complete',presentation:'tree',roots:[]}};\n}");
+    let session = debugger::session('1');
+    let owner = Arc::clone(&session);
+    let runner = tokio::task::spawn_blocking(move || {
+        Runner::start_debug(
+            &HostConfig {
+                executable: support::host_executable().into(),
+            },
+            snapshot,
+            "view",
+            &owner,
+        )
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    session
+        .command(DebugAction::Breakpoints {
+            values: vec![SourceBreakpoint {
+                id: 77,
+                condition: None,
+                log_expression: Some("'value ' + local".into()),
+                location: SourceLocation {
+                    source: "file:///transmog-extension/src/main.js".into(),
+                    line: 3,
+                    column: 1,
+                },
+            }],
+        })
+        .unwrap();
+    debugger::wait(&session, |event| matches!(event, DebugEventKind::Sources { breakpoints, .. } if breakpoints.iter().any(|point| point.id == 77 && point.resolved.is_some()))).await;
+    runner
+        .invoke(Invocation::Visualize {
+            input: Box::new(input()),
+        })
+        .await
+        .unwrap();
+    debugger::wait(&session, |event| matches!(event, DebugEventKind::Logpoint { text, thrown: false, .. } if text == "value 7")).await;
+    assert!(session.page(0).paused.is_none());
+    assert!(!runner.is_stopped());
+    session.stop("Test ended");
+}
+
+#[tokio::test]
 async fn debugger_preserves_initializer_heap_locals_and_idle_detach_in_the_real_sandbox() {
     use transmog_extensions::debugger::{DebugAction, DebugEventKind};
     let test = WorkerTest::acquire(1).await;

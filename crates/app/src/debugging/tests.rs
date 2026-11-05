@@ -3,6 +3,7 @@ use super::*;
 fn local_ownership_and_mapping_do_not_follow_other_windows_or_preceding_lines() {
     let manager = Debuggers::default();
     let configuration = DebugConfiguration {
+        skip_pauses: false,
         pause_on_start: false,
         persistent: false,
         exceptions: ExceptionPolicy::None,
@@ -26,6 +27,7 @@ fn local_ownership_and_mapping_do_not_follow_other_windows_or_preceding_lines() 
     assert!(manager.owned("window-one", run.session.id()).is_ok());
     let map=br#"{"version":3,"sources":["file:///main.ts"],"sourcesContent":["const value: number = 7;"],"names":[],"mappings":"AAAA"}"#;
     let source = SourceBreakpoint {
+        log_expression: None,
         condition: None,
         id: 1,
         location: SourceLocation {
@@ -77,6 +79,7 @@ fn closed_histories_are_globally_bounded_and_late_completion_cannot_restore_evic
     let manager = Debuggers::default();
     let mut held = Vec::new();
     let config = DebugConfiguration {
+        skip_pauses: false,
         pause_on_start: false,
         persistent: false,
         exceptions: ExceptionPolicy::None,

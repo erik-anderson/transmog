@@ -51,6 +51,7 @@ impl Application {
             .debugger_workspace
             .configuration(&format!("extension/{}/", request.activation.extension_id));
         request.configuration.breakpoints = configuration.breakpoints;
+        request.configuration.skip_pauses = configuration.skip_pauses;
         request.configuration.persistent = true;
         request.configuration.pause_on_start = true;
         let info = self.debug_visualizer(crate::debugger_workspace::OWNER, request)?;

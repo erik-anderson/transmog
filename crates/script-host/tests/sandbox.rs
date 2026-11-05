@@ -13,6 +13,52 @@ use transmog_script_supervisor::{IsolationPolicy, ScriptHostConfig, SupervisedSc
 mod debugger;
 
 #[tokio::test]
+async fn debugger_logpoints_complete_callbacks_through_the_authenticated_host_pipe() {
+    use transmog_script::debugger::{DebugAction, DebugEventKind, SourceBreakpoint};
+    let compiled = compile(
+        "export function onRequestHead(){\n const local=7;\n return {decision:{action:'continue'}};\n}",
+        1000,
+    );
+    let line = u32::try_from(
+        compiled
+            .javascript
+            .lines()
+            .position(|line| line.contains("return"))
+            .unwrap()
+            + 1,
+    )
+    .unwrap();
+    let session = debugger::session('1');
+    let owner = std::sync::Arc::clone(&session);
+    let runner = tokio::task::spawn_blocking(move || {
+        SupervisedScriptRunner::start_debug(&config(), compiled, Some(owner))
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    session
+        .command(DebugAction::Breakpoints {
+            values: vec![SourceBreakpoint {
+                id: 77,
+                condition: None,
+                log_expression: Some("'value ' + local".into()),
+                location: transmog_script::SourceLocation {
+                    source: "file:///transmog-script/main.js".into(),
+                    line,
+                    column: 1,
+                },
+            }],
+        })
+        .unwrap();
+    debugger::wait(&session, |event| matches!(event, DebugEventKind::Sources { breakpoints, .. } if breakpoints.iter().any(|point| point.id == 77 && point.resolved.is_some()))).await;
+    runner.invoke(invocation()).await.unwrap();
+    debugger::wait(&session, |event| matches!(event, DebugEventKind::Logpoint { text, thrown: false, .. } if text == "value 7")).await;
+    assert!(session.page(0).paused.is_none());
+    assert!(!runner.has_failed());
+    session.stop("Test ended");
+}
+
+#[tokio::test]
 async fn live_reservation_preserves_actual_heap_and_rejects_competing_and_pinned_exchanges() {
     use std::sync::Arc;
     use transmog_script::debugger::DebugEventKind;

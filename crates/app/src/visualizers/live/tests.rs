@@ -49,6 +49,7 @@ fn retention_pause_accounting_is_scoped_and_survives_reattachment() {
     let feed = feed(&app, &anchor, &declaration);
     assert_eq!(feed.debug_elapsed(), Duration::ZERO);
     let session = Session::new(DebugOptions {
+        skip_pauses: false,
         pause_on_start: false,
         persistent: false,
         session: "a".repeat(32),
@@ -92,6 +93,7 @@ fn retention_pause_accounting_is_scoped_and_survives_reattachment() {
         })
         .unwrap();
     let next = Session::new(DebugOptions {
+        skip_pauses: false,
         pause_on_start: false,
         persistent: false,
         session: "b".repeat(32),

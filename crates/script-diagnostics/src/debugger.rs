@@ -14,7 +14,7 @@ pub const MAX_DEBUG_SOURCES: usize = 128;
 pub const MAX_DEBUG_FRAMES: usize = 32;
 /// Own properties returned by one read.
 pub const MAX_PROPERTIES: usize = 100;
-/// Retained engine values in one pause epoch.
+/// Retained engine values between pause/resume boundaries, including idle Console results.
 pub const MAX_OBJECT_HANDLES: usize = 64;
 /// Maximum serialized native debug reply.
 pub const MAX_DEBUG_REPLY_BYTES: usize = 32 * 1024;
@@ -46,6 +46,9 @@ pub enum ExceptionPolicy {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SourceBreakpoint {
+    /// Side-effect-checked value to log instead of pausing when its condition matches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_expression: Option<String>,
     /// Optional side-effect-free JavaScript predicate evaluated in the hit frame.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub condition: Option<String>,
@@ -59,6 +62,9 @@ pub struct SourceBreakpoint {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DebugOptions {
+    /// Temporarily suppress all engine pauses, including logpoint hits.
+    #[serde(default)]
+    pub skip_pauses: bool,
     /// Fresh fixture runs can stop at the first executable statement in verified user modules.
     #[serde(default)]
     pub pause_on_start: bool,
@@ -93,9 +99,13 @@ pub fn valid_breakpoints(values: &[SourceBreakpoint]) -> bool {
             <= MAX_BREAKPOINT_TEXT_BYTES
         && values.iter().all(|value| {
             value
-                .condition
+                .log_expression
                 .as_ref()
-                .is_none_or(|text| !text.is_empty() && text.len() <= 4096)
+                .is_none_or(|text| !text.trim().is_empty() && text.len() <= 4096)
+                && value
+                    .condition
+                    .as_ref()
+                    .is_none_or(|text| !text.is_empty() && text.len() <= 4096)
                 && !value.location.source.is_empty()
                 && value.location.source.len() <= 2048
                 && !value.location.source.chars().any(char::is_control)
@@ -147,6 +157,15 @@ impl DebugCommand {
                 .bytes()
                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
             && match &self.action {
+                DebugAction::ContinueTo { pause, location } => {
+                    *pause > 0
+                        && valid_breakpoints(&[SourceBreakpoint {
+                            id: 0,
+                            condition: None,
+                            log_expression: None,
+                            location: location.clone(),
+                        }])
+                }
                 DebugAction::Breakpoints { values } => valid_breakpoints(values),
                 DebugAction::Release { handles, .. } => handles.len() <= MAX_OBJECT_HANDLES,
                 DebugAction::Scopes { pause, frame } => {
@@ -182,7 +201,11 @@ impl DebugCommand {
                             || (*pause > 0
                                 && frame.is_some_and(|frame| (frame as usize) < MAX_DEBUG_FRAMES)))
                 }
-                DebugAction::Exceptions { .. } | DebugAction::Stop | DebugAction::Detach => true,
+                DebugAction::Exceptions { .. }
+                | DebugAction::SkipPauses { .. }
+                | DebugAction::PauseNext { .. }
+                | DebugAction::Stop
+                | DebugAction::Detach => true,
             }
     }
 }
@@ -191,6 +214,23 @@ impl DebugCommand {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum DebugAction {
+    /// Suppress future pauses without discarding breakpoint or exception choices.
+    SkipPauses {
+        /// Whether to suppress all pause reasons and logpoints.
+        skip: bool,
+    },
+    /// Pause at the next statement in a verified user callback.
+    PauseNext {
+        /// False cancels an earlier request.
+        enabled: bool,
+    },
+    /// Resume to one exact loaded generated position, without saving a breakpoint.
+    ContinueTo {
+        /// Current pause generation.
+        pause: u64,
+        /// Exact registered generated source and position.
+        location: SourceLocation,
+    },
     /// Side-effect-checked expression preview for watches and automatic inspection.
     Inspect {
         /// Bounded expression; mutation is rejected by the engine.
@@ -253,7 +293,7 @@ pub enum DebugAction {
     },
     /// Release value handles early without changing execution.
     Release {
-        /// Current pause generation.
+        /// Current pause generation, or zero for idle Console values.
         pause: u64,
         /// Handles to release, bounded by the per-pause handle ceiling.
         handles: Vec<u32>,
@@ -351,6 +391,9 @@ pub struct DebugEvent {
 impl std::fmt::Debug for DebugEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let kind = match &self.event {
+            DebugEventKind::Control { .. } => "control",
+            DebugEventKind::Logpoint { .. } => "logpoint",
+            DebugEventKind::LogpointStarted => "logpoint-started",
             DebugEventKind::Output { .. } => "output",
             DebugEventKind::Evaluating => "evaluating",
             DebugEventKind::Evaluated { .. } => "evaluated",
@@ -377,6 +420,31 @@ impl std::fmt::Debug for DebugEvent {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum DebugEventKind {
+    /// Engine-only automatic logpoint inspection began; suspend dependent budgets.
+    LogpointStarted,
+    /// Native execution-control state, independent of saved breakpoint intent.
+    Control {
+        /// Whether future pauses and logpoints are suppressed.
+        skip_pauses: bool,
+        /// A pause is scheduled for the next verified user callback.
+        pause_next: bool,
+    },
+    /// Bounded output from a logpoint; no value handles or Inspector IDs escape.
+    Logpoint {
+        /// Actual verified generated position; absent for an omission notice.
+        location: Option<SourceLocation>,
+        /// Original position verified by the application.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        original: Option<SourceLocation>,
+        /// Inert primitive text or object label.
+        text: String,
+        /// Evaluating the log expression failed.
+        thrown: bool,
+        /// Additional messages omitted by the rate budget.
+        omitted: u64,
+        /// Native observation time for merging with Console output.
+        time_unix_ms: u64,
+    },
     /// Bounded data-property names from the selected lexical or global scope.
     Completions {
         /// Requested scope epoch; zero selects idle globals.
@@ -441,7 +509,7 @@ pub enum DebugEventKind {
     },
     /// Read-only own-property page.
     Properties {
-        /// Current pause generation.
+        /// Current pause generation, or zero for idle Console values.
         pause: u64,
         /// Requested native value handle.
         handle: u32,
@@ -471,11 +539,13 @@ mod tests {
     #[test]
     fn configuration_rejects_ambiguous_breakpoint_identities_and_invalid_coordinates() {
         let mut config = super::DebugOptions {
+            skip_pauses: false,
             pause_on_start: false,
             persistent: false,
             session: "a".repeat(32),
             exceptions: super::ExceptionPolicy::None,
             breakpoints: vec![super::SourceBreakpoint {
+                log_expression: None,
                 condition: None,
                 id: 1,
                 location: crate::SourceLocation {

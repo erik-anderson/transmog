@@ -23,6 +23,9 @@ mod tests;
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DebugConfiguration {
+    /// Temporarily suppress breakpoints, logpoints, exceptions and debugger statements.
+    #[serde(default)]
+    pub skip_pauses: bool,
     /// Stop a fresh fixture at its first executable user statement.
     #[serde(default)]
     pub pause_on_start: bool,
@@ -158,6 +161,7 @@ impl Debuggers {
         getrandom::fill(&mut random).map_err(|_| invalid("Debugger identity unavailable"))?;
         info.session = format!("{:032x}", u128::from_le_bytes(random));
         let options = DebugOptions {
+            skip_pauses: configuration.skip_pauses,
             pause_on_start: configuration.pause_on_start,
             persistent: configuration.persistent,
             session: info.session.clone(),
@@ -235,6 +239,7 @@ impl Debuggers {
             return Err(invalid("Invalid source breakpoints"));
         }
         let configuration = DebugConfiguration {
+            skip_pauses: configuration.skip_pauses,
             pause_on_start: configuration.pause_on_start,
             persistent: configuration.persistent,
             exceptions: configuration.exceptions,
@@ -545,22 +550,22 @@ impl Application {
             if !transmog_script_diagnostics::debugger::valid_breakpoints(values) {
                 return Err(invalid("Invalid source breakpoints"));
             }
-            *values = if let Some(snapshot) = run
-                .package
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .as_ref()
-            {
-                transmog_extension_supervisor::map_debug_breakpoints(snapshot, values)
-            } else {
-                translate(
-                    values,
-                    run.map
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .as_deref(),
-                )
+            *values = translate_for_run(&run, values);
+        } else if let DebugAction::ContinueTo { location, .. } = &mut action {
+            let point = SourceBreakpoint {
+                id: 0,
+                condition: None,
+                log_expression: None,
+                location: location.clone(),
             };
+            if !transmog_script_diagnostics::debugger::valid_breakpoints(std::slice::from_ref(
+                &point,
+            )) {
+                return Err(invalid("Invalid source position"));
+            }
+            if let Some(mapped) = translate_for_run(&run, &[point]).first() {
+                *location = mapped.location.clone();
+            }
         }
         if matches!(action, DebugAction::Stop) {
             run.canceled.store(true, Ordering::Release);
@@ -637,6 +642,24 @@ fn decode(bytes: &[u8]) -> Option<sourcemap::SourceMap> {
     };
     Some(map)
 }
+fn translate_for_run(run: &Run, values: &[SourceBreakpoint]) -> Vec<SourceBreakpoint> {
+    if let Some(snapshot) = run
+        .package
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+    {
+        transmog_extension_supervisor::map_debug_breakpoints(snapshot, values)
+    } else {
+        translate(
+            values,
+            run.map
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .as_deref(),
+        )
+    }
+}
 fn translate(values: &[SourceBreakpoint], bytes: Option<&[u8]>) -> Vec<SourceBreakpoint> {
     let map = bytes.and_then(decode);
     values
@@ -672,45 +695,64 @@ fn translate(values: &[SourceBreakpoint], bytes: Option<&[u8]>) -> Vec<SourceBre
         .collect()
 }
 fn map_events(page: &mut SessionPage, bytes: &[u8]) {
-    if !page
-        .events
-        .iter()
-        .chain(page.paused.iter())
-        .any(|event| matches!(event.event, DebugEventKind::Paused { .. }))
-    {
+    if !page.events.iter().chain(page.paused.iter()).any(|event| {
+        matches!(
+            event.event,
+            DebugEventKind::Paused { .. } | DebugEventKind::Logpoint { .. }
+        )
+    }) {
         return;
     }
-    let Some(map) = decode(bytes) else { return };
+    let Some(map) = decode(bytes) else {
+        return;
+    };
     for event in page.events.iter_mut().chain(page.paused.iter_mut()) {
-        if let DebugEventKind::Paused { frames, .. } = &mut event.event {
-            for frame in frames {
-                frame.original = None;
-                if let Some(location) = &frame.location
-                    && location.source == "file:///transmog-script/main.js"
-                    && location.line > 0
-                    && location.column > 0
-                    && let Some(token) =
-                        same_line_token(&map, location.line - 1, location.column - 1)
-                    && let Some(source) = token.get_source().filter(|source| source.len() <= 2048)
-                    && let Some(line) = token.get_src_line().checked_add(1)
-                    && let Some(column) = token
-                        .get_src_col()
-                        .checked_add(if token.is_range() {
-                            location.column - 1 - token.get_dst_col()
-                        } else {
-                            0
-                        })
-                        .and_then(|column| column.checked_add(1))
-                {
-                    frame.original = Some(SourceLocation {
-                        source: source.into(),
-                        line,
-                        column,
-                    });
+        match &mut event.event {
+            DebugEventKind::Paused { frames, .. } => {
+                for frame in frames {
+                    frame.original = frame
+                        .location
+                        .as_ref()
+                        .and_then(|location| original_location(&map, location));
                 }
             }
+            DebugEventKind::Logpoint {
+                location, original, ..
+            } => {
+                *original = location
+                    .as_ref()
+                    .and_then(|location| original_location(&map, location));
+            }
+            _ => {}
         }
     }
+}
+fn original_location(
+    map: &sourcemap::SourceMap,
+    location: &SourceLocation,
+) -> Option<SourceLocation> {
+    if location.source != "file:///transmog-script/main.js"
+        || location.line == 0
+        || location.column == 0
+    {
+        return None;
+    }
+    let token = same_line_token(map, location.line - 1, location.column - 1)?;
+    Some(SourceLocation {
+        source: token
+            .get_source()
+            .filter(|source| source.len() <= 2048)?
+            .into(),
+        line: token.get_src_line().checked_add(1)?,
+        column: token
+            .get_src_col()
+            .checked_add(if token.is_range() {
+                location.column - 1 - token.get_dst_col()
+            } else {
+                0
+            })?
+            .checked_add(1)?,
+    })
 }
 fn same_line_token(
     map: &sourcemap::SourceMap,

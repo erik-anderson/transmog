@@ -54,6 +54,7 @@ struct Pending {
     expected: Expected,
 }
 enum Expected {
+    Control,
     Evaluate(u64),
     Complete(u64),
     Configure,
@@ -66,6 +67,7 @@ enum Expected {
 impl Expected {
     fn from_action(action: &DebugAction) -> Self {
         match action {
+            DebugAction::SkipPauses { .. } | DebugAction::PauseNext { .. } => Self::Control,
             DebugAction::Evaluate { pause, .. } | DebugAction::Inspect { pause, .. } => {
                 Self::Evaluate(*pause)
             }
@@ -76,7 +78,7 @@ impl Expected {
                 handle,
                 offset,
             } => Self::Properties(*pause, *handle, *offset),
-            DebugAction::Resume { .. } => Self::Resume,
+            DebugAction::Resume { .. } | DebugAction::ContinueTo { .. } => Self::Resume,
             DebugAction::Release { .. } => Self::Release,
             DebugAction::Detach => Self::Detach,
             _ => Self::Configure,
@@ -84,6 +86,7 @@ impl Expected {
     }
     fn accepts(&self, event: &DebugEventKind) -> bool {
         match event {
+            DebugEventKind::Control { .. } => matches!(self, Self::Control),
             DebugEventKind::Completions { pause, .. } => {
                 matches!(self, Self::Complete(p) if p == pause)
             }
@@ -131,7 +134,18 @@ impl Connection {
         matches!(self, Self::Attached | Self::Detaching(_))
     }
 }
+/// Current native execution controls, independent of saved breakpoint intent.
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExecutionControls {
+    /// Future pauses and logpoint hits are suppressed.
+    pub skip_pauses: bool,
+    /// A pause is scheduled at the next verified user callback.
+    pub pause_next: bool,
+}
 struct State {
+    controls: ExecutionControls,
+    logpoint_at: Option<Instant>,
     exceptions: crate::debugger::ExceptionPolicy,
     sources: BTreeMap<String, DebugSource>,
     breakpoints: BTreeMap<u32, BreakpointResolution>,
@@ -168,6 +182,9 @@ pub struct Session {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionPage {
+    /// Current native execution controls.
+    #[serde(flatten)]
+    pub controls: ExecutionControls,
     /// Current exception pause policy for this target.
     pub exceptions: crate::debugger::ExceptionPolicy,
     /// Current pause, retained even when transient inspection replies expire from history.
@@ -231,11 +248,17 @@ impl Session {
             })
             .collect();
         let exceptions = options.exceptions;
+        let skip_pauses = options.skip_pauses;
         let session = Arc::new(Self {
             options,
             created: Instant::now(),
             clock: Arc::default(),
             state: Mutex::new(State {
+                controls: ExecutionControls {
+                    skip_pauses,
+                    pause_next: false,
+                },
+                logpoint_at: None,
                 exceptions,
                 sources: BTreeMap::new(),
                 breakpoints,
@@ -276,20 +299,25 @@ impl Session {
                         if state.connection.closed() {
                             break;
                         }
-                        let expired = (!session.options.persistent
-                            && (session.created.elapsed()
-                                >= Duration::from_millis(SESSION_LEASE_MS)
-                                || state.paused_at.is_some_and(|start| {
-                                    start.elapsed() >= Duration::from_millis(PAUSE_LEASE_MS)
-                                })))
+                        let expired = state
+                            .logpoint_at
+                            .is_some_and(|since| since.elapsed() >= Duration::from_secs(1))
+                            || (!session.options.persistent
+                                && (session.created.elapsed()
+                                    >= Duration::from_millis(SESSION_LEASE_MS)
+                                    || state.paused_at.is_some_and(|start| {
+                                        start.elapsed() >= Duration::from_millis(PAUSE_LEASE_MS)
+                                    })))
                             || state.pending.values().any(|pending| {
                                 (!session.options.persistent
                                     || !state.active
                                     || state.paused_at.is_some()
                                     || pending.started)
+                                    && (pending.started
+                                        || !state.pending.values().any(|active| active.started))
                                     && pending.since.elapsed()
                                         >= Duration::from_millis(if pending.inspection {
-                                            100
+                                            500
                                         } else {
                                             1000
                                         })
@@ -416,6 +444,11 @@ impl Session {
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.logpoint_at.is_some() {
+            drop(state);
+            self.stop("Debugger inspection did not finish before the callback reply");
+            return;
+        }
         state.active = false;
         for pending in state.pending.values_mut() {
             if !pending.started {
@@ -590,6 +623,7 @@ impl Session {
             | DebugAction::Inspect { pause, .. }
             | DebugAction::Complete { pause, .. }
             | DebugAction::Resume { pause, .. }
+            | DebugAction::ContinueTo { pause, .. }
             | DebugAction::Scopes { pause, .. }
             | DebugAction::Properties { pause, .. }
             | DebugAction::Release { pause, .. } => Some(*pause),
@@ -694,6 +728,9 @@ impl Session {
                 | DebugEventKind::Output { .. }
                 | DebugEventKind::Evaluated { .. }
                 | DebugEventKind::Completions { .. }
+                | DebugEventKind::Control { .. }
+                | DebugEventKind::Logpoint { .. }
+                | DebugEventKind::LogpointStarted
                 | DebugEventKind::Properties { pause: 0, .. }
                 | DebugEventKind::Sources { .. }
                 | DebugEventKind::Acknowledged
@@ -726,6 +763,55 @@ impl Session {
             return Err("Debugger reply requires a request identity");
         }
         match &mut event.event {
+            DebugEventKind::LogpointStarted => {
+                if event.request != 0
+                    || !state.active
+                    || state.paused_at.is_some()
+                    || state.logpoint_at.is_some()
+                    || state.pending.values().any(|pending| pending.started)
+                {
+                    return Err("Invalid logpoint inspection start");
+                }
+                state.logpoint_at = Some(Instant::now());
+                self.clock.pause();
+            }
+            DebugEventKind::Control {
+                skip_pauses,
+                pause_next,
+            } => {
+                if *skip_pauses && *pause_next {
+                    return Err("Invalid debugger execution controls");
+                }
+                state.controls.skip_pauses = *skip_pauses;
+                state.controls.pause_next = *pause_next;
+            }
+            DebugEventKind::Logpoint {
+                location,
+                original,
+                text,
+                time_unix_ms,
+                omitted,
+                ..
+            } => {
+                if event.request != 0
+                    || original.is_some()
+                    || text.len() > crate::debugger::MAX_VALUE_BYTES
+                    || *time_unix_ms > 9_007_199_254_740_991
+                    || location.as_ref().is_some_and(|location| {
+                        !valid_location(location) || !state.sources.contains_key(&location.source)
+                    })
+                {
+                    return Err("Invalid debugger logpoint output");
+                }
+                if location.is_some() {
+                    if state.logpoint_at.take().is_none() {
+                        return Err("Logpoint output arrived before inspection started");
+                    }
+                    self.clock.resume();
+                } else if *omitted == 0 {
+                    return Err("Invalid logpoint omission notice");
+                }
+            }
             DebugEventKind::Completions { pause, matches, .. } => {
                 if (if *pause == 0 {
                     state.paused_at.is_some()
@@ -750,6 +836,11 @@ impl Session {
                 }
             }
             DebugEventKind::Evaluating => {
+                if state.logpoint_at.is_some()
+                    || state.pending.values().any(|pending| pending.started)
+                {
+                    return Err("Overlapping debugger evaluation");
+                }
                 let pending = state
                     .pending
                     .get_mut(&event.request)
@@ -802,6 +893,7 @@ impl Session {
             } => {
                 if !state.connection.attached()
                     || !state.active
+                    || state.logpoint_at.is_some()
                     || state.paused_at.is_some()
                     || *pause <= state.pause
                     || frames.len() > crate::debugger::MAX_DEBUG_FRAMES
@@ -819,6 +911,7 @@ impl Session {
                     return Err("Invalid debugger pause transition");
                 }
                 state.pause = *pause;
+                state.controls.pause_next = false;
                 for pending in state.pending.values_mut() {
                     if !pending.started {
                         pending.since = Instant::now();
@@ -947,6 +1040,15 @@ impl Session {
             )
         {
             state.pending.remove(&event.request);
+            // One engine services this finite queue. Waiting commands receive
+            // a fresh progress budget after each completed operation.
+            for pending in state
+                .pending
+                .values_mut()
+                .filter(|pending| !pending.started)
+            {
+                pending.since = Instant::now();
+            }
         }
         let stopped = matches!(event.event, DebugEventKind::Stopped { .. });
         let stop = if stopped {
@@ -1031,6 +1133,7 @@ impl Session {
                 .front()
                 .is_none_or(|(sequence, ..)| after.saturating_add(1) < *sequence);
         SessionPage {
+            controls: state.controls,
             exceptions: state.exceptions,
             paused: state.pause_snapshot.clone(),
             inventory: (after == 0 || omitted).then(|| DebugInventory {

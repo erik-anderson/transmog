@@ -200,6 +200,7 @@ mod tests {
                     line: 2,
                     column: 1,
                 },
+                log_expression: None,
                 condition: Some("b===2".into()),
             },
         };

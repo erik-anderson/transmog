@@ -1,12 +1,14 @@
 use super::*;
 use std::sync::mpsc::{self, SyncSender};
 use transmog_script_diagnostics::debugger::{DebugProperty, DebugValue, SourceBreakpoint};
+mod execution;
 
 const SESSION: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const SOURCE: &str = "file:///transmog-script/main.js";
 const FIXTURE: &str = "globalThis.touches=0;\nexport function inner(input) {\n  const local=input+4;\n  const object={get secret(){touches++;throw new Error('getter ran');}};\n  const proxy=new Proxy({}, {ownKeys(){touches++;throw 0;},get(){touches++;throw 0;}});\n  const result=local*2;\n  return result;\n}\nexport function outer(value){return inner(value);}\nglobalThis.entry=outer;\n//# sourceURL=file:///forged-source.js\n";
 fn options(breakpoints: Vec<SourceBreakpoint>) -> DebugOptions {
     DebugOptions {
+        skip_pauses: false,
         pause_on_start: false,
         persistent: false,
         session: SESSION.into(),
@@ -99,6 +101,7 @@ fn conditional_breakpoints_skip_false_and_pause_on_true() {
             .enable_debugger(
                 options(vec![SourceBreakpoint {
                     id: 1,
+                    log_expression: None,
                     condition: Some("value === 3".into()),
                     location: transmog_script_diagnostics::SourceLocation {
                         source: SOURCE.into(),
@@ -160,6 +163,7 @@ fn conditional_breakpoints_reject_side_effects_without_running_them() {
             .enable_debugger(
                 options(vec![SourceBreakpoint {
                     id: 1,
+                    log_expression: None,
                     condition: Some("++touches".into()),
                     location: transmog_script_diagnostics::SourceLocation {
                         source: SOURCE.into(),
@@ -734,6 +738,7 @@ fn registered_script_ids_steps_scopes_and_inert_properties_share_one_pause_epoch
         runtime
             .enable_debugger(
                 options(vec![SourceBreakpoint {
+                    log_expression: None,
                     condition: None,
                     id: 1,
                     location: SourceLocation {
@@ -1037,6 +1042,7 @@ fn source_breakpoints_pause_initializers_before_side_effects_and_step_into_and_o
             .enable_debugger(
                 options(vec![
                     SourceBreakpoint {
+                        log_expression: None,
                         condition: None,
                         id: 1,
                         location: SourceLocation {
@@ -1046,6 +1052,7 @@ fn source_breakpoints_pause_initializers_before_side_effects_and_step_into_and_o
                         },
                     },
                     SourceBreakpoint {
+                        log_expression: None,
                         condition: None,
                         id: 2,
                         location: SourceLocation {

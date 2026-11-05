@@ -28,5 +28,13 @@ the selected native call-frame ID. Conditions use V8's side-effect check. Object
 inspection continues to use inert own descriptors. The app exposes typed commands
 over authenticated inherited pipes, without an Inspector endpoint or MCP command.
 
+Temporary pause settings apply to current and future workers without editing
+saved breakpoints. Pause-next and Continue to here are execution controls, not
+durable breakpoint records. Logpoints use side-effect-checked expressions and
+bounded output; their inspection time suspends dependent execution budgets.
+Queued inspection shares a progress budget so a valid running evaluation cannot
+make waiting reads expire. Stalled evaluations and automatic inspection retain
+independent native deadlines.
+
 Script tests and visualizers share this workspace. Fresh fixtures pause before
 their first user statement, allowing breakpoint setup before execution.

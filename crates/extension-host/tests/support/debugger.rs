@@ -8,6 +8,7 @@ use transmog_extensions::debugger::{
 };
 pub fn session(id: char) -> Arc<DebugSession> {
     DebugSession::new(DebugOptions {
+        skip_pauses: false,
         pause_on_start: false,
         persistent: false,
         session: id.to_string().repeat(32),

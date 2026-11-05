@@ -106,6 +106,15 @@ pub(super) fn debug_event(
     snapshot: &Snapshot,
     event: &mut transmog_extensions::debugger::DebugEvent,
 ) {
+    if let transmog_extensions::debugger::DebugEventKind::Logpoint {
+        location, original, ..
+    } = &mut event.event
+    {
+        *original = location
+            .as_ref()
+            .and_then(|location| debug_location(snapshot, location));
+        return;
+    }
     let transmog_extensions::debugger::DebugEventKind::Paused {
         frames, exception, ..
     } = &mut event.event
@@ -153,6 +162,36 @@ pub(super) fn debug_event(
             frame.original = mapped.original;
         }
     }
+}
+fn debug_location(snapshot: &Snapshot, location: &SourceLocation) -> Option<SourceLocation> {
+    let mut failure = Failure::new(
+        transmog_extensions::FailureKind::Exception,
+        "Debugger location",
+    );
+    failure.exception = Some(Box::new(transmog_script_diagnostics::ExceptionDiagnostic {
+        artifact: None,
+        exception: transmog_script_diagnostics::ExceptionValue {
+            name: None,
+            message: String::new(),
+            frames: vec![transmog_script_diagnostics::StackFrame {
+                function: String::new(),
+                generated: Some(location.clone()),
+                original: None,
+                mapping_issue: None,
+            }],
+            unavailable: false,
+        },
+        causes: vec![],
+        truncated: false,
+    }));
+    Mapper::new(snapshot)
+        .map_failure(failure)
+        .exception?
+        .exception
+        .frames
+        .first()?
+        .original
+        .clone()
 }
 pub(super) fn debug_breakpoints(
     snapshot: &Snapshot,
@@ -410,6 +449,7 @@ mod tests {
         .unwrap();
         cache_sources(&snapshot);
         let original_breakpoint = transmog_extensions::debugger::SourceBreakpoint {
+            log_expression: None,
             condition: None,
             id: 1,
             location: SourceLocation {

@@ -3,6 +3,7 @@ use crate::debugger::{ExceptionPolicy, ResumeAction};
 use std::sync::atomic::{AtomicBool, Ordering};
 fn session() -> Arc<Session> {
     Session::new(DebugOptions {
+        skip_pauses: false,
         pause_on_start: false,
         persistent: false,
         session: "a".repeat(32),
@@ -85,9 +86,119 @@ fn inspection_replies_are_correlated_bounded_and_valid_in_the_exact_scope() {
     );
     session.stop("Test ended");
 }
+
+#[test]
+fn queued_inspection_waits_for_the_running_command_and_receives_a_fresh_progress_budget() {
+    let session = session();
+    session.bind(|_| true, || {});
+    session.begin(0);
+    session
+        .accept(event(&session, DebugEventKind::Attached))
+        .unwrap();
+    session.accept(event(&session, paused())).unwrap();
+    let evaluate = session
+        .command(DebugAction::Evaluate {
+            expression: "value".into(),
+            pause: 1,
+            frame: Some(0),
+        })
+        .unwrap();
+    let mut started = event(&session, DebugEventKind::Evaluating);
+    started.request = evaluate;
+    session.accept(started).unwrap();
+    let inspect = session
+        .command(DebugAction::Scopes { pause: 1, frame: 0 })
+        .unwrap();
+    {
+        let mut state = session.state.lock().unwrap();
+        for pending in state.pending.values_mut() {
+            pending.since = Instant::now()
+                .checked_sub(Duration::from_millis(700))
+                .unwrap();
+        }
+    }
+    std::thread::sleep(Duration::from_millis(30));
+    assert!(
+        !session.is_closed(),
+        "A queued read is not a stalled inspection"
+    );
+    let mut evaluated = event(
+        &session,
+        DebugEventKind::Evaluated {
+            pause: 1,
+            value: crate::debugger::DebugValue {
+                kind: "number".into(),
+                display: "1".into(),
+                handle: None,
+                truncated: false,
+            },
+            thrown: false,
+        },
+    );
+    evaluated.request = evaluate;
+    session.accept(evaluated).unwrap();
+    assert!(
+        session.state.lock().unwrap().pending[&inspect]
+            .since
+            .elapsed()
+            < Duration::from_millis(100)
+    );
+    session.stop("Test ended");
+}
+
+#[test]
+fn automatic_logpoint_inspection_suspends_budgets_and_has_authenticated_start_and_end() {
+    let session = session();
+    session.bind(|_| true, || {});
+    session.begin(0);
+    session
+        .accept(event(&session, DebugEventKind::Attached))
+        .unwrap();
+    session
+        .accept(event(
+            &session,
+            DebugEventKind::Sources {
+                sources: vec![crate::debugger::DebugSource {
+                    source: "file:///main.js".into(),
+                    bytes: None,
+                }],
+                breakpoints: vec![],
+            },
+        ))
+        .unwrap();
+    let output = DebugEventKind::Logpoint {
+        location: Some(crate::SourceLocation {
+            source: "file:///main.js".into(),
+            line: 1,
+            column: 1,
+        }),
+        original: None,
+        text: "value".into(),
+        thrown: false,
+        omitted: 0,
+        time_unix_ms: 0,
+    };
+    assert!(session.accept(event(&session, output.clone())).is_err());
+    session
+        .accept(event(&session, DebugEventKind::LogpointStarted))
+        .unwrap();
+    assert!(
+        session
+            .accept(event(&session, DebugEventKind::LogpointStarted))
+            .is_err()
+    );
+    std::thread::sleep(Duration::from_millis(30));
+    session.accept(event(&session, output)).unwrap();
+    let elapsed = session.clock.elapsed();
+    assert!(elapsed >= Duration::from_millis(25));
+    std::thread::sleep(Duration::from_millis(10));
+    assert_eq!(session.clock.elapsed(), elapsed);
+    session.stop("Test ended");
+}
 #[test]
 fn workspace_detaches_after_a_queued_attachment_and_keeps_pause_snapshot() {
     let session = Session::new(DebugOptions {
+        skip_pauses: false,
         pause_on_start: false,
         persistent: true,
         session: "b".repeat(32),
@@ -114,6 +225,7 @@ fn workspace_detaches_after_a_queued_attachment_and_keeps_pause_snapshot() {
 #[test]
 fn workspace_pause_survives_legacy_lease_and_history_eviction() {
     let session = Session::new(DebugOptions {
+        skip_pauses: false,
         pause_on_start: false,
         persistent: true,
         session: "c".repeat(32),

@@ -304,6 +304,7 @@ mod tests {
     use transmog_script_diagnostics::debugger::{DebugAction, ExceptionPolicy};
     fn options() -> DebugOptions {
         DebugOptions {
+            skip_pauses: false,
             pause_on_start: false,
             persistent: false,
             session: "a".repeat(32),

@@ -2752,6 +2752,7 @@ pub fn run() {
                 debugger_workspace::workspace_breakpoints,
                 debugger_workspace::workspace_debug_session,
                 debugger_workspace::workspace_debug_command,
+                debugger_workspace::workspace_skip_pauses,
                 debugger_workspace::workspace_restart,
                 response_assets,
                 inspect_response_asset,

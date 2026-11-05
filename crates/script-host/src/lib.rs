@@ -186,6 +186,7 @@ fn run_stream(
                 runtime.runtime.begin_console(request_id);
                 runtime.runtime.begin_debug_operation(request_id);
                 let result = runtime.invoke(invocation);
+                runtime.runtime.finish_debug_operation();
                 runtime.runtime.finish_console();
                 send(
                     output,
@@ -334,6 +335,7 @@ impl ScriptRuntime {
                 .map_err(|error| engine_failure(ScriptFailureCategory::Exception, error))?;
             Ok(())
         })();
+        runtime.finish_debug_operation();
         runtime.finish_console();
         initialized?;
         Ok(Self {
