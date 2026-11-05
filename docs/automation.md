@@ -878,7 +878,9 @@ the Console. Drag pane dividers to resize them. Compact docks show code, Sources
 or Inspector one at a time so the editor remains usable.
 
 Use **Ctrl+P** to open a source and **Ctrl+Shift+F** to search saved and installed
-sources without activating them. Open files appear as tabs; **Alt+Left/Right**
+sources without activating them. Append `:line` or `:line:column` to a file name,
+or use `:line` for the current file. Search results select the matching text.
+Open files appear as tabs; **Alt+Left/Right**
 moves through source history. The Sources tree groups files into package folders
 and marks the selected file.
 

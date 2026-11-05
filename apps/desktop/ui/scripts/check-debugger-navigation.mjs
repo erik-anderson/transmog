@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { resolve } from "node:path";
 
-export async function checkDebuggerNavigation(page, workspace) {
+export async function checkDebuggerNavigation(page, workspace, root) {
   const editor = async () => workspace.evaluate((element) => element.editor.focus());
   const source = () => workspace.evaluate((element) => element.debuggerSourceLabel);
   const view = async (name) => {
@@ -12,9 +13,34 @@ export async function checkDebuggerNavigation(page, workspace) {
   );
   await editor();
   await page.keyboard.press("Control+p");
-  await workspace.getByRole("textbox", { name: "Source query", exact: true }).fill("src/view");
+  const query = workspace.getByRole("textbox", { name: "Source query", exact: true });
+  const beforeFilter = await query.boundingBox();
+  await query.fill("no-matching-file");
+  await workspace
+    .locator(".source-dialog")
+    .getByText("No matching sources.", { exact: true })
+    .waitFor();
+  const afterFilter = await query.boundingBox();
+  assert.equal(afterFilter.y, beforeFilter.y, "Changing results must not move the input");
+  assert.equal(afterFilter.x, beforeFilter.x);
+  await workspace.getByRole("textbox", { name: "Source query", exact: true }).fill("src/view:3:5");
+  await page.screenshot({
+    path: resolve(root, "../../../target/ui-check/debugger-source-location-wide.png"),
+  });
   await workspace.getByRole("textbox", { name: "Source query", exact: true }).press("Enter");
   assert.equal(await source(), "example/src/view.ts");
+  assert.deepEqual(
+    await workspace.evaluate((element) => {
+      const position = element.editor.getPosition();
+      return { line: position.lineNumber, column: position.column };
+    }),
+    { line: 3, column: 5 },
+  );
+  await editor();
+  await page.keyboard.press("Control+p");
+  await workspace.getByRole("textbox", { name: "Source query", exact: true }).fill(":2:9");
+  await workspace.getByRole("textbox", { name: "Source query", exact: true }).press("Enter");
+  assert.equal(await workspace.evaluate((element) => element.editor.getPosition().column), 9);
   await workspace
     .locator(".sources summary")
     .filter({ hasText: /^Extensions$/u })
@@ -48,6 +74,13 @@ export async function checkDebuggerNavigation(page, workspace) {
   await workspace.getByRole("button", { name: /sample\/main.ts:2/u }).click();
   assert.equal(await source(), "sample/main.ts");
   assert.equal(await workspace.evaluate((element) => element.editor.getPosition().lineNumber), 2);
+  assert.equal(
+    await workspace.evaluate((element) =>
+      element.model.getValueInRange(element.editor.getSelection()),
+    ),
+    "const value",
+  );
+  await checkSourceLoadRaces(page, workspace);
   assert.equal(
     await page.evaluate(() => globalThis.__workspaceFixture.workspaceDebug.actions.length),
     before,
@@ -120,6 +153,14 @@ export async function checkDebuggerNavigation(page, workspace) {
   await workspace.locator(".variables").waitFor();
   await workspace.getByRole("button", { name: "Close inspector", exact: true }).click();
   await workspace.locator(".source-pane").waitFor();
+  await editor();
+  await page.keyboard.press("Control+Shift+f");
+  await workspace.getByRole("textbox", { name: "Source query", exact: true }).fill("value");
+  await workspace.locator(".source-result").first().waitFor();
+  await page.screenshot({
+    path: resolve(root, "../../../target/ui-check/debugger-source-search-800.png"),
+  });
+  await workspace.getByRole("textbox", { name: "Source query", exact: true }).press("Escape");
   await page.setViewportSize({ width: 1440, height: 900 });
   await workspace.getByRole("button", { name: "Dock", exact: true }).click();
   await workspace.getByRole("button", { name: "Dock to bottom", exact: true }).click();
@@ -133,4 +174,76 @@ export async function checkDebuggerNavigation(page, workspace) {
   await page.keyboard.press("F12");
   await page.evaluate(() => globalThis.__workspaceFixture.workspaceDebug.finishToggle());
   await workspace.locator(".monaco-editor").waitFor();
+}
+
+async function checkSourceLoadRaces(page, workspace) {
+  const result = await workspace.evaluate((element) =>
+    element.debuggerNavigationResults.find(
+      (result) =>
+        result.file.id === element.selected.id &&
+        result.file.artifact === element.selected.artifact,
+    ),
+  );
+  assert.ok(result);
+  const start = async () => {
+    await page.evaluate(() => {
+      globalThis.__workspaceFixture.workspaceDebug.holdSourceRead = true;
+    });
+    await workspace.evaluate((element, result) => {
+      globalThis.__pendingSourceNavigation = element.openNavigationResult(result);
+    }, result);
+    await page.waitForFunction(
+      () => !!globalThis.__workspaceFixture.workspaceDebug.releaseSourceRead,
+    );
+  };
+  const finish = async () =>
+    page.evaluate(async () => {
+      const debug = globalThis.__workspaceFixture.workspaceDebug;
+      debug.holdSourceRead = false;
+      debug.releaseSourceRead?.();
+      await globalThis.__pendingSourceNavigation;
+      delete globalThis.__pendingSourceNavigation;
+    });
+  const prompt = workspace.getByRole("textbox", { name: "Immediate expression", exact: true });
+  try {
+    await start();
+    await prompt.fill("Keep this draft");
+    await finish();
+    assert.equal(
+      await prompt.evaluate((element) => element.getRootNode().activeElement === element),
+      true,
+      "A delayed source must not steal Console focus",
+    );
+    assert.equal(await prompt.inputValue(), "Keep this draft");
+    await start();
+    await workspace.evaluate(async (element, file) => {
+      await element.openFile(file);
+      element.editor.setPosition({ lineNumber: 3, column: 4 });
+      element.editor.focus();
+    }, result.file);
+    await finish();
+    assert.deepEqual(
+      await workspace.evaluate((element) => {
+        const position = element.editor.getPosition();
+        return { line: position.lineNumber, column: position.column };
+      }),
+      { line: 3, column: 4 },
+      "A newer visit to the same file keeps its position",
+    );
+    await start();
+    await workspace.evaluate(
+      (element, key) => element.closeTab(key),
+      `${result.file.id}@${result.file.artifact}`,
+    );
+    await finish();
+    assert.equal(
+      await workspace.evaluate((element) => element.selected),
+      null,
+      "Closing the tab cancels its pending source load",
+    );
+    await workspace.evaluate((element, file) => element.openFile(file), result.file);
+    await prompt.fill("");
+  } finally {
+    await finish();
+  }
 }

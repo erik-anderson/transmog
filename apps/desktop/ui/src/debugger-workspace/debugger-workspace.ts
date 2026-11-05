@@ -342,6 +342,7 @@ export class DebuggerWorkspace extends WebUIElement {
     const index = this.debuggerTabs.findIndex((tab) => tab.key === key);
     this.debuggerTabs = this.debuggerTabs.filter((tab) => tab.key !== key);
     if (this.selected && sourceKey(this.selected) === key) {
+      this.sourceGeneration++;
       const next = this.debuggerTabs[Math.max(0, index - 1)];
       if (next) {
         await this.openFile(next.file);
@@ -394,8 +395,10 @@ export class DebuggerWorkspace extends WebUIElement {
     this.debuggerNavigationQuery = "";
     this.debuggerNavigationStatus = search
       ? "Search saved and installed sources without activating them."
-      : "";
-    this.debuggerNavigationResults = search ? [] : matchingFiles(this.files, "");
+      : "Append :line or :line:column to jump within a file.";
+    this.debuggerNavigationResults = search
+      ? []
+      : matchingFiles(this.files, "", this.selected ?? undefined);
     this.navigationDialog.showModal();
     this.navigationInput.focus();
   }
@@ -413,7 +416,14 @@ export class DebuggerWorkspace extends WebUIElement {
     window.clearTimeout(this.navigationTimer);
     const generation = ++this.navigationGeneration;
     if (!this.navigationSearch) {
-      this.debuggerNavigationResults = matchingFiles(this.files, this.debuggerNavigationQuery);
+      this.debuggerNavigationResults = matchingFiles(
+        this.files,
+        this.debuggerNavigationQuery,
+        this.selected ?? undefined,
+      );
+      this.debuggerNavigationStatus = this.debuggerNavigationResults.length
+        ? "Append :line or :line:column to jump within a file."
+        : "No matching sources.";
       return;
     }
     this.debuggerNavigationResults = [];
@@ -472,13 +482,28 @@ export class DebuggerWorkspace extends WebUIElement {
   }
   async openNavigationResult(result: SourceResult): Promise<void> {
     this.closeNavigation();
-    await this.openFile(result.file);
-    if (this.isSelected(result.file)) {
-      if (result.line) {
-        this.editor?.setPosition({ lineNumber: result.line, column: 1 });
-        this.editor?.revealLineInCenter(result.line);
+    const focus = this.activeElement();
+    const input = this.debuggerInput;
+    const opening = this.openFile(result.file);
+    const generation = this.sourceGeneration;
+    if ((await opening) && generation === this.sourceGeneration && this.isSelected(result.file)) {
+      if (result.line && this.model) {
+        const range = this.model.validateRange({
+          startLineNumber: result.line,
+          startColumn: result.column,
+          endLineNumber: result.line,
+          endColumn: result.column + result.length,
+        });
+        this.editor?.setSelection(range);
+        this.editor?.revealRangeInCenter(range);
       }
-      this.editor?.focus();
+      const active = this.activeElement();
+      if (
+        input === this.debuggerInput &&
+        (active === focus || (!focus?.isConnected && active === document.body))
+      ) {
+        this.editor?.focus();
+      }
     }
   }
   diagnostics?: ScriptDiagnostics;
@@ -1696,7 +1721,7 @@ export class DebuggerWorkspace extends WebUIElement {
   private isSelected(file: File): boolean {
     return this.selected?.id === file.id && this.selected.artifact === file.artifact;
   }
-  async openFile(file: File, remember = true, record = true): Promise<void> {
+  async openFile(file: File, remember = true, record = true): Promise<boolean> {
     const generation = ++this.sourceGeneration;
     try {
       const text = await invoke<string>("debugger_file", { id: file.id, artifact: file.artifact });
@@ -1706,7 +1731,7 @@ export class DebuggerWorkspace extends WebUIElement {
         !this.monaco ||
         !this.editor
       ) {
-        return;
+        return false;
       }
       if (this.selected) {
         this.states.set(
@@ -1746,13 +1771,20 @@ export class DebuggerWorkspace extends WebUIElement {
         this.states.delete(this.states.keys().next().value!);
       }
       await this.loadPositions();
+      if (!this.isConnected || generation !== this.sourceGeneration) {
+        return false;
+      }
       this.renderPoints();
       this.$flushUpdates();
       this.shadowRoot
         ?.getElementById(`source-tab-${key}`)
         ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      return true;
     } catch (error) {
-      this.debuggerError = describeError(error);
+      if (this.isConnected && generation === this.sourceGeneration) {
+        this.debuggerError = describeError(error);
+      }
+      return false;
     }
   }
   async switchRepresentation(event: Event): Promise<void> {

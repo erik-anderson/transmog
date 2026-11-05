@@ -64,6 +64,15 @@ export async function checkNativeDebuggerWorkspace({
   const paused = proxyGet(listener, `${base}/workspace`);
   await wait(() => surface.evaluate((element) => element.debuggerPaused), "normal traffic pause");
   await surface.locator(".status").getByText("Paused in onRequestHead", { exact: true }).waitFor();
+  await surface.evaluate((element) => element.editor.focus());
+  await detached.keyboard.press("Control+p");
+  const sourceQuery = surface.getByRole("textbox", { name: "Source query", exact: true });
+  const queryPosition = await sourceQuery.boundingBox();
+  await sourceQuery.fill(":1:1");
+  assert.equal((await sourceQuery.boundingBox()).y, queryPosition.y);
+  await sourceQuery.press("Enter");
+  assert.equal(await surface.evaluate((element) => element.editor.getPosition().lineNumber), 1);
+  assert.equal(await surface.evaluate((element) => element.editor.getPosition().column), 1);
   const pausedRequest = await surface.evaluate(
     (element) => element.views.get(element.debuggerTarget)?.request,
   );

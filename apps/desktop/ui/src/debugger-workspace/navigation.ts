@@ -23,6 +23,8 @@ export interface SourceResult {
   label: string;
   snippet: string;
   line: number;
+  column: number;
+  length: number;
   selected: boolean;
 }
 export const sourceKey = (file: DebuggerFile): string => `${file.id}@${file.artifact}`;
@@ -82,17 +84,37 @@ export function sourceTree(
   return roots;
 }
 
-export function matchingFiles(files: DebuggerFile[], query: string): SourceResult[] {
-  const needle = query.toLocaleLowerCase().trim();
-  return files
-    .filter((file) => `${file.package}/${file.path}`.toLocaleLowerCase().includes(needle))
+export function matchingFiles(
+  files: DebuggerFile[],
+  query: string,
+  current?: DebuggerFile,
+): SourceResult[] {
+  const suffix = /^(.*?):(\d+)(?::(\d+))?$/u.exec(query.trim());
+  const line = suffix ? Number(suffix[2]) : 0;
+  const column = suffix?.[3] ? Number(suffix[3]) : 1;
+  if (
+    suffix &&
+    (!Number.isSafeInteger(line) || line < 1 || !Number.isSafeInteger(column) || column < 1)
+  ) {
+    return [];
+  }
+  const needle = (suffix ? suffix[1]! : query).toLocaleLowerCase().trim();
+  const candidates = suffix && !needle ? (current ? [current] : []) : files;
+  return candidates
+    .filter(
+      (file) =>
+        `${file.package}/${file.path}`.toLocaleLowerCase().includes(needle) ||
+        file.source.toLocaleLowerCase().includes(needle),
+    )
     .slice(0, 100)
     .map((file, index) => ({
       key: sourceKey(file),
       file,
-      label: `${file.package}/${file.path}`,
+      label: `${file.package}/${file.path}${line ? `:${line}${suffix?.[3] ? `:${column}` : ""}` : ""}`,
       snippet: file.state,
-      line: 0,
+      line,
+      column,
+      length: 0,
       selected: index === 0,
     }));
 }
@@ -104,13 +126,14 @@ export async function searchSources(
   read: (file: DebuggerFile) => Promise<string>,
   current: () => boolean,
 ): Promise<{ results: SourceResult[]; limited: boolean }> {
-  const needle = query.toLocaleLowerCase().trim();
+  const needle = query.trim();
   const results: SourceResult[] = [];
   let remaining = 8 * 1024 * 1024;
   let limited = files.length > 256;
   if (!needle) {
     return { results, limited: false };
   }
+  const pattern = new RegExp(needle.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"), "giu");
   for (const file of files.slice(0, 256)) {
     if (!current()) {
       break;
@@ -135,20 +158,21 @@ export async function searchSources(
     while (offset <= text.length) {
       const end = text.indexOf("\n", offset);
       const value = text.slice(offset, end < 0 ? undefined : end);
-      const match = value.toLocaleLowerCase().indexOf(needle);
-      if (match >= 0) {
-        const start = Math.max(0, match - 60);
-        results.push({
-          key: `${sourceKey(file)}:${line}`,
-          file,
-          label: `${file.package}/${file.path}:${line}`,
-          snippet: (start ? "…" : "") + value.slice(start, start + 240),
-          line,
-          selected: results.length === 0,
-        });
-        if (results.length >= 100) {
+      for (const match of value.matchAll(pattern)) {
+        if (results.length === 100) {
           return { results, limited: true };
         }
+        const start = Math.max(0, match.index - 60);
+        results.push({
+          key: `${sourceKey(file)}:${line}:${match.index + 1}`,
+          file,
+          label: `${file.package}/${file.path}:${line}:${match.index + 1}`,
+          snippet: (start ? "…" : "") + value.slice(start, start + 240),
+          line,
+          column: match.index + 1,
+          length: match[0].length,
+          selected: results.length === 0,
+        });
       }
       if (end < 0) {
         break;

@@ -609,6 +609,9 @@ textarea {
 .source-dialog {
   width: min(48rem, calc(100vw - 2rem));
   max-height: 85vh;
+  inset-block-end: auto;
+  margin-block-start: min(5rem, 10vh);
+  margin-block-end: auto;
 }
 .source-dialog header {
   display: flex;

@@ -26,7 +26,7 @@ export async function checkDebuggerWorkspace(page, root) {
   const workspace = page.locator("debugger-workspace");
   await workspace.locator(".monaco-editor").waitFor();
   await shortcut.waitFor();
-  await checkDebuggerNavigation(page, workspace);
+  await checkDebuggerNavigation(page, workspace, root);
   await workspace.evaluate((element) => element.editor.focus());
   await page.keyboard.press("F12");
   await workspace.waitFor({ state: "detached" });
