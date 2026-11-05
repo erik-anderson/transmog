@@ -10,6 +10,8 @@ loaded its editor and acknowledged readiness. Commands from the previous surface
 are then rejected. Editing pauses while the snapshot moves and resumes after
 restoration. A failed or canceled handoff restores the previous placement and
 rejects late readiness acknowledgments.
+F12 closes the whole workspace during a handoff; canceling only an unready
+destination restores its source.
 
 Each surface transfers bounded value leases with its Console state. The destination
 keeps live result roots and releases old scope and property handles. Native pause

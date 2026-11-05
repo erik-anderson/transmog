@@ -390,7 +390,36 @@ export async function checkNativeDebuggerWorkspace({
     return !!detached;
   }, "undocked window");
   await detached.locator("debugger-workspace .monaco-editor").waitFor();
-  await detached.getByRole("button", { name: "Close debugger and continue execution" }).click();
+  await wait(
+    () => detached.locator("debugger-workspace").evaluate((element) => !element.debuggerTransition),
+    "ready undocked worker",
+  );
+  await page.evaluate(() => {
+    const prototype = customElements.get("debugger-workspace").prototype;
+    const original = prototype.start;
+    prototype.start = function () {
+      const destination = this;
+      return new Promise((resolve, reject) => {
+        globalThis.__finishDebuggerHandoff = () => {
+          prototype.start = original;
+          delete globalThis.__finishDebuggerHandoff;
+          original.call(destination).then(resolve, reject);
+        };
+      });
+    };
+  });
+  try {
+    await detached.locator("debugger-workspace").evaluate((element) => element.place("bottom"));
+    await page.waitForFunction(() => !!globalThis.__finishDebuggerHandoff);
+    await page.bringToFront();
+    await page.keyboard.press("F12");
+    await dock.waitFor({ state: "detached" });
+    await wait(() => detached.isClosed(), "F12 closes both surfaces during handoff");
+    await assert.rejects(() => invoke("acknowledge_debugger"));
+  } finally {
+    await page.evaluate(() => globalThis.__finishDebuggerHandoff?.());
+  }
+  assert.equal((await proxyGet(listener, `${base}/moving-close`)).status, 200);
   // Close destinations before editor readiness, then reopen under a fresh owner.
   for (let cycle = 0; cycle < 3; cycle++) {
     await invoke("place_debugger", { placement: "window" });
@@ -441,6 +470,8 @@ export async function checkNativeDebuggerWorkspace({
   await dock.evaluate((element) => element.toggleConsole());
   await dock.getByRole("button", { name: "Close debugger and continue execution" }).click();
   return {
+    sourceLocations: true,
+    closeDuringHandoff: true,
     layoutRestored: true,
     normalTrafficPauses: true,
     queuedTrafficWaits: true,

@@ -290,25 +290,29 @@ pub(super) async fn toggle_debugger(
     app: tauri::AppHandle,
     state: State<'_, DesktopState>,
 ) -> Result<(), String> {
-    let open = app
+    let active = app
         .state::<DebuggerWindows>()
         .0
         .lock()
         .unwrap()
         .iter()
-        .any(|(owner, entry)| owner.as_str() == window.label() || entry.surface == window.label());
-    place_debugger(
-        if open {
-            "closed".into()
-        } else {
-            app.state::<DebuggerWindows>().placement(window.label())
-        },
-        None,
-        window,
-        app,
-        state,
-    )
-    .await
+        .find(|(owner, entry)| {
+            owner.as_str() == window.label()
+                || entry.surface == window.label()
+                || entry
+                    .pending
+                    .as_ref()
+                    .is_some_and(|pending| pending.0 == window.label())
+        })
+        .map(|(owner, entry)| (owner.clone(), entry.application.clone()));
+    if let Some((owner, application)) = active {
+        let windows = app.state::<DebuggerWindows>();
+        // F12 closes the whole workspace, including an unacknowledged destination.
+        // Explicit destination cancellation still restores its source surface.
+        return destroy_surfaces(&app, windows.retire(&owner, &app, &application)?);
+    }
+    let placement = app.state::<DebuggerWindows>().placement(window.label());
+    place_debugger(placement, None, window, app, state).await
 }
 pub(super) fn opening_error(message: String) -> transmog_app::AppError {
     transmog_app::AppError {
