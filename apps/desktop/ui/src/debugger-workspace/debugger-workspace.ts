@@ -42,6 +42,7 @@ import type {
 import type { DeveloperEvidence } from "../script-diagnostics/models.js";
 import "../script-diagnostics/script-diagnostics.js";
 import { describeError } from "../utilities.js";
+import { boundedCopy, copyScalar, requestCopy } from "../inspection-copy.js";
 interface DebuggerLayout {
   sourcesSplit: number;
   inspectorSplit: number;
@@ -60,6 +61,7 @@ interface View {
   breakpoints: Point[];
   viewState?: SavedView;
   layout?: DebuggerLayout;
+  watches?: string[];
 }
 interface SavedView {
   consoleHistory?: ConsoleHistoryState;
@@ -70,6 +72,8 @@ interface SavedView {
   logpoints?: ConsoleRow[];
   eventCursors?: Array<[string, number]>;
   watches?: string[];
+  watchInput?: string;
+  watchEdit?: { expression: string; draft: string } | undefined;
   commands?: string[];
   groups?: Array<[string, boolean]>;
   split?: string;
@@ -176,6 +180,11 @@ export class DebuggerWorkspace extends WebUIElement {
   @observable debuggerStack: Array<DebugFrame & { label: string; selected: boolean }> = [];
   @observable debuggerWatches: Watch[] = [];
   @observable debuggerWatchInput = "";
+  @observable debuggerWatchEditing = 0;
+  @observable debuggerWatchDraft = "";
+  @observable debuggerWatchSaving = false;
+  @observable debuggerWatchOpen = true;
+  private watchEdit: Promise<boolean> = Promise.resolve(true);
   @observable debuggerCompletions: Array<{ name: string; selected: boolean }> = [];
   @observable debuggerCompletionIndex = 0;
   @observable debuggerCompletionActive = "";
@@ -483,7 +492,7 @@ export class DebuggerWorkspace extends WebUIElement {
   private completionStart = 0;
   private completionEnd = 0;
   private completionTimer = 0;
-  private hoverProviders: Monaco.IDisposable[] = [];
+  private editorRegistrations: Monaco.IDisposable[] = [];
   private readonly inspection = new Inspection(
     (action, session) => this.action(action, session, true),
     (scope) => this.validInspection(scope),
@@ -562,24 +571,232 @@ export class DebuggerWorkspace extends WebUIElement {
   watchInput(event: Event): void {
     this.debuggerWatchInput = (event.target as HTMLInputElement).value;
   }
-  addWatch(event: Event): void {
+  async addWatch(event: Event): Promise<void> {
     event.preventDefault();
-    const expression = this.debuggerWatchInput.trim();
-    if (!expression || expression.length > 1024 || this.debuggerWatches.length >= 16) {
+    const draft = this.debuggerWatchInput;
+    if (await this.addWatchExpression(draft.trim())) {
+      if (this.debuggerWatchInput === draft) {
+        this.debuggerWatchInput = "";
+      }
+    }
+  }
+  private async addWatchExpression(expression: string): Promise<boolean> {
+    if (!expression || expression.length > 1024 || this.debuggerWatchSaving) {
+      return false;
+    }
+    if (this.debuggerWatches.some((watch) => watch.expression === expression)) {
+      return true;
+    }
+    if (this.debuggerWatches.length >= 16) {
+      this.debuggerError = "Watch is full. Remove an expression to add another.";
+      return false;
+    }
+    return this.saveWatches([
+      ...this.debuggerWatches,
+      { id: ++this.watchSerial, expression, output: "Not paused" },
+    ]);
+  }
+  private saveWatches(watches: Watch[]): Promise<boolean> {
+    if (this.debuggerWatchSaving || this.debuggerTransition) {
+      return Promise.resolve(false);
+    }
+    this.debuggerWatchSaving = true;
+    const generation = this.generation;
+    this.watchEdit = (async () => {
+      try {
+        // Commit session memory before presenting the edit, including across F12 close.
+        await invoke("debugger_watches", { expressions: watches.map((watch) => watch.expression) });
+        if (!this.isConnected || generation !== this.generation) {
+          return false;
+        }
+        for (const old of this.debuggerWatches) {
+          if (
+            !watches.some((watch) => watch.id === old.id && watch.expression === old.expression)
+          ) {
+            this.inspection.remove(`watch-${old.id}`);
+          }
+        }
+        // Keep values refreshed while the native save was pending.
+        this.debuggerWatches = watches.map(
+          (watch) =>
+            this.debuggerWatches.find(
+              (old) => old.id === watch.id && old.expression === watch.expression,
+            ) ?? watch,
+        );
+        this.debuggerError = "";
+        void this.refreshWatches();
+        return true;
+      } catch (error) {
+        if (this.isConnected) {
+          this.debuggerError = describeError(error);
+        }
+        return false;
+      } finally {
+        this.debuggerWatchSaving = false;
+      }
+    })();
+    return this.watchEdit;
+  }
+  async removeWatch(id: number): Promise<void> {
+    if (await this.saveWatches(this.debuggerWatches.filter((watch) => watch.id !== id))) {
+      if (this.debuggerWatchEditing === id) {
+        this.cancelWatchEdit();
+      }
+    }
+  }
+  editWatch(id: number): void {
+    if (this.debuggerWatchSaving) {
       return;
     }
-    if (!this.debuggerWatches.some((watch) => watch.expression === expression)) {
-      this.debuggerWatches = [
-        ...this.debuggerWatches,
-        { id: ++this.watchSerial, expression, output: "Not paused" },
-      ];
+    const watch = this.debuggerWatches.find((watch) => watch.id === id);
+    if (!watch) {
+      return;
     }
-    this.debuggerWatchInput = "";
-    void this.refreshWatches();
+    this.debuggerWatchEditing = id;
+    this.debuggerWatchDraft = watch.expression;
+    this.$flushUpdates();
+    const input = this.shadowRoot?.querySelector<HTMLTextAreaElement>(".watch-edit textarea");
+    input?.focus();
+    input?.select();
   }
-  removeWatch(id: number): void {
-    this.inspection.remove(`watch-${id}`);
-    this.debuggerWatches = this.debuggerWatches.filter((watch) => watch.id !== id);
+  editWatchInput(event: Event): void {
+    this.debuggerWatchDraft = (event.target as HTMLTextAreaElement).value;
+  }
+  cancelWatchEdit(): void {
+    if (this.debuggerWatchSaving) {
+      return;
+    }
+    const id = this.debuggerWatchEditing;
+    this.debuggerWatchEditing = 0;
+    this.debuggerWatchDraft = "";
+    this.$flushUpdates();
+    this.shadowRoot?.querySelector<HTMLButtonElement>(`[data-watch-edit="${id}"]`)?.focus();
+  }
+  watchEditKey(event: KeyboardEvent): void {
+    if (event.key === "Escape" && !event.isComposing) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.cancelWatchEdit();
+    } else if (
+      event.key === "Enter" &&
+      !event.shiftKey &&
+      !event.isComposing &&
+      event.composedPath()[0] instanceof HTMLTextAreaElement
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      void this.saveWatchEdit(event);
+    }
+  }
+  async saveWatchEdit(event: Event): Promise<void> {
+    event.preventDefault();
+    const id = this.debuggerWatchEditing;
+    const expression = this.debuggerWatchDraft.trim();
+    if (!expression || expression.length > 1024) {
+      return;
+    }
+    if (this.debuggerWatches.some((watch) => watch.id !== id && watch.expression === expression)) {
+      this.debuggerError = "That expression is already watched.";
+      return;
+    }
+    const watches = this.debuggerWatches.map((watch) =>
+      watch.id === id ? { id, expression, output: "Not paused" } : watch,
+    );
+    if (await this.saveWatches(watches)) {
+      this.cancelWatchEdit();
+    }
+  }
+  watchDisclosure(event: Event): void {
+    this.debuggerWatchOpen = (event.target as HTMLDetailsElement).open;
+  }
+  private sourceSelection(limit: number): string {
+    const selection = this.editor?.getSelection();
+    if (!selection || selection.isEmpty() || !this.model) {
+      return "";
+    }
+    const length = this.model.getValueLengthInRange(selection);
+    if (length > limit) {
+      this.debuggerError = `Select at most ${limit.toLocaleString()} characters.`;
+      return "";
+    }
+    return this.model.getValueInRange(selection).trim();
+  }
+  private async watchSelection(): Promise<void> {
+    const expression = this.sourceSelection(1024);
+    if (!expression) {
+      return;
+    }
+    this.debuggerInspectorVisible = true;
+    if (this.debuggerCompact) {
+      this.debuggerCompactPane = "inspector";
+    }
+    this.debuggerWatchOpen = true;
+    void this.saveLayout();
+    if (await this.addWatchExpression(expression)) {
+      const watch = this.debuggerWatches.find((watch) => watch.expression === expression);
+      this.$flushUpdates();
+      this.shadowRoot
+        ?.querySelector(`[data-watch-edit="${watch?.id}"]`)
+        ?.scrollIntoView({ block: "nearest" });
+    }
+  }
+  private async evaluateSelection(): Promise<void> {
+    const expression = this.sourceSelection(8192);
+    if (!expression) {
+      return;
+    }
+    this.debuggerConsoleVisible = true;
+    this.$flushUpdates();
+    void this.saveLayout();
+    await this.evaluate(expression);
+  }
+  private stackText(): string {
+    const lines = this.debuggerFrames.map((frame) => {
+      const location = frame.original ?? frame.location;
+      return `    at ${copyScalar(frame.function || "(anonymous)")} (${
+        location
+          ? `${copyScalar(location.source)}:${location.line}:${location.column}`
+          : "Source unavailable"
+      })`;
+    });
+    if (this.debuggerStackTruncated) {
+      lines.push("[Call stack shortened]");
+    }
+    return boundedCopy(lines.join("\n"));
+  }
+  async copyStack(): Promise<void> {
+    if (!this.debuggerPaused || !this.debuggerFrames.length) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(this.stackText());
+    } catch {
+      this.debuggerError = "Copy failed. The clipboard is unavailable.";
+    }
+  }
+  stackMenu(event: MouseEvent | KeyboardEvent): void {
+    if (!this.debuggerPaused || !this.debuggerFrames.length) {
+      return;
+    }
+    const pause = this.pause;
+    const target = this.debuggerTarget;
+    const returnFocus = this.shadowRoot?.activeElement;
+    requestCopy(event, {
+      source: event.currentTarget as HTMLElement,
+      current: () =>
+        this.isConnected &&
+        this.debuggerPaused &&
+        this.pause === pause &&
+        this.debuggerTarget === target,
+      actions: [{ id: "stack", label: "Copy stack trace", read: () => this.stackText() }],
+      restoreFocus: () => {
+        if (returnFocus instanceof HTMLElement && returnFocus.isConnected) {
+          returnFocus.focus({ preventScroll: true });
+        } else {
+          this.editor?.focus();
+        }
+      },
+    });
   }
   async refreshWatches(): Promise<void> {
     if (!this.debuggerPaused) {
@@ -597,7 +814,9 @@ export class DebuggerWorkspace extends WebUIElement {
         if (
           generation !== this.inspectionGeneration ||
           watchGeneration !== this.watchGeneration ||
-          !this.debuggerWatches.some((current) => current.id === watch.id)
+          !this.debuggerWatches.some(
+            (current) => current.id === watch.id && current.expression === watch.expression,
+          )
         ) {
           if (event?.kind === "evaluated" && event.value.handle && this.validInspection(scope)) {
             this.inspection.releaseLeases([{ scope, handles: [event.value.handle] }]);
@@ -608,10 +827,14 @@ export class DebuggerWorkspace extends WebUIElement {
           event?.kind === "evaluated"
             ? this.inspection.set(`watch-${watch.id}`, watch.expression, event.value, scope)
             : undefined;
+        if (!value) {
+          this.inspection.remove(`watch-${watch.id}`);
+        }
         this.debuggerWatches = this.debuggerWatches.map((current) =>
           current.id === watch.id
             ? {
-                ...current,
+                id: current.id,
+                expression: current.expression,
                 output:
                   event?.kind === "evaluated"
                     ? event.value.display
@@ -699,7 +922,7 @@ export class DebuggerWorkspace extends WebUIElement {
   }
   private installHover(): void {
     for (const language of ["typescript", "javascript"]) {
-      this.hoverProviders.push(
+      this.editorRegistrations.push(
         this.monaco!.languages.registerHoverProvider(language, {
           provideHover: async (model, position, token) => {
             if (model !== this.model || !this.matchesFrameSource()) {
@@ -872,13 +1095,13 @@ export class DebuggerWorkspace extends WebUIElement {
         }
       });
       this.editor.onContextMenu((event) => {
-        if (event.target.position) {
-          this.editor?.setPosition(event.target.position);
-        }
         if (
           event.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN ||
           event.target.type === monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS
         ) {
+          if (event.target.position) {
+            this.editor?.setPosition(event.target.position);
+          }
           this.editor?.focus();
           void this.editor?.getAction("editor.action.showContextMenu")?.run();
         }
@@ -889,7 +1112,7 @@ export class DebuggerWorkspace extends WebUIElement {
         ["logpoint", "Add or edit logpoint", () => this.condition(this.line(), "log")],
         ["disable", "Enable or disable breakpoint", () => this.disable(this.line())],
       ] as const) {
-        this.editor.addAction({
+        this.addEditorAction({
           id: `debugger.${id}`,
           label,
           contextMenuGroupId: "debugger",
@@ -898,7 +1121,7 @@ export class DebuggerWorkspace extends WebUIElement {
           },
         });
       }
-      this.editor.addAction({
+      this.addEditorAction({
         id: "debugger.continueTo",
         label: "Continue to here",
         contextMenuGroupId: "debugger",
@@ -907,11 +1130,33 @@ export class DebuggerWorkspace extends WebUIElement {
           void this.continueTo(this.line());
         },
       });
+      this.addEditorAction({
+        id: "debugger.watchSelection",
+        label: "Add selection to Watch",
+        contextMenuGroupId: "debugger.inspection",
+        precondition: "editorHasSelection",
+        run: () => this.watchSelection(),
+      });
+      this.addEditorAction({
+        id: "debugger.evaluateSelection",
+        label: "Evaluate selection in Console",
+        contextMenuGroupId: "debugger.inspection",
+        precondition: "editorHasSelection",
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyE],
+        run: () => this.evaluateSelection(),
+      });
       const ready = await invoke<View>("acknowledge_debugger");
       if (!this.isConnected || version !== this.generation) {
         return;
       }
       this.apply(ready);
+      this.debuggerWatches = (ready.watches ?? ready.viewState?.watches ?? []).map(
+        (expression) => ({
+          id: ++this.watchSerial,
+          expression,
+          output: "Not paused",
+        }),
+      );
       if (ready.viewState) {
         const saved = ready.viewState;
         this.sourceGroups = new Map(saved.groups ?? []);
@@ -948,11 +1193,11 @@ export class DebuggerWorkspace extends WebUIElement {
         this.consoleLogs.restore(saved.clearedLogs ?? []);
         this.debuggerConsoleLevel = saved.consoleLevel ?? "all";
         this.debuggerConsoleFilter = saved.consoleFilter ?? "all";
-        this.debuggerWatches = (saved.watches ?? []).map((expression) => ({
-          id: ++this.watchSerial,
-          expression,
-          output: "Not paused",
-        }));
+        this.debuggerWatchInput = saved.watchInput ?? "";
+        this.debuggerWatchEditing =
+          this.debuggerWatches.find((watch) => watch.expression === saved.watchEdit?.expression)
+            ?.id ?? 0;
+        this.debuggerWatchDraft = saved.watchEdit?.draft ?? "";
         this.serial = Math.max(
           0,
           ...saved.console.map((row) => row.id),
@@ -2205,9 +2450,9 @@ export class DebuggerWorkspace extends WebUIElement {
       await this.evaluate();
     }
   }
-  async evaluate(): Promise<void> {
+  async evaluate(expression?: string): Promise<void> {
     const draft = this.debuggerInput;
-    const input = draft.trim();
+    const input = (expression ?? draft).trim();
     if (!input || !this.debuggerTarget || this.debuggerClosed || this.debuggerSubmitting) {
       return;
     }
@@ -2217,7 +2462,7 @@ export class DebuggerWorkspace extends WebUIElement {
     this.pendingConsoleScroll = null;
     this.debuggerSubmitting = true;
     this.closeCompletions();
-    this.commandHistory.add(input);
+    this.commandHistory.add(input, { preserveNavigation: expression !== undefined });
     this.debuggerConsole = [
       ...this.debuggerConsole,
       {
@@ -2256,7 +2501,7 @@ export class DebuggerWorkspace extends WebUIElement {
       if (this.debuggerConsole.some((row) => row.id === id)) {
         this.requests.set(`${session}/${request}`, id);
       }
-      if (this.debuggerInput === draft) {
+      if (expression === undefined && this.debuggerInput === draft) {
         this.debuggerInput = "";
       }
     } finally {
@@ -2272,6 +2517,7 @@ export class DebuggerWorkspace extends WebUIElement {
     this.$flushUpdates();
     try {
       await this.pointEdits;
+      await this.watchEdit;
       if (placement !== "closed" && this.evaluationSubmission) {
         // Transfer the console only after its submission can be correlated.
         await this.evaluationSubmission;
@@ -2291,6 +2537,15 @@ export class DebuggerWorkspace extends WebUIElement {
         logpoints: this.logpointRows,
         eventCursors: [...this.eventCursors],
         watches: this.debuggerWatches.map((watch) => watch.expression),
+        watchInput: this.debuggerWatchInput,
+        watchEdit: this.debuggerWatchEditing
+          ? {
+              expression:
+                this.debuggerWatches.find((watch) => watch.id === this.debuggerWatchEditing)
+                  ?.expression ?? "",
+              draft: this.debuggerWatchDraft,
+            }
+          : undefined,
         consoleHistory: this.commandHistory.snapshot(),
         consoleFilter: this.debuggerConsoleFilter,
         consoleLevel: this.debuggerConsoleLevel,
@@ -2325,7 +2580,21 @@ export class DebuggerWorkspace extends WebUIElement {
       this.debuggerError = describeError(error);
     }
   }
+  private addEditorAction(action: Monaco.editor.IActionDescriptor): void {
+    if (this.editor) {
+      this.editorRegistrations.push(this.editor.addAction(action));
+    }
+  }
   keyboard(event: KeyboardEvent): void {
+    if (
+      (event.key === "Escape" || event.key === "Enter") &&
+      event
+        .composedPath()
+        .some((node) => node instanceof HTMLFormElement && node.classList.contains("watch-edit"))
+    ) {
+      this.watchEditKey(event);
+      return;
+    }
     if (event.key === "Escape" && this.debuggerCompletions.length && !event.isComposing) {
       event.preventDefault();
       event.stopPropagation();
@@ -2389,7 +2658,7 @@ export class DebuggerWorkspace extends WebUIElement {
     const action =
       event.key === "F8" || (event.ctrlKey && event.key === "\\")
         ? "continue"
-        : event.key === "F10"
+        : event.key === "F10" && !event.shiftKey
           ? "over"
           : event.key === "F11"
             ? event.shiftKey
@@ -2533,7 +2802,7 @@ export class DebuggerWorkspace extends WebUIElement {
     this.inspectionGeneration++;
     this.closeCompletions();
     window.clearTimeout(this.completionTimer);
-    for (const provider of this.hoverProviders) {
+    for (const provider of this.editorRegistrations.splice(0)) {
       provider.dispose();
     }
     this.resizeObserver?.disconnect();

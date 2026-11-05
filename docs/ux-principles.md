@@ -85,6 +85,9 @@ when changing the experience.
   Restore focus after menus, dialogs and editors close. State needs text or
   semantics as well as color. Respect theme, forced colors, reduced motion,
   zoom and long labels.
+- Debugger source selections can become watches or explicit Console commands.
+  Watch expressions remain editable and survive closing the debugger during the
+  app session; runtime values keep their shorter worker lifetime.
 - Lists share Ctrl+click, Shift ranges, Shift+arrow, Ctrl+Shift+arrow, Ctrl+A and
   Escape. Where supported, Ctrl+arrow moves focus, Del removes and Ctrl+Z undoes.
   Text fields retain ordinary editing shortcuts; Ctrl+S saves an explicit draft.

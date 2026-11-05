@@ -5,6 +5,7 @@ export function installDebuggerWorkspaceFixture() {
       open: false,
       seen: false,
       points: [],
+      watches: [],
       events: [],
       request: 0,
       paused: null,
@@ -75,6 +76,7 @@ export function installDebuggerWorkspaceFixture() {
       breakpoints: debug.points,
       viewState: debug.viewState ?? null,
       layout: debug.layout,
+      watches: debug.watches,
     });
     const binding = (point) => ({
       id: point.breakpoint.id,
@@ -139,6 +141,20 @@ export function installDebuggerWorkspaceFixture() {
     if (command === "debugger_layout") {
       if (args.layout) debug.layout = args.layout;
       return structuredClone(debug.layout);
+    }
+    if (command === "debugger_watches") {
+      if (args.expressions) {
+        if (debug.rejectWatchSave) throw new Error("Watch save failed");
+        debug.watches = [...args.expressions];
+        if (debug.holdWatchSave) {
+          debug.holdWatchSave = false;
+          await new Promise((resolve) => {
+            debug.finishWatchSave = resolve;
+          });
+          delete debug.finishWatchSave;
+        }
+      }
+      return [...debug.watches];
     }
     if (command === "toggle_debugger") {
       await globalThis.__debuggerWorkspaceCommand("place_debugger", {

@@ -394,18 +394,26 @@ export class ConsoleHistory {
     this.index = Math.max(0, Math.min(this.entries.length, state.index));
     this.draft = state.draft;
   }
-  add(text: string): void {
+  add(text: string, { preserveNavigation = false } = {}): void {
+    const previousIndex = this.index;
+    const atEnd = previousIndex === this.entries.length;
     if (this.entries.at(-1) !== text) {
       this.entries.push(text);
     }
+    const beforeTrimming = this.entries.length;
     let bytes = 0;
     this.entries = this.entries
       .slice(-100)
       .reverse()
       .filter((entry) => (bytes += entry.length) <= 128 * 1024)
       .reverse();
-    this.index = this.entries.length;
-    this.draft = "";
+    this.index =
+      preserveNavigation && !atEnd
+        ? Math.max(0, previousIndex - (beforeTrimming - this.entries.length))
+        : this.entries.length;
+    if (!preserveNavigation) {
+      this.draft = "";
+    }
   }
   move(direction: number, current: string): string {
     if (this.index === this.entries.length) {

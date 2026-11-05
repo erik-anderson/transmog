@@ -33,12 +33,44 @@ impl DebuggerLayout {
 pub(super) struct Presentation {
     pub placement: String,
     pub layout: DebuggerLayout,
+    pub watches: Vec<String>,
 }
 impl Default for Presentation {
     fn default() -> Self {
         Self {
             placement: "window".into(),
             layout: DebuggerLayout::default(),
+            watches: Vec::new(),
+        }
+    }
+}
+
+pub(super) fn valid_watches(watches: &[String]) -> bool {
+    watches.len() <= 16
+        && watches.iter().enumerate().all(|(index, expression)| {
+            !expression.trim().is_empty()
+                && expression.trim() == expression
+                && expression.encode_utf16().count() <= 1024
+                && !watches[..index].contains(expression)
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::valid_watches;
+    #[test]
+    fn watches_are_bounded_unique_expressions() {
+        assert!(valid_watches(&[]));
+        assert!(valid_watches(&["local.value".into(), "other".into()]));
+        for watches in [
+            vec![String::new()],
+            vec![" value ".into()],
+            vec!["value".into(), "value".into()],
+            vec!["a".repeat(1025)],
+            vec!["😀".repeat(513)],
+            (0..17).map(|index| index.to_string()).collect(),
+        ] {
+            assert!(!valid_watches(&watches));
         }
     }
 }

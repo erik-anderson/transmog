@@ -125,6 +125,24 @@ export async function checkNativeDebuggerWorkspace({
   await inspector.getByRole("textbox", { name: "Watch expression" }).fill("local");
   await inspector.getByRole("button", { name: "Add watch", exact: true }).click();
   await inspector.locator(".watch").getByText("7", { exact: true }).waitFor();
+  await inspector.locator(".call-stack button").first().press("Shift+F10");
+  await detached.getByRole("menuitem", { name: "Copy stack trace", exact: true }).press("Escape");
+  await wait(
+    () =>
+      surface.evaluate((element) =>
+        element.shadowRoot.activeElement?.matches(".call-stack button"),
+      ),
+    "stack menu restores frame focus",
+  );
+  await inspector.getByRole("button", { name: "Edit watch local", exact: true }).click();
+  const watchEdit = inspector.getByRole("textbox", { name: "Edit watch expression", exact: true });
+  await watchEdit.fill("(\nlocal + 1\n)");
+  await watchEdit.press("Enter");
+  await inspector.locator(".watch").getByText("8", { exact: true }).waitFor();
+  await inspector.getByRole("button", { name: "Edit watch ( local + 1 )", exact: true }).click();
+  await watchEdit.fill("local");
+  await watchEdit.press("Enter");
+  await inspector.locator(".watch").getByText("7", { exact: true }).waitFor();
   const prompt = surface.getByRole("textbox", { name: "Immediate expression" });
   await prompt.fill("loc");
   await prompt.press("Control+Space");
@@ -333,6 +351,8 @@ export async function checkNativeDebuggerWorkspace({
         .catch(() => false),
     "reopened idle worker",
   );
+  await dock.getByRole("button", { name: "Edit watch local", exact: true }).waitFor();
+  await dock.locator(".watch").getByText("local: Not paused", { exact: true }).waitFor();
   await dock
     .getByRole("textbox", { name: "Immediate expression" })
     .fill("Reflect.get(globalThis, 'workspaceCount')");

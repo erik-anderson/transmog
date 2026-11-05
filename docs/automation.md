@@ -888,6 +888,11 @@ in the selected worker's global context when idle. Commands can change that
 worker's state. Scope/property inspection stays inert; conditions reject side
 effects. An invalid condition pauses with an explanation.
 
+Right-click selected source to add it to Watch or evaluate it in Console
+(**Ctrl+Shift+E**). Watches can be edited in place and return when the debugger is
+reopened during the app session. **Copy stack trace** copies the paused frames
+with their source locations.
+
 Transmog suspends dependent callback, body-read and upstream-attempt budgets
 while a worker is debugger-blocked. Cancellation and shutdown remain effective;
 remote clients and servers still control their own timeouts. Workspace pauses

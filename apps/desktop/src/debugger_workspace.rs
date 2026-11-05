@@ -66,6 +66,7 @@ pub(super) struct ReadyView {
     workspace: DebuggerWorkspaceView,
     view_state: serde_json::Value,
     layout: DebuggerLayout,
+    watches: Vec<String>,
 }
 impl DebuggerWindows {
     fn owner(&self, surface: &str) -> String {
@@ -205,6 +206,7 @@ pub(super) fn command_allowed(command: &str) -> bool {
             | "toggle_debugger"
             | "debugger_seen"
             | "debugger_layout"
+            | "debugger_watches"
             | "acknowledge_debugger"
             | "debugger_workspace"
             | "debugger_file"
@@ -600,7 +602,8 @@ pub(super) async fn acknowledge_debugger(
     Ok(ReadyView {
         workspace,
         view_state,
-        layout: debugger_layout(None, window)?,
+        layout: debugger_layout(None, window.clone())?,
+        watches: debugger_watches(None, window)?,
     })
 }
 #[tauri::command]
@@ -611,7 +614,8 @@ pub(super) fn debugger_workspace(window: tauri::WebviewWindow) -> Result<ReadyVi
     Ok(ReadyView {
         workspace,
         view_state: serde_json::Value::Null,
-        layout: debugger_layout(None, window)?,
+        layout: debugger_layout(None, window.clone())?,
+        watches: debugger_watches(None, window)?,
     })
 }
 #[tauri::command]
@@ -621,20 +625,8 @@ pub(super) fn debugger_layout(
 ) -> Result<DebuggerLayout, String> {
     controlled(&window, layout.is_none())?;
     let windows = window.state::<DebuggerWindows>();
-    let owner = windows
-        .0
-        .lock()
-        .unwrap()
-        .iter()
-        .find(|(_, entry)| {
-            entry.surface == window.label()
-                || entry
-                    .pending
-                    .as_ref()
-                    .is_some_and(|pending| pending.0 == window.label())
-        })
-        .map(|(owner, _)| owner.clone())
-        .ok_or("Debugger surface is unavailable")?;
+    let entries = windows.0.lock().unwrap();
+    let owner = presentation_owner(&entries, window.label(), layout.is_none())?;
     let mut remembered = windows.2.lock().unwrap();
     let presentation = remembered.entry(owner).or_default();
     if let Some(layout) = layout {
@@ -644,6 +636,44 @@ pub(super) fn debugger_layout(
         presentation.layout = layout;
     }
     Ok(presentation.layout.clone())
+}
+#[tauri::command]
+pub(super) fn debugger_watches(
+    expressions: Option<Vec<String>>,
+    window: tauri::WebviewWindow,
+) -> Result<Vec<String>, String> {
+    controlled(&window, expressions.is_none())?;
+    let windows = window.state::<DebuggerWindows>();
+    // Keep authority stable until the presentation mutation is committed.
+    let entries = windows.0.lock().unwrap();
+    let owner = presentation_owner(&entries, window.label(), expressions.is_none())?;
+    let mut remembered = windows.2.lock().unwrap();
+    let presentation = remembered.entry(owner).or_default();
+    if let Some(expressions) = expressions {
+        if !presentation::valid_watches(&expressions) {
+            return Err("Invalid watch expressions".into());
+        }
+        presentation.watches = expressions;
+    }
+    Ok(presentation.watches.clone())
+}
+fn presentation_owner(
+    entries: &HashMap<String, Entry>,
+    surface: &str,
+    pending: bool,
+) -> Result<String, String> {
+    entries
+        .iter()
+        .find(|(_, entry)| {
+            entry.surface == surface
+                || pending
+                    && entry
+                        .pending
+                        .as_ref()
+                        .is_some_and(|pending| pending.0 == surface)
+        })
+        .map(|(owner, _)| owner.clone())
+        .ok_or_else(|| "Debugger surface is unavailable".into())
 }
 #[tauri::command]
 pub(super) fn debugger_file(
@@ -893,5 +923,21 @@ mod tests {
         let canceled = entry.generation;
         assert_eq!(entry.cancel_pending(), None);
         assert_eq!(entry.generation, canceled);
+        entry.pending = Some(("debugger-main".into(), "window".into(), canceled));
+        let mut entries = HashMap::from([("main".into(), entry)]);
+        assert_eq!(presentation_owner(&entries, "main", false).unwrap(), "main");
+        assert_eq!(
+            presentation_owner(&entries, "debugger-main", true).unwrap(),
+            "main"
+        );
+        assert!(presentation_owner(&entries, "debugger-main", false).is_err());
+        let entry = entries.get_mut("main").unwrap();
+        entry.surface = "debugger-main".into();
+        entry.pending = None;
+        assert!(presentation_owner(&entries, "main", false).is_err());
+        assert_eq!(
+            presentation_owner(&entries, "debugger-main", false).unwrap(),
+            "main"
+        );
     }
 }

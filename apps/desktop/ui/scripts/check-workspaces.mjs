@@ -4396,6 +4396,7 @@ await page.addInitScript(
           case "toggle_debugger":
           case "debugger_seen":
           case "debugger_layout":
+          case "debugger_watches":
           case "workspace_breakpoints":
           case "workspace_debug_session":
           case "workspace_debug_request":

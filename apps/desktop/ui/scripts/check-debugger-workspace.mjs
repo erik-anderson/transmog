@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { checkDebuggerNavigation } from "./check-debugger-navigation.mjs";
 import { checkDebuggerInspection } from "./check-debugger-inspection.mjs";
 import { checkDebuggerControls } from "./check-debugger-controls.mjs";
+import { checkDebuggerAuthoring } from "./check-debugger-authoring.mjs";
 
 export async function checkDebuggerWorkspace(page, root) {
   const shortcut = page.getByRole("button", { name: "Debugger", exact: true });
@@ -178,6 +179,7 @@ export async function checkDebuggerWorkspace(page, root) {
   await workspace.getByRole("button", { name: "Run", exact: true }).click();
   await workspace.locator(".command > pre").filter({ hasText: "42" }).waitFor();
   await checkDebuggerInspection(page, workspace, root);
+  await checkDebuggerAuthoring(page, workspace, root);
   await checkDebuggerControls(page, workspace, root);
   await checkDebuggerProperties(page, workspace, root);
   await checkDebuggerConsole(page, workspace);

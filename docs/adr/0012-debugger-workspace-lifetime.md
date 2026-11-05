@@ -23,6 +23,9 @@ Pending releases remain part of a surface's handoff until native command
 submission succeeds.
 The snapshot also retains Console history navigation, filters, scroll position,
 and per-run clear positions; later output and loss reports remain visible.
+Committed watch expressions live in native session memory per owning window, so
+closing the debugger retains them without retaining worker values. Saves precede
+visible commits; a surface move waits for pending saves and transfers edit drafts.
 
 Opening subscribes to current and future worker lifetimes. It does not reserve an
 exchange or activate unloaded extensions. Closing continues and detaches healthy

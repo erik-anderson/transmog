@@ -686,6 +686,14 @@ textarea {
   min-width: 0;
   width: 100%;
 }
+.watch-edit {
+  flex: 1;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.watch-edit textarea { flex: 1 1 100%; width: 100%; min-width: 0; max-height: 8rem; resize: vertical; }
+.watch-edit-hint { flex: 1 1 100%; color: var(--muted); font-size: .75rem; }
+.copy-stack { margin-bottom: .25rem; font-size: .8rem; }
 .watch {
   display: flex;
   align-items: start;

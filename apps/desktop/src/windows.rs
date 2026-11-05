@@ -2747,6 +2747,7 @@ pub fn run() {
                 debugger_workspace::acknowledge_debugger,
                 debugger_workspace::debugger_workspace,
                 debugger_workspace::debugger_layout,
+                debugger_workspace::debugger_watches,
                 debugger_workspace::debugger_file,
             debugger_workspace::debugger_breakpoint_positions,
                 debugger_workspace::workspace_breakpoints,

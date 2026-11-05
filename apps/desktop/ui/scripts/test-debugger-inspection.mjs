@@ -28,6 +28,31 @@ test("history navigation preserves the draft through a surface snapshot", () => 
   assert.equal(restored.move(1, "second"), "unsent draft");
 });
 
+test("source commands preserve history navigation and the unsent draft", () => {
+  const history = new ConsoleHistory();
+  history.add("first");
+  history.add("second");
+  assert.equal(history.move(-1, "unsent draft"), "second");
+  history.add("from source", { preserveNavigation: true });
+  const restored = new ConsoleHistory();
+  restored.restore(history.snapshot());
+  assert.equal(restored.move(-1, "second"), "first");
+  assert.equal(restored.move(1, "first"), "second");
+  assert.equal(restored.move(1, "second"), "from source");
+  assert.equal(restored.move(1, "from source"), "unsent draft");
+});
+
+test("source commands retain a draft when old history is trimmed", () => {
+  const history = new ConsoleHistory();
+  for (let index = 0; index < 100; index++) history.add(String(index));
+  assert.equal(history.move(-1, "draft"), "99");
+  history.add("100", { preserveNavigation: true });
+  assert.equal(history.move(-1, "99"), "98");
+  assert.equal(history.move(1, "98"), "99");
+  assert.equal(history.move(1, "99"), "100");
+  assert.equal(history.move(1, "100"), "draft");
+});
+
 test("scope reads wait for native acceptance of pending surface releases", async () => {
   const sent = [];
   let finishRelease;
