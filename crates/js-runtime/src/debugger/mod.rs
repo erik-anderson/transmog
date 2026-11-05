@@ -705,6 +705,48 @@ impl Client {
                 self.values.borrow_mut().release(&handles);
                 self.emit(request, DebugEventKind::Acknowledged);
             }
+            DebugAction::PreviewProperties {
+                pause,
+                handle,
+                offset,
+                limit,
+                refresh,
+            } => {
+                if !self.current_scope(pause) {
+                    self.reject(request, "Pause has expired or resumed");
+                    return;
+                }
+                if let Some(scope) = scope
+                    && let Some(event) = self
+                        .values
+                        .borrow_mut()
+                        .preview_properties(scope, pause, handle, offset, limit, refresh)
+                {
+                    self.emit(request, event);
+                } else {
+                    self.reject(request, "Value is no longer available");
+                }
+            }
+            DebugAction::Property {
+                pause,
+                handle,
+                index,
+            } => {
+                if !self.current_scope(pause) {
+                    self.reject(request, "Pause has expired or resumed");
+                    return;
+                }
+                if let Some(scope) = scope
+                    && let Some(event) = self
+                        .values
+                        .borrow_mut()
+                        .property(scope, pause, handle, index)
+                {
+                    self.emit(request, event);
+                } else {
+                    self.reject(request, "Property is no longer available");
+                }
+            }
         }
     }
     fn current_pause(&self, pause: u64) -> bool {

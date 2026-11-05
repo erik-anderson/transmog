@@ -15,9 +15,12 @@ Each surface transfers bounded value leases with its Console state. The destinat
 keeps live result roots and releases old scope and property handles. Native pause
 epochs qualify idle values as well as paused values; replayed events cannot renew
 an expired handle or duplicate output.
-Paging and collapsing release hidden child values before another read, preserving
-inspection capacity without retaining every visited page. Pending releases remain
-part of a surface's handoff until native command submission succeeds.
+Property lists append bounded previews as the user scrolls; large collections use
+expandable ranges. Previews retain no child values. Expansion reads one own data
+descriptor using the parent's stable key snapshot, then releases that value on
+collapse. Deleting an earlier key cannot make a row select another property.
+Pending releases remain part of a surface's handoff until native command
+submission succeeds.
 The snapshot also retains Console history navigation, filters, scroll position,
 and per-run clear positions; later output and loss reports remain visible.
 

@@ -1,1 +1,77 @@
-:host {display:block;min-width:0;font:inherit;color:inherit;}.heading {display:flex;gap:.35rem;align-items:baseline;overflow-wrap:anywhere;}.heading>span:last-of-type {font-family:Consolas,monospace;white-space:pre-wrap;}button {color:inherit;background:transparent;border:0;font:inherit;text-align:left;padding:.2rem 0;cursor:pointer;overflow-wrap:anywhere;}button:disabled {cursor:default;}button:focus-visible {outline:2px solid var(--accent-strong);outline-offset:1px;}small,p {color:var(--muted);}table {width:100%;table-layout:fixed;border-collapse:collapse;font:inherit;font-family:Consolas,monospace;}th,td {text-align:left;vertical-align:top;overflow-wrap:anywhere;padding:.2rem;}th {font-weight:400;padding-inline-start:calc(.4rem + attr(data-depth type(<number>),0) * .6rem);}td {white-space:pre-wrap;}p {margin:.25rem;}
+:host {
+  display: block;
+  min-width: 0;
+  font: inherit;
+  color: inherit;
+}
+.heading {
+  display: flex;
+  gap: 0.35rem;
+  align-items: baseline;
+  overflow-wrap: anywhere;
+}
+.heading > span:last-of-type {
+  font-family: Consolas, monospace;
+  white-space: pre-wrap;
+}
+button {
+  color: inherit;
+  background: transparent;
+  border: 0;
+  font: inherit;
+  text-align: left;
+  padding: 0.2rem 0;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+button:disabled {
+  cursor: default;
+}
+button:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 1px;
+}
+small,
+p {
+  color: var(--muted);
+}
+table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font: inherit;
+  font-family: Consolas, monospace;
+}
+th,
+td {
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+  padding: 0.2rem;
+}
+th {
+  font-weight: 400;
+  padding-inline-start: calc(0.4rem + attr(data-depth type(<number>), 0) * 0.6rem);
+}
+td {
+  white-space: pre-wrap;
+}
+p {
+  margin: 0.25rem;
+}
+
+th > button,
+th > span,
+.property-preview {
+  display: block;
+  max-width: 100%;
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+th > button {
+  white-space: nowrap;
+}
+.property-label {
+  white-space: pre;
+}

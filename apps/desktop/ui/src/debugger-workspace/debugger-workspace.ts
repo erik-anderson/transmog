@@ -1221,7 +1221,11 @@ export class DebuggerWorkspace extends WebUIElement {
             }
           } else if (event.kind === "resumed" && target.session === this.debuggerTarget) {
             this.clearPause();
-          } else if (event.kind === "scopes" || event.kind === "properties") {
+          } else if (
+            event.kind === "scopes" ||
+            event.kind === "properties" ||
+            event.kind === "property-preview"
+          ) {
             // Replies submitted by the previous surface have no registry here.
             const values =
               event.kind === "scopes"

@@ -138,18 +138,10 @@ test("idle values expire across a missed pause and resume, and stale leases cann
   registry.dispose();
 });
 
-test("paging frees hidden values before submitting the next read and ignores duplicate page clicks", async () => {
+test("loading more appends properties and ignores duplicate reads", async () => {
   const sent = [];
-  let finishRelease;
   const registry = new Inspection(
-    async (action) => {
-      const request = sent.push(action);
-      if (action.kind === "release")
-        await new Promise((resolve) => {
-          finishRelease = resolve;
-        });
-      return request;
-    },
+    async (action) => sent.push(action),
     () => true,
     () => {},
   );
@@ -157,46 +149,200 @@ test("paging frees hidden values before submitting the next read and ignores dup
   registry.set("result", "Result", value(1), scope);
   const first = registry.toggle("result");
   await tick();
+  assert.equal(sent[0].kind, "preview-properties");
   registry.receive("s", 1, {
-    kind: "properties",
+    kind: "property-preview",
     pause: 1,
     handle: 1,
     offset: 0,
-    next: 100,
-    properties: [{ name: "old", value: value(2) }],
+    total: 2,
+    next: 1,
+    properties: [{ name: "old", value: value(null) }],
   });
   await first;
-  const next = registry.get("result").rows.at(-1);
-  const paging = registry.toggle("result", next);
+  const more = registry.get("result").rows.at(-1);
+  const loading = registry.toggle("result", more);
   await tick();
-  await registry.toggle("result", next);
-  assert.deepEqual(
-    sent.map((action) => action.kind),
-    ["properties", "release"],
-  );
-  assert.deepEqual(sent[1].handles, [2]);
-  assert.deepEqual(
-    registry.leases()[0].handles.sort(),
-    [1, 2],
-    "A surface move must retain in-flight release ownership",
-  );
-  finishRelease();
-  await tick();
-  assert.equal(sent[2].offset, 100);
-  registry.receive("s", 3, {
-    kind: "properties",
+  await registry.toggle("result", more);
+  assert.equal(sent.length, 2);
+  assert.equal(sent[1].offset, 1);
+  registry.receive("s", 2, {
+    kind: "property-preview",
     pause: 1,
     handle: 1,
-    offset: 100,
+    offset: 1,
+    total: 2,
     next: null,
-    properties: [{ name: "new", value: value(3) }],
+    properties: [{ name: "new", value: value(null) }],
   });
-  await paging;
-  assert.equal(registry.get("result").rows.at(-1).name, "new");
-  assert.deepEqual(registry.leases()[0].handles.sort(), [1, 3]);
+  await loading;
+  assert.deepEqual(
+    registry.get("result").rows.map((row) => row.name),
+    ["old", "new"],
+  );
+  assert.deepEqual(registry.leases()[0].handles, [1]);
   registry.dispose();
   await tick();
-  finishRelease();
+});
+
+test("expansion retains one selected property and collapsing releases it", async () => {
+  const sent = [];
+  const registry = new Inspection(
+    async (action) => sent.push(action),
+    () => true,
+    () => {},
+  );
+  registry.set("result", "Result", value(1), { session: "s", pause: 1, frame: 0 });
+  const first = registry.toggle("result");
+  await tick();
+  registry.receive("s", 1, {
+    kind: "property-preview",
+    pause: 1,
+    handle: 1,
+    offset: 0,
+    total: 1,
+    next: null,
+    properties: [{ name: "child", value: value(null) }],
+  });
+  await first;
+  const expanding = registry.toggle("result", registry.get("result").rows[0]);
+  await tick();
+  assert.deepEqual(sent[1], { kind: "property", pause: 1, handle: 1, index: 0 });
+  registry.receive("s", 2, { kind: "evaluated", pause: 1, value: value(2), thrown: false });
+  await tick();
+  assert.equal(sent[2].kind, "preview-properties");
+  assert.equal(sent[2].handle, 2);
+  registry.receive("s", 3, {
+    kind: "property-preview",
+    pause: 1,
+    handle: 2,
+    offset: 0,
+    total: 0,
+    next: null,
+    properties: [],
+  });
+  await expanding;
+  await registry.toggle("result", registry.get("result").rows[0]);
+  await tick();
+  assert.deepEqual(sent.find((action) => action.kind === "release").handles, [2]);
+  registry.dispose();
+  await tick();
+});
+
+test("selecting a property refreshes its preview when the live value changed", async () => {
+  const sent = [];
+  const registry = new Inspection(
+    async (action) => sent.push(action),
+    () => true,
+    () => {},
+  );
+  registry.set("result", "Result", value(1), { session: "s", pause: 0, frame: null });
+  const first = registry.toggle("result");
+  await tick();
+  registry.receive("s", 1, {
+    kind: "property-preview",
+    pause: 0,
+    handle: 1,
+    offset: 0,
+    total: 1,
+    next: null,
+    properties: [{ name: "child", value: value(null) }],
+  });
+  await first;
+  const expanding = registry.toggle("result", registry.get("result").rows[0]);
+  await tick();
+  registry.receive("s", 2, {
+    kind: "evaluated",
+    pause: 0,
+    value: { kind: "number", display: "42", handle: null, truncated: false },
+    thrown: false,
+  });
+  await expanding;
+  assert.equal(registry.get("result").rows[0].preview, "42");
+  assert.equal(registry.get("result").rows[0].expandable, false);
+  assert.equal(registry.get("result").issue, "");
+  assert.equal(sent.length, 2);
+  registry.dispose();
+  await tick();
+});
+
+test("collapsing while a property is being selected releases the late value", async () => {
+  const sent = [];
+  const registry = new Inspection(
+    async (action) => sent.push(action),
+    () => true,
+    () => {},
+  );
+  registry.set("result", "Result", value(1), { session: "s", pause: 1, frame: 0 });
+  const first = registry.toggle("result");
+  await tick();
+  registry.receive("s", 1, {
+    kind: "property-preview",
+    pause: 1,
+    handle: 1,
+    offset: 0,
+    total: 1,
+    next: null,
+    properties: [{ name: "child", value: value(null) }],
+  });
+  await first;
+  const expanding = registry.toggle("result", registry.get("result").rows[0]);
+  await tick();
+  await registry.toggle("result");
+  registry.receive("s", 2, { kind: "evaluated", pause: 1, value: value(2), thrown: false });
+  await expanding;
+  await tick();
+  assert.equal(registry.get("result").expanded, false);
+  assert.equal(registry.get("result").loading, false);
+  assert.deepEqual(
+    sent.map((action) => action.kind),
+    ["preview-properties", "property", "release"],
+  );
+  assert.deepEqual(sent[2].handles, [2]);
+  registry.dispose();
+  await tick();
+});
+
+test("large collections expand into bounded ranges instead of replacing pages", async () => {
+  const sent = [];
+  const registry = new Inspection(
+    async (action) => sent.push(action),
+    () => true,
+    () => {},
+  );
+  registry.set("result", "Result", value(1), { session: "s", pause: 1, frame: 0 });
+  const first = registry.toggle("result");
+  await tick();
+  registry.receive("s", 1, {
+    kind: "property-preview",
+    pause: 1,
+    handle: 1,
+    offset: 0,
+    total: 5000,
+    next: 100,
+    properties: [],
+  });
+  await first;
+  assert.equal(registry.get("result").rows.length, 50);
+  const last = registry.get("result").rows.at(-1);
+  assert.equal(last.name, "Properties 4901–5000");
+  const expanding = registry.toggle("result", last);
+  await tick();
+  assert.equal(sent[1].offset, 4900);
+  assert.equal(sent[1].limit, 100);
+  assert.equal(sent[1].refresh, false);
+  registry.receive("s", 2, {
+    kind: "property-preview",
+    pause: 1,
+    handle: 1,
+    offset: 4900,
+    total: 5000,
+    next: null,
+    properties: [{ name: "last", value: value(null) }],
+  });
+  await expanding;
+  assert.equal(registry.get("result").rows.at(-1).name, "last");
+  registry.dispose();
   await tick();
 });
 

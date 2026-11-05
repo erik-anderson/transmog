@@ -184,6 +184,66 @@ export class Inspection {
       return;
     }
     const before = root.tree.handles();
+    let selectedHandle: number | undefined;
+    if (
+      row &&
+      row.expandable &&
+      !row.expanded &&
+      !row.value.handle &&
+      row.rangeStart === undefined
+    ) {
+      const property = root.tree.property(row);
+      if (!property) {
+        return;
+      }
+      root.view.loading = true;
+      root.view.issue = "Loading…";
+      this.changed();
+      const event = await this.request(
+        { kind: "property", pause: root.scope.pause, ...property },
+        root.scope,
+      );
+      root.view.loading = false;
+      if (this.roots.get(key) !== root || !this.valid(root.scope) || !root.view.expanded) {
+        if (event?.kind === "evaluated" && event.value.handle) {
+          this.releaseLeases([{ scope: root.scope, handles: [event.value.handle] }]);
+        }
+        if (this.roots.get(key) === root && !root.view.expanded) {
+          this.releaseLeases([
+            {
+              scope: root.scope,
+              handles: [...root.tree.handles()].filter(
+                (handle) => handle !== root.view.value.handle,
+              ),
+            },
+          ]);
+          root.tree.reset();
+          root.view.rows = [];
+          root.view.issue = "";
+          this.changed();
+        }
+        return;
+      }
+      if (event?.kind !== "evaluated") {
+        root.view.issue =
+          event?.kind === "rejected" ? event.message : "Property is no longer available.";
+        this.changed();
+        return;
+      }
+      root.tree.update(row, event.value);
+      root.view.rows = root.tree.rows();
+      if (!event.value.handle) {
+        root.view.issue = ["object", "array", "function"].includes(event.value.kind)
+          ? "Collapse another value before expanding this one."
+          : event.value.kind === "unavailable"
+            ? event.value.display
+            : "";
+        this.changed();
+        return;
+      }
+      selectedHandle = event.value.handle;
+      row = { ...row, value: event.value };
+    }
     let branch;
     if (row) {
       branch = root.tree.toggle(row);
@@ -195,6 +255,12 @@ export class Inspection {
         root.tree.reset();
         root.view.issue = "";
       }
+    }
+    if (selectedHandle && !branch) {
+      this.releaseLeases([{ scope: root.scope, handles: [selectedHandle] }]);
+    }
+    if (branch === null) {
+      root.view.issue = "Collapse another value before expanding this one.";
     }
     const releaseRemoved = (handles: Set<number>): void => {
       const retained = root.tree.handles();
@@ -231,15 +297,20 @@ export class Inspection {
       }
       const event = await this.request(
         {
-          kind: "properties",
+          kind: "preview-properties",
           pause: root.scope.pause,
           handle: branch.handle,
           offset: branch.offset,
+          limit: branch.limit,
+          refresh: branch.refresh,
         },
         root.scope,
       );
       if (this.roots.get(key) !== root || !this.valid(root.scope)) {
-        if (event?.kind === "properties" && this.valid(root.scope)) {
+        if (
+          (event?.kind === "properties" || event?.kind === "property-preview") &&
+          this.valid(root.scope)
+        ) {
           const handles = event.properties.flatMap((property) =>
             property.value.handle ? [property.value.handle] : [],
           );
@@ -249,9 +320,9 @@ export class Inspection {
         }
         return;
       }
-      if (event?.kind === "properties") {
+      if (event?.kind === "properties" || event?.kind === "property-preview") {
         root.view.issue = "";
-        root.tree.receive(branch.key, event.properties, event.offset, event.next);
+        root.tree.receive(branch.key, event.properties, event.offset, event.next, event.total);
         root.view.rows = root.tree.rows();
       } else if (event?.kind === "rejected") {
         root.view.issue = event.message;

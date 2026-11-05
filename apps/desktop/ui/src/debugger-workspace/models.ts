@@ -62,6 +62,15 @@ export type DebugAction =
   | { kind: "resume"; pause: number; action: "continue" | "into" | "over" | "out" }
   | { kind: "scopes"; pause: number; frame: number }
   | { kind: "properties"; pause: number; handle: number; offset: number }
+  | {
+      kind: "preview-properties";
+      pause: number;
+      handle: number;
+      offset: number;
+      limit: number;
+      refresh: boolean;
+    }
+  | { kind: "property"; pause: number; handle: number; index: number }
   | { kind: "release"; pause: number; handles: number[] }
   | { kind: "exceptions"; policy: "none" | "uncaught" | "all" }
   | { kind: "breakpoints"; values: SourceBreakpoint[] }
@@ -98,12 +107,13 @@ export type DebugEvent =
     }
   | { kind: "scopes"; pause: number; frame: number; scopes: DebugScope[] }
   | {
-      kind: "properties";
+      kind: "properties" | "property-preview";
       pause: number;
       handle: number;
       offset: number;
       properties: DebugProperty[];
       next: number | null;
+      total?: number;
     }
   | { kind: "rejected"; message: string }
   | { kind: "stopped"; reason: string };

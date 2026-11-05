@@ -171,7 +171,14 @@ impl DebugCommand {
                 DebugAction::Scopes { pause, frame } => {
                     *pause > 0 && (*frame as usize) < MAX_DEBUG_FRAMES
                 }
-                DebugAction::Properties { handle, .. } => *handle > 0,
+                DebugAction::Properties { handle, .. } | DebugAction::Property { handle, .. } => {
+                    *handle > 0
+                }
+                DebugAction::PreviewProperties { handle, limit, .. } => {
+                    *handle > 0
+                        && *limit > 0
+                        && usize::try_from(*limit).is_ok_and(|limit| limit <= MAX_PROPERTIES)
+                }
                 DebugAction::Resume { pause, .. } => *pause > 0,
                 DebugAction::Evaluate {
                     expression,
@@ -291,6 +298,29 @@ pub enum DebugAction {
         /// Zero-based property offset, without running code between pages.
         offset: u32,
     },
+    /// Browse own descriptors without retaining their object values.
+    PreviewProperties {
+        /// Current pause generation, or zero for idle values.
+        pause: u64,
+        /// Native object or scope handle.
+        handle: u32,
+        /// Offset in this handle's stable key snapshot.
+        offset: u32,
+        /// Maximum descriptors in this read, at most `MAX_PROPERTIES`.
+        limit: u32,
+        /// Start a fresh key snapshot when expanding an object again.
+        refresh: bool,
+    },
+    /// Retain one data property for expansion, using its parent's key snapshot.
+    /// Returns a value reply without starting a JavaScript evaluation.
+    Property {
+        /// Current pause generation, or zero for idle values.
+        pause: u64,
+        /// Parent object or scope handle.
+        handle: u32,
+        /// Exact key index returned by property browsing.
+        index: u32,
+    },
     /// Release value handles early without changing execution.
     Release {
         /// Current pause generation, or zero for idle Console values.
@@ -408,6 +438,7 @@ impl std::fmt::Debug for DebugEvent {
             DebugEventKind::Resumed => "resumed",
             DebugEventKind::Scopes { .. } => "scopes",
             DebugEventKind::Properties { .. } => "properties",
+            DebugEventKind::PropertyPreview { .. } => "property-preview",
             DebugEventKind::Acknowledged => "acknowledged",
             DebugEventKind::Rejected { .. } => "rejected",
             DebugEventKind::Stopped { .. } => "stopped",
@@ -466,7 +497,7 @@ pub enum DebugEventKind {
     },
     /// An explicit console command began running inside the selected isolate.
     Evaluating,
-    /// Bounded console result, including an exception outcome.
+    /// Bounded value from evaluation or property selection.
     Evaluated {
         /// Requested frame generation, or zero for globals.
         pause: u64,
@@ -521,6 +552,21 @@ pub enum DebugEventKind {
         /// Finite own descriptors.
         properties: Vec<DebugProperty>,
         /// Another explicit page is available; no data was expanded implicitly.
+        next: Option<u32>,
+    },
+    /// Own-property previews with no retained child value handles.
+    PropertyPreview {
+        /// Current pause generation, or zero for idle values.
+        pause: u64,
+        /// Requested parent handle.
+        handle: u32,
+        /// Offset in the stable key snapshot.
+        offset: u32,
+        /// Number of keys in the snapshot.
+        total: u32,
+        /// Bounded own descriptors; accessors and proxies remain unavailable.
+        properties: Vec<DebugProperty>,
+        /// Offset for another bounded read, if available.
         next: Option<u32>,
     },
     /// Non-state command completed without exposing Inspector protocol internals.

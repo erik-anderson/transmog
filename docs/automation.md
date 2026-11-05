@@ -898,7 +898,8 @@ Choose **Debug test** in Scripts to run the current callback or exchange-scenari
 input in a fresh worker without applying the draft. It opens this same workspace
 and pauses before the first user statement. Set breakpoints and exception policy,
 then continue. When paused, select a frame or scope and expand objects in place;
-getters and proxies stay inert. Completed fixtures retain their result and logs
+getters and proxies stay inert. Scroll to load more properties; large collections
+use expandable ranges. Completed fixtures retain their result and logs
 in the recent worker list.
 
 Continue uses F8 or `Ctrl+\` (also F5); step over F10, into F11,

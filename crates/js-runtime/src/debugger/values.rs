@@ -1,4 +1,4 @@
-//! Pause-local native handles and inert own-descriptor paging.
+//! Scope-local native handles and inert own-descriptor browsing.
 
 use std::collections::BTreeMap;
 use transmog_script_diagnostics::debugger::{
@@ -11,6 +11,12 @@ use v8::inspector::{StringView, V8InspectorSession};
 pub(super) struct Values {
     next: u32,
     handles: BTreeMap<u32, v8::Global<v8::Value>>,
+    keys: BTreeMap<u32, v8::Global<v8::Array>>,
+}
+struct PropertyPage {
+    properties: Vec<DebugProperty>,
+    total: u32,
+    next: Option<u32>,
 }
 impl Values {
     pub(super) fn remote(
@@ -22,15 +28,17 @@ impl Values {
         let (value, _, _) = session
             .unwrap_object(scope, StringView::from(id.as_bytes()))
             .ok()?;
-        Some(self.preview(scope, value))
+        Some(self.preview(scope, value, true))
     }
     pub(super) fn clear(&mut self) {
         self.handles.clear();
+        self.keys.clear();
         // Never reuse a released handle within one connection, even after resume.
     }
     pub(super) fn release(&mut self, handles: &[u32]) {
         for handle in handles {
             self.handles.remove(handle);
+            self.keys.remove(handle);
         }
     }
     fn retain(
@@ -66,6 +74,64 @@ impl Values {
         handle: u32,
         offset: u32,
     ) -> Option<DebugEventKind> {
+        let page = self.read_properties(
+            scope,
+            handle,
+            offset,
+            u32::try_from(MAX_PROPERTIES).ok()?,
+            false,
+            offset == 0,
+        )?;
+        Some(DebugEventKind::Properties {
+            pause,
+            handle,
+            offset,
+            properties: page.properties,
+            next: page.next,
+        })
+    }
+    pub(super) fn preview_properties(
+        &mut self,
+        scope: &mut v8::PinScope<'_, '_>,
+        pause: u64,
+        handle: u32,
+        offset: u32,
+        limit: u32,
+        refresh: bool,
+    ) -> Option<DebugEventKind> {
+        let page = self.read_properties(scope, handle, offset, limit, true, refresh)?;
+        Some(DebugEventKind::PropertyPreview {
+            pause,
+            handle,
+            offset,
+            total: page.total,
+            properties: page.properties,
+            next: page.next,
+        })
+    }
+    pub(super) fn property(
+        &mut self,
+        scope: &mut v8::PinScope<'_, '_>,
+        pause: u64,
+        handle: u32,
+        index: u32,
+    ) -> Option<DebugEventKind> {
+        let page = self.read_properties(scope, handle, index, 1, false, false)?;
+        Some(DebugEventKind::Evaluated {
+            pause,
+            value: page.properties.into_iter().next()?.value,
+            thrown: false,
+        })
+    }
+    fn read_properties(
+        &mut self,
+        scope: &mut v8::PinScope<'_, '_>,
+        handle: u32,
+        offset: u32,
+        limit: u32,
+        preview_only: bool,
+        refresh: bool,
+    ) -> Option<PropertyPage> {
         let value = v8::Local::new(scope, self.handles.get(&handle)?);
         if value.is_proxy() {
             return None;
@@ -74,18 +140,25 @@ impl Values {
         v8::tc_scope!(let scope,scope);
         // Enumeration/descriptor reads cannot execute script, even for exotic objects.
         v8::disallow_javascript_execution_scope!(let scope,scope,v8::OnFailure::ThrowOnFailure);
-        let keys = object.get_own_property_names(
-            scope,
-            v8::GetPropertyNamesArgs {
-                mode: v8::KeyCollectionMode::OwnOnly,
-                property_filter: v8::PropertyFilter::ALL_PROPERTIES,
-                index_filter: v8::IndexFilter::IncludeIndices,
-                key_conversion: v8::KeyConversionMode::ConvertToString,
-            },
-        )?;
-        let end = offset
-            .saturating_add(u32::try_from(MAX_PROPERTIES).ok()?)
-            .min(keys.length());
+        if refresh {
+            self.keys.remove(&handle);
+        }
+        let keys = if let Some(keys) = self.keys.get(&handle) {
+            v8::Local::new(scope, keys)
+        } else {
+            let keys = object.get_own_property_names(
+                scope,
+                v8::GetPropertyNamesArgs {
+                    mode: v8::KeyCollectionMode::OwnOnly,
+                    property_filter: v8::PropertyFilter::ALL_PROPERTIES,
+                    index_filter: v8::IndexFilter::IncludeIndices,
+                    key_conversion: v8::KeyConversionMode::ConvertToString,
+                },
+            )?;
+            self.keys.insert(handle, v8::Global::new(scope, keys));
+            keys
+        };
+        let end = offset.saturating_add(limit).min(keys.length());
         let mut properties = Vec::new();
         let mut bytes = 0;
         let mut next = offset.min(keys.length());
@@ -102,7 +175,8 @@ impl Values {
             let value = descriptor.and_then(|descriptor| data_value(scope, descriptor));
             // End this page before unavailable object previews. The controller can
             // release its previous page and continue at this exact property.
-            if self.handles.len() >= MAX_OBJECT_HANDLES
+            if !preview_only
+                && self.handles.len() >= MAX_OBJECT_HANDLES
                 && !properties.is_empty()
                 && value.is_some_and(|value| value.is_object() && !value.is_proxy())
             {
@@ -110,7 +184,7 @@ impl Values {
             }
             let before = self.next;
             let value = if let Some(value) = value {
-                self.preview(scope, value)
+                self.preview(scope, value, !preview_only)
             } else {
                 unavailable("Accessor or unavailable property; not evaluated")
             };
@@ -130,10 +204,8 @@ impl Values {
             properties.push(property);
             next = index + 1;
         }
-        Some(DebugEventKind::Properties {
-            pause,
-            handle,
-            offset,
+        Some(PropertyPage {
+            total: keys.length(),
             properties,
             next: (next < keys.length()).then_some(next),
         })
@@ -142,6 +214,7 @@ impl Values {
         &mut self,
         scope: &mut v8::PinScope<'_, '_>,
         value: v8::Local<v8::Value>,
+        retain: bool,
     ) -> DebugValue {
         let mut output = DebugValue {
             kind: "unavailable".into(),
@@ -201,8 +274,10 @@ impl Values {
                 "[Object]"
             }
             .into();
-            output.handle = self.retain(scope, value);
-            if output.handle.is_none() {
+            if retain {
+                output.handle = self.retain(scope, value);
+            }
+            if retain && output.handle.is_none() {
                 output.display.push_str(" · value handle limit reached");
             }
         }

@@ -473,6 +473,161 @@ fn idle_console_values_are_expandable_and_completion_never_invokes_accessors_or_
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // One attachment covers preview capacity, stable keys, and explicit expansion.
+fn property_browsing_retains_only_expanded_values_and_uses_stable_keys() {
+    let (commands, input) = mpsc::sync_channel(MAX_DEBUG_COMMANDS);
+    let (output, events) = mpsc::sync_channel(32);
+    let engine = std::thread::spawn(move || {
+        let mut runtime = Runtime::new(1024 * 1024, 32 * 1024 * 1024).unwrap();
+        runtime
+            .enable_debugger(
+                options(vec![]),
+                DebugTransport::new(input, move |event| output.try_send(event).is_ok()),
+            )
+            .unwrap();
+        runtime
+            .execute_string(
+                "setup",
+                "globalThis.previewFixture=Array.from({length:150},(_,i)=>({i}));'ready'",
+                32,
+            )
+            .unwrap();
+        while runtime.debugger.is_some() {
+            runtime.poll_debugger();
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    });
+    event(&events, |event| {
+        matches!(event.event, DebugEventKind::Attached)
+    });
+    command(
+        &commands,
+        1,
+        DebugAction::Evaluate {
+            expression: "previewFixture".into(),
+            pause: 0,
+            frame: None,
+        },
+    );
+    let DebugEventKind::Evaluated { value, .. } = event(&events, |event| {
+        event.request == 1 && matches!(event.event, DebugEventKind::Evaluated { .. })
+    })
+    .event
+    else {
+        panic!("object result");
+    };
+    let handle = value.handle.unwrap();
+    for (request, offset, count, next) in [(2, 0, 100, Some(100)), (3, 100, 51, None)] {
+        command(
+            &commands,
+            request,
+            DebugAction::PreviewProperties {
+                pause: 0,
+                handle,
+                offset,
+                limit: 100,
+                refresh: offset == 0,
+            },
+        );
+        let DebugEventKind::PropertyPreview {
+            properties,
+            total,
+            next: actual_next,
+            ..
+        } = reply(&events, request).event
+        else {
+            panic!("property previews");
+        };
+        assert_eq!(total, 151);
+        assert_eq!(properties.len(), count);
+        assert_eq!(actual_next, next);
+        assert!(
+            properties
+                .iter()
+                .all(|property| property.value.handle.is_none())
+        );
+        assert!(
+            properties
+                .iter()
+                .all(|property| !property.value.display.contains("handle limit"))
+        );
+    }
+    // Deleting an earlier key must not make a displayed row select a different property.
+    command(
+        &commands,
+        4,
+        DebugAction::Evaluate {
+            expression: "delete previewFixture[0]".into(),
+            pause: 0,
+            frame: None,
+        },
+    );
+    event(&events, |event| {
+        event.request == 4 && matches!(event.event, DebugEventKind::Evaluated { .. })
+    });
+    command(
+        &commands,
+        5,
+        DebugAction::Property {
+            pause: 0,
+            handle,
+            index: 149,
+        },
+    );
+    let DebugEventKind::Evaluated { value, .. } = reply(&events, 5).event else {
+        panic!("selected property");
+    };
+    let child = value.handle.unwrap();
+    command(
+        &commands,
+        6,
+        DebugAction::PreviewProperties {
+            pause: 0,
+            handle: child,
+            offset: 0,
+            limit: 100,
+            refresh: true,
+        },
+    );
+    let DebugEventKind::PropertyPreview { properties, .. } = reply(&events, 6).event else {
+        panic!("expanded child");
+    };
+    assert_eq!(properties[0].name, "i");
+    assert_eq!(properties[0].value.display, "149");
+    command(
+        &commands,
+        7,
+        DebugAction::Release {
+            pause: 0,
+            handles: vec![child],
+        },
+    );
+    reply(&events, 7);
+    command(
+        &commands,
+        8,
+        DebugAction::PreviewProperties {
+            pause: 0,
+            handle,
+            offset: 0,
+            limit: 1,
+            refresh: true,
+        },
+    );
+    let DebugEventKind::PropertyPreview {
+        properties, total, ..
+    } = reply(&events, 8).event
+    else {
+        panic!("refreshed keys");
+    };
+    assert_eq!(total, 150);
+    assert_eq!(properties[0].name, "1");
+    command(&commands, 9, DebugAction::Detach);
+    reply(&events, 9);
+    engine.join().unwrap();
+}
+
+#[test]
 #[allow(clippy::too_many_lines)] // One pause covers read-only inspection and overlapping surface handle lifetimes.
 fn paused_inspection_refreshes_lexical_values_without_mutation() {
     let (commands, input) = mpsc::sync_channel(MAX_DEBUG_COMMANDS);

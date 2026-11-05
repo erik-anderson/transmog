@@ -173,9 +173,9 @@ try {
   await panel.page().keyboard.press("F8");
   pause = await paused(panel, pause);
   await panel.getByRole("cell", { name: "7", exact: true }).waitFor();
-  await panel.getByRole("button", { name: "▸ object", exact: true }).click();
+  await panel.getByRole("button", { name: "object", exact: true }).click();
   await panel.getByRole("cell", { name: /Accessor/ }).waitFor();
-  await panel.getByRole("button", { name: "▸ nested", exact: true }).click();
+  await panel.getByRole("button", { name: "nested", exact: true }).click();
   await panel.getByRole("cell", { name: "42", exact: true }).waitFor();
   await panel.getByRole("textbox", { name: "Immediate expression" }).fill("local");
   await panel.getByRole("button", { name: "Run", exact: true }).click();
@@ -360,12 +360,16 @@ try {
             .map(async (surface) => ({
               url: surface.url(),
               shell: await surface
-                .locator("app-shell")
-                .evaluate((element) => ({
-                  diagnostic: element.diagnosticText,
-                  placement: element.debuggerPlacement,
-                  docked: element.debuggerDocked,
-                }))
+                .evaluate(() => {
+                  const element = document.querySelector("app-shell");
+                  return element
+                    ? {
+                        diagnostic: element.diagnosticText,
+                        placement: element.debuggerPlacement,
+                        docked: element.debuggerDocked,
+                      }
+                    : null;
+                })
                 .catch(String),
               panels: await surface
                 .locator("debugger-workspace")
@@ -374,6 +378,28 @@ try {
                     error: element.debuggerError,
                     transition: element.debuggerTransition,
                     editor: !!element.editor,
+                    scopes: element.debuggerScopeValues.map((value) => ({
+                      label: value.label,
+                      expired: value.expired,
+                      expanded: value.expanded,
+                      loading: value.loading,
+                      issue: value.issue,
+                      handle: value.value.handle,
+                      rows: value.rows.slice(0, 12).map((row) => ({
+                        name: row.name,
+                        value: row.value,
+                        preview: row.preview,
+                        expanded: row.expanded,
+                      })),
+                    })),
+                    events: [...element.views.values()].flatMap((view) =>
+                      view.stream.events.slice(-8).map((item) => ({
+                        request: item.request,
+                        kind: item.event.kind,
+                        value: item.event.value,
+                        message: item.event.message,
+                      })),
+                    ),
                   })),
                 )
                 .catch(String),

@@ -192,18 +192,20 @@ export async function checkNativeDebuggerWorkspace({
   await surface.locator(".command").getByText("workspace local: 7", { exact: true }).waitFor();
   await surface.locator(".command").getByText("workspace callback", { exact: true }).waitFor();
   await surface.getByRole("button", { name: "Clear", exact: true }).click();
-  await prompt.fill("Array.from({length:64},(_,i)=>({i}))");
+  await prompt.fill("Array.from({length:150},(_,i)=>({i}))");
   await surface.getByRole("button", { name: "Run", exact: true }).click();
-  const fullBudget = surface.locator(".command").filter({ hasText: "› Array.from" });
-  await fullBudget
+  const arrayResult = surface.locator(".command").filter({ hasText: "› Array.from" });
+  await arrayResult
     .locator("debug-value")
     .getByRole("button", { name: "Result", exact: false })
     .click();
-  await fullBudget.getByRole("button", { name: "Next properties", exact: true }).click();
-  await fullBudget.getByRole("button", { name: "length", exact: true }).waitFor();
-  assert.equal(await fullBudget.getByText(/value handle limit reached/u).count(), 0);
-  await fullBudget.getByRole("button", { name: "Previous properties", exact: true }).click();
-  await fullBudget.getByRole("button", { name: "Next properties", exact: true }).waitFor();
+  await arrayResult.getByRole("button", { name: /\b0$/u }).waitFor();
+  await surface.evaluate((element) => {
+    element.consoleOutput.scrollTop = element.consoleOutput.scrollHeight;
+  });
+  await arrayResult.getByText("length", { exact: true }).waitFor();
+  assert.equal(await arrayResult.getByText(/value handle limit reached/u).count(), 0);
+  assert.equal(await arrayResult.getByRole("button", { name: /\b0$/u }).count(), 1);
   await surface.getByRole("textbox", { name: "Immediate expression" }).fill("preserved draft");
   await surface.getByRole("textbox", { name: "Immediate expression" }).press("ArrowUp");
   await surface
@@ -230,7 +232,7 @@ export async function checkNativeDebuggerWorkspace({
   await detached.keyboard.type("must not replace the draft");
   assert.equal(
     await surface.evaluate((element) => element.debuggerInput),
-    "Array.from({length:64},(_,i)=>({i}))",
+    "Array.from({length:150},(_,i)=>({i}))",
   );
   // Cancel from the destination before it acknowledges ownership, then retry.
   await invoke("place_debugger", { placement: "closed" });
@@ -243,7 +245,7 @@ export async function checkNativeDebuggerWorkspace({
   await dock.waitFor({ state: "detached" });
   assert.equal(
     await surface.getByRole("textbox", { name: "Immediate expression" }).inputValue(),
-    "Array.from({length:64},(_,i)=>({i}))",
+    "Array.from({length:150},(_,i)=>({i}))",
   );
   await surface.evaluate((element) => element.place("bottom"));
   await wait(
@@ -255,7 +257,7 @@ export async function checkNativeDebuggerWorkspace({
   );
   assert.equal(
     await dock.getByRole("textbox", { name: "Immediate expression" }).inputValue(),
-    "Array.from({length:64},(_,i)=>({i}))",
+    "Array.from({length:150},(_,i)=>({i}))",
   );
   await dock.getByRole("textbox", { name: "Immediate expression" }).press("ArrowDown");
   assert.equal(

@@ -352,53 +352,88 @@ export function installDebuggerWorkspaceFixture() {
           },
           request,
         );
-      else if (action.kind === "properties")
-        emit(
-          {
-            kind: "properties",
-            pause: action.pause,
-            handle: action.handle,
-            offset: action.offset,
-            properties:
-              action.handle === 2
-                ? [
-                    {
-                      name: "nested",
-                      value: { kind: "object", display: "[Object]", handle: 6, truncated: false },
+      else if (["properties", "preview-properties", "property"].includes(action.kind)) {
+        if (
+          action.kind === "preview-properties" &&
+          action.handle === 2 &&
+          action.offset === debug.rejectPropertyRead
+        ) {
+          emit({ kind: "rejected", message: "Property read failed" }, request);
+          return request;
+        }
+        const all =
+          debug.propertyInventory?.[action.handle] ??
+          (action.handle === 2
+            ? [
+                {
+                  name: "nested",
+                  value: { kind: "object", display: "[Object]", handle: 6, truncated: false },
+                },
+                {
+                  name: "secret",
+                  value: {
+                    kind: "unavailable",
+                    display: "Accessor; not evaluated",
+                    handle: null,
+                    truncated: false,
+                  },
+                },
+              ]
+            : action.handle === 6
+              ? [
+                  {
+                    name: "answer",
+                    value: { kind: "number", display: "42", handle: null, truncated: false },
+                  },
+                ]
+              : [
+                  {
+                    name: "value",
+                    value: {
+                      kind: "number",
+                      display: action.handle === 4 ? "21" : "42",
+                      handle: null,
+                      truncated: false,
                     },
-                    {
-                      name: "secret",
-                      value: {
-                        kind: "unavailable",
-                        display: "Accessor; not evaluated",
-                        handle: null,
-                        truncated: false,
-                      },
-                    },
-                  ]
-                : action.handle === 6
-                  ? [
-                      {
-                        name: "answer",
-                        value: { kind: "number", display: "42", handle: null, truncated: false },
-                      },
-                    ]
-                  : [
-                      {
-                        name: "value",
-                        value: {
-                          kind: "number",
-                          display: action.handle === 4 ? "21" : "42",
-                          handle: null,
-                          truncated: false,
-                        },
-                      },
-                    ],
-            next: null,
-          },
-          request,
-        );
-      else if (action.kind === "resume") {
+                  },
+                ]);
+        if (action.kind === "property") {
+          emit(
+            {
+              kind: "evaluated",
+              pause: action.pause,
+              value: all[action.index]?.value ?? {
+                kind: "unavailable",
+                display: "Property is no longer available",
+                handle: null,
+                truncated: false,
+              },
+              thrown: false,
+            },
+            request,
+          );
+        } else {
+          const preview = action.kind === "preview-properties";
+          const properties = all
+            .slice(action.offset, action.offset + (action.limit ?? 100))
+            .map((property) =>
+              preview ? { ...property, value: { ...property.value, handle: null } } : property,
+            );
+          const next = action.offset + properties.length;
+          emit(
+            {
+              kind: preview ? "property-preview" : "properties",
+              pause: action.pause,
+              handle: action.handle,
+              offset: action.offset,
+              properties,
+              total: all.length,
+              next: next < all.length ? next : null,
+            },
+            request,
+          );
+        }
+      } else if (action.kind === "resume") {
         debug.paused = null;
         emit({ kind: "resumed" });
         if (action.action !== "continue") debug.pause();

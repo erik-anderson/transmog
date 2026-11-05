@@ -13,6 +13,128 @@ fn session() -> Arc<Session> {
     .unwrap()
 }
 #[test]
+fn property_reads_do_not_start_or_resume_another_evaluation() {
+    let session = session();
+    session.bind(|_| true, || {});
+    session
+        .accept(event(&session, DebugEventKind::Attached))
+        .unwrap();
+    let evaluation = session
+        .command(DebugAction::Evaluate {
+            expression: "slow()".into(),
+            pause: 0,
+            frame: None,
+        })
+        .unwrap();
+    let mut started = event(&session, DebugEventKind::Evaluating);
+    started.request = evaluation;
+    session.accept(started.clone()).unwrap();
+    let property = session
+        .command(DebugAction::Property {
+            pause: 0,
+            handle: 1,
+            index: 0,
+        })
+        .unwrap();
+    started.request = property;
+    assert!(session.accept(started).is_err());
+    let mut reply = event(
+        &session,
+        DebugEventKind::Evaluated {
+            pause: 0,
+            value: crate::debugger::DebugValue {
+                kind: "object".into(),
+                display: "[Object]".into(),
+                handle: Some(2),
+                truncated: false,
+            },
+            thrown: false,
+        },
+    );
+    reply.request = property;
+    session.accept(reply.clone()).unwrap();
+    assert!(
+        session.clock.0.lock().unwrap().1.is_some(),
+        "A property read must preserve an active evaluation's blocking clock"
+    );
+    reply.request = evaluation;
+    session.accept(reply).unwrap();
+    assert!(session.clock.0.lock().unwrap().1.is_none());
+}
+
+#[test]
+fn property_previews_enforce_the_requested_range_and_do_not_accept_value_handles() {
+    let session = session();
+    session.bind(|_| true, || {});
+    session
+        .accept(event(&session, DebugEventKind::Attached))
+        .unwrap();
+    for limit in [0, 101] {
+        assert!(
+            session
+                .command(DebugAction::PreviewProperties {
+                    pause: 0,
+                    handle: 1,
+                    offset: 0,
+                    limit,
+                    refresh: false
+                })
+                .is_err()
+        );
+    }
+    let request = session
+        .command(DebugAction::PreviewProperties {
+            pause: 0,
+            handle: 1,
+            offset: 0,
+            limit: 1,
+            refresh: true,
+        })
+        .unwrap();
+    let property = crate::debugger::DebugProperty {
+        name: "item".into(),
+        value: crate::debugger::DebugValue {
+            kind: "object".into(),
+            display: "[Object]".into(),
+            handle: None,
+            truncated: false,
+        },
+    };
+    let mut reply = event(
+        &session,
+        DebugEventKind::PropertyPreview {
+            pause: 0,
+            handle: 1,
+            offset: 0,
+            total: 3,
+            properties: vec![property],
+            next: Some(1),
+        },
+    );
+    reply.request = request;
+    if let DebugEventKind::PropertyPreview { properties, .. } = &mut reply.event {
+        properties[0].value.handle = Some(2);
+    }
+    assert!(session.accept(reply.clone()).is_err());
+    if let DebugEventKind::PropertyPreview { properties, .. } = &mut reply.event {
+        properties[0].value.handle = None;
+        properties.push(properties[0].clone());
+    }
+    assert!(session.accept(reply.clone()).is_err());
+    if let DebugEventKind::PropertyPreview { properties, .. } = &mut reply.event {
+        properties.pop();
+    }
+    if let DebugEventKind::PropertyPreview { next, .. } = &mut reply.event {
+        *next = None;
+    }
+    assert!(session.accept(reply.clone()).is_err());
+    if let DebugEventKind::PropertyPreview { next, .. } = &mut reply.event {
+        *next = Some(1);
+    }
+    session.accept(reply).unwrap();
+}
+
+#[test]
 fn inspection_replies_are_correlated_bounded_and_valid_in_the_exact_scope() {
     let session = session();
     session.bind(|_| true, || {});

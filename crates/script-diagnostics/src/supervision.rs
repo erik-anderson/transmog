@@ -53,9 +53,22 @@ struct Pending {
     started: bool,
     expected: Expected,
 }
+fn is_inspection(action: &DebugAction) -> bool {
+    matches!(
+        action,
+        DebugAction::Scopes { .. }
+            | DebugAction::Inspect { .. }
+            | DebugAction::Complete { .. }
+            | DebugAction::Properties { .. }
+            | DebugAction::PreviewProperties { .. }
+            | DebugAction::Property { .. }
+            | DebugAction::Release { .. }
+    )
+}
 enum Expected {
     Control,
     Evaluate(u64),
+    Property(u64),
     Complete(u64),
     Configure,
     Resume,
@@ -63,6 +76,7 @@ enum Expected {
     Detach,
     Scopes(u64, u32),
     Properties(u64, u32, u32),
+    PropertyPreview(u64, u32, u32, u32),
 }
 impl Expected {
     fn from_action(action: &DebugAction) -> Self {
@@ -71,6 +85,7 @@ impl Expected {
             DebugAction::Evaluate { pause, .. } | DebugAction::Inspect { pause, .. } => {
                 Self::Evaluate(*pause)
             }
+            DebugAction::Property { pause, .. } => Self::Property(*pause),
             DebugAction::Complete { pause, .. } => Self::Complete(*pause),
             DebugAction::Scopes { pause, frame } => Self::Scopes(*pause, *frame),
             DebugAction::Properties {
@@ -78,6 +93,13 @@ impl Expected {
                 handle,
                 offset,
             } => Self::Properties(*pause, *handle, *offset),
+            DebugAction::PreviewProperties {
+                pause,
+                handle,
+                offset,
+                limit,
+                ..
+            } => Self::PropertyPreview(*pause, *handle, *offset, *limit),
             DebugAction::Resume { .. } | DebugAction::ContinueTo { .. } => Self::Resume,
             DebugAction::Release { .. } => Self::Release,
             DebugAction::Detach => Self::Detach,
@@ -93,8 +115,9 @@ impl Expected {
             DebugEventKind::Evaluating | DebugEventKind::Output { .. } => {
                 matches!(self, Self::Evaluate(_))
             }
-            DebugEventKind::Evaluated { pause, .. } => {
+            DebugEventKind::Evaluated { pause, thrown, .. } => {
                 matches!(self, Self::Evaluate(p) if p == pause)
+                    || matches!(self, Self::Property(p) if p == pause && !thrown)
             }
             DebugEventKind::Rejected { .. } => true,
             DebugEventKind::Acknowledged => {
@@ -111,6 +134,26 @@ impl Expected {
                 offset,
                 ..
             } => matches!(self,Self::Properties(p,h,o) if p==pause&&h==handle&&o==offset),
+            DebugEventKind::PropertyPreview {
+                pause,
+                handle,
+                offset,
+                properties,
+                total,
+                next,
+            } => {
+                let end = offset.checked_add(u32::try_from(properties.len()).unwrap_or(u32::MAX));
+                let complete = if *offset >= *total {
+                    properties.is_empty() && next.is_none()
+                } else {
+                    end.is_some_and(|end| end <= *total && *next == (end < *total).then_some(end))
+                };
+                matches!(self,Self::PropertyPreview(p,h,o,limit) if p==pause && h==handle && o==offset && properties.len() <= *limit as usize)
+                    && properties
+                        .iter()
+                        .all(|property| property.value.handle.is_none())
+                    && complete
+            }
             _ => false,
         }
     }
@@ -630,6 +673,8 @@ impl Session {
             | DebugAction::ContinueTo { pause, .. }
             | DebugAction::Scopes { pause, .. }
             | DebugAction::Properties { pause, .. }
+            | DebugAction::PreviewProperties { pause, .. }
+            | DebugAction::Property { pause, .. }
             | DebugAction::Release { pause, .. } => Some(*pause),
             _ => None,
         };
@@ -670,14 +715,7 @@ impl Session {
                 started: false,
                 since: Instant::now(),
                 expected: Expected::from_action(&command.action),
-                inspection: matches!(
-                    command.action,
-                    DebugAction::Scopes { .. }
-                        | DebugAction::Inspect { .. }
-                        | DebugAction::Complete { .. }
-                        | DebugAction::Properties { .. }
-                        | DebugAction::Release { .. }
-                ),
+                inspection: is_inspection(&command.action),
             },
         );
         state.request = request;
@@ -862,10 +900,14 @@ impl Session {
                 }
             }
             DebugEventKind::Evaluated { pause, value, .. } => {
+                let property = state
+                    .pending
+                    .get(&event.request)
+                    .is_some_and(|pending| matches!(pending.expected, Expected::Property(_)));
                 if !state
                     .pending
                     .get(&event.request)
-                    .is_some_and(|pending| pending.started)
+                    .is_some_and(|pending| pending.started || property)
                 {
                     return Err("Console result arrived before evaluation started");
                 }
@@ -882,7 +924,7 @@ impl Session {
                 {
                     return Err("Console result exceeds its budget");
                 }
-                if state.paused_at.is_none() {
+                if state.paused_at.is_none() && !property {
                     self.clock.resume();
                 }
             }
@@ -946,6 +988,13 @@ impl Session {
                 }
             }
             DebugEventKind::Properties {
+                pause,
+                properties,
+                next,
+                offset,
+                ..
+            }
+            | DebugEventKind::PropertyPreview {
                 pause,
                 properties,
                 next,

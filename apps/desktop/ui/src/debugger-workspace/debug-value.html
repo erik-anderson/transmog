@@ -8,8 +8,8 @@
           aria-expanded="{{value.expanded}}"
           @click="{toggle()}"
         >
-          <if condition="value.expanded">▾ </if
-          ><if condition="!value.expanded">▸ </if>{{value.label}}
+          <if condition="value.expanded"><span aria-hidden="true">▾ </span></if
+          ><if condition="!value.expanded"><span aria-hidden="true">▸ </span></if>{{value.label}}
         </button></if
       >
       <if condition="!value.value.handle"><span>{{value.label}}:</span></if>
@@ -21,21 +21,16 @@
         <tbody>
           <for each="property in value.rows"
             ><tr key="{{property.key}}">
-              <th data-depth="{{property.depth}}">
-                <button
-                  type="button"
-                  aria-disabled="{{value.loading}}"
-                  ?disabled="{{!property.expandable && property.offset == undefined}}"
-                  aria-expanded="{{property.expanded}}"
-                  @click="{toggle(property)}"
-                >
-                  <if condition="property.expandable"
-                    ><if condition="property.expanded">▾ </if
-                    ><if condition="!property.expanded">▸ </if></if
-                  >{{property.name}}
-                </button>
+              <th data-depth="{{property.depth}}" title="{{property.name}}">
+                <if condition="property.expandable">
+                  <button type="button" aria-disabled="{{value.loading}}" aria-expanded="{{property.expanded}}" @click="{toggle(property)}">
+                    <if condition="property.expanded"><span aria-hidden="true">▾ </span></if><if condition="!property.expanded"><span aria-hidden="true">▸ </span></if><span class="property-label">{{property.label}}</span>
+                  </button>
+                </if>
+                <if condition="property.offset"><button type="button" data-more data-row-key="{{property.key}}" aria-disabled="{{value.loading}}" @click="{toggle(property)}">{{property.label}}</button></if>
+                <if condition="!property.expandable && property.offset == undefined"><span>{{property.label}}</span></if>
               </th>
-              <td>{{property.value.display}}<if condition="property.value.truncated"> …</if></td>
+              <td><span class="property-preview" title="{{property.value.display}}">{{property.preview}}<if condition="property.value.truncated"> …</if></span></td>
             </tr></for
           >
         </tbody>
