@@ -303,6 +303,45 @@ fn paused() -> DebugEventKind {
     }
 }
 #[test]
+fn current_operation_metadata_does_not_depend_on_console_output_or_leak_between_callbacks() {
+    let session = session();
+    let capture = crate::LogCapture::new(crate::LogContext {
+        artifact: Some("script:exact".into()),
+        worker: "worker".into(),
+        revision: "revision".into(),
+        callback: "initialize".into(),
+        invocation: 0,
+        exchange_id: None,
+    });
+    session.track_logs(Arc::clone(&capture));
+    assert!(capture.complete_or_silent());
+    assert!(session.page(0).operation.is_none());
+    assert!(session.begin(0));
+    assert_eq!(session.page(0).operation.unwrap().callback, "initialize");
+    assert_eq!(session.page(0).logs, Vec::new());
+    session.completed();
+    assert!(session.page(0).operation.is_none());
+    assert!(session.begin(1));
+    assert!(session.page(0).operation.is_none());
+    session.track_logs(crate::LogCapture::new(crate::LogContext {
+        callback: "onResponseBody".into(),
+        invocation: 1,
+        exchange_id: Some("request-one".into()),
+        ..capture.context()
+    }));
+    let page = session.page(0);
+    assert_eq!(
+        page.operation.unwrap().exchange_id.as_deref(),
+        Some("request-one")
+    );
+    assert!(page.logs.iter().all(|run| run.records.is_empty()));
+    session.completed();
+    assert!(session.begin(2));
+    assert!(session.page(0).operation.is_none());
+    session.stop("Test ended");
+    assert!(session.page(0).operation.is_none());
+}
+#[test]
 fn native_session_rejects_forged_identity_duplicate_pauses_and_stale_commands() {
     let session = session();
     session.begin(0);

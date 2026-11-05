@@ -86,12 +86,25 @@ pub struct DebugOutcome {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DebugSessionView {
+    /// Retained request for the current callback, resolved by this application's catalog.
+    pub request: Option<DebugRequest>,
     /// Immutable executing identity.
     pub info: DebugSessionInfo,
     /// Native ordered state and value replies.
     pub stream: SessionPage,
     /// Test completion, independent of the last paused frame.
     pub outcome: Option<DebugOutcome>,
+}
+/// One retained request associated with an authenticated debugger operation.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DebugRequest {
+    /// Native exchange identity, scoped to the owning application.
+    pub id: String,
+    /// Captured request method.
+    pub method: String,
+    /// Captured request URL.
+    pub url: String,
 }
 #[derive(Clone, Default)]
 pub(crate) struct Debuggers(Arc<Mutex<BTreeMap<String, Arc<Run>>>>);
@@ -531,6 +544,22 @@ impl Application {
             run.clear_mappings();
         }
         Ok(DebugSessionView {
+            request: stream
+                .operation
+                .as_ref()
+                .and_then(|operation| operation.exchange_id.as_ref())
+                .and_then(|id| {
+                    let row = self
+                        .session_summaries(std::slice::from_ref(id))
+                        .ok()?
+                        .pop()?;
+                    let url = self.copy_message_url(id, "client-request").ok()?;
+                    Some(DebugRequest {
+                        id: row.id,
+                        method: row.method,
+                        url,
+                    })
+                }),
             info: run.info.clone(),
             stream,
             outcome,

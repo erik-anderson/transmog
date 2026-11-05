@@ -182,6 +182,8 @@ pub struct Session {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionPage {
+    /// Current native callback attribution, including silent callbacks.
+    pub operation: Option<crate::LogContext>,
     /// Last native pause epoch, including while idle. Object handles expire across epochs.
     pub value_generation: u64,
     /// Current native execution controls.
@@ -1146,6 +1148,16 @@ impl Session {
                 .front()
                 .is_none_or(|(sequence, ..)| after.saturating_add(1) < *sequence);
         SessionPage {
+            operation: (state.active && !state.connection.closed())
+                .then(|| {
+                    state
+                        .logs
+                        .iter()
+                        .rev()
+                        .map(|capture| capture.context())
+                        .find(|context| context.invocation == state.invocation)
+                })
+                .flatten(),
             value_generation: state.pause,
             controls: state.controls,
             exceptions: state.exceptions,

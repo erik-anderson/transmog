@@ -36,8 +36,8 @@ pub use context::{CompleteBodyContext, MAX_CONTEXT_DECODE_BYTES};
 mod debugging;
 mod diagnostics;
 pub use debugging::{
-    DebugConfiguration, DebugLiveRequest, DebugOutcome, DebugSessionInfo, DebugSessionView,
-    DebugTestRequest,
+    DebugConfiguration, DebugLiveRequest, DebugOutcome, DebugRequest, DebugSessionInfo,
+    DebugSessionView, DebugTestRequest,
 };
 pub use transmog_script_diagnostics::SourceLocation;
 pub use transmog_script_diagnostics::debugger::DebugAction;

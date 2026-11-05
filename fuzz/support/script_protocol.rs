@@ -244,6 +244,7 @@ pub fn check(data: &[u8]) {
         9 => {
             use transmog_script::debugger::{DebugEvent, DebugEventKind};
             let event = serde_json::from_slice::<DebugEvent>(payload).unwrap_or(DebugEvent {
+                value_generation: None,
                 session: "b".repeat(32),
                 invocation: u64::MAX,
                 request: 0,

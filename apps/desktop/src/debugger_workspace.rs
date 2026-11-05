@@ -156,6 +156,7 @@ pub(super) fn command_allowed(command: &str) -> bool {
             | "debugger_breakpoint_positions"
             | "workspace_breakpoints"
             | "workspace_debug_session"
+            | "workspace_debug_request"
             | "workspace_debug_command"
             | "workspace_skip_pauses"
             | "workspace_restart"
@@ -618,6 +619,38 @@ pub(super) fn workspace_debug_session(
         }
     }
     Ok(view)
+}
+#[tauri::command]
+pub(super) fn workspace_debug_request(
+    session: String,
+    pause: u64,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    let request = controlled(&window, false)?
+        .workspace_debug_request(&session, pause)
+        .map_err(|error| error.message)?;
+    let owner = window
+        .state::<DebuggerWindows>()
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(_, entry)| entry.surface == window.label())
+        .map(|(owner, _)| owner.clone())
+        .ok_or("Debugger surface is unavailable")?;
+    let target = window
+        .app_handle()
+        .get_webview_window(&owner)
+        .ok_or("The owning window is closed")?;
+    target
+        .show()
+        .and_then(|()| target.unminimize())
+        .and_then(|()| target.set_focus())
+        .map_err(|error| error.to_string())?;
+    window
+        .app_handle()
+        .emit_to(owner.as_str(), "debugger-request", request.id)
+        .map_err(|error| error.to_string())
 }
 #[tauri::command]
 pub(super) async fn workspace_restart(

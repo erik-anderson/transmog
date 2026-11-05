@@ -428,6 +428,21 @@ impl Application {
     ) -> Result<crate::DebugSessionView, AppError> {
         self.debug_session(OWNER, id, after)
     }
+    /// Resolves a request only while this exact native pause is still current.
+    /// # Errors
+    /// Rejects expired pauses, sandbox callbacks, and requests no longer retained here.
+    pub fn workspace_debug_request(
+        &self,
+        id: &str,
+        pause: u64,
+    ) -> Result<crate::DebugRequest, AppError> {
+        let view = self.workspace_debug_session(id, 0)?;
+        if !view.stream.paused.as_ref().is_some_and(|event| matches!(event.event, transmog_script_diagnostics::debugger::DebugEventKind::Paused { pause: current, .. } if current == pause)) {
+            return Err(invalid("This pause has ended"));
+        }
+        view.request
+            .ok_or_else(|| invalid("This request is no longer available"))
+    }
     /// Runs one typed command against an attached target.
     /// # Errors
     /// Rejects unavailable ownership, invalid input or a failed native operation.
@@ -1119,6 +1134,10 @@ fn merge_points(
                 .breakpoint
                 .condition
                 .clone_from(&change.breakpoint.condition);
+            previous
+                .breakpoint
+                .log_expression
+                .clone_from(&change.breakpoint.log_expression);
         } else {
             let mut addition = change.clone();
             if result
@@ -1580,8 +1599,19 @@ mod tests {
         original.breakpoint.location.line = 7;
         let mut edit = point();
         edit.enabled = false;
+        edit.breakpoint.log_expression = Some("'updated logpoint'".into());
         let merged = merge_points(std::slice::from_ref(&original), &[edit], &[]).unwrap();
         assert!(!merged[0].enabled);
+        assert_eq!(
+            merged[0].breakpoint.log_expression.as_deref(),
+            Some("'updated logpoint'")
+        );
+        assert!(
+            merge_points(&merged, &[point()], &[]).unwrap()[0]
+                .breakpoint
+                .log_expression
+                .is_none()
+        );
         assert_eq!(merged[0].breakpoint.location.line, 7);
         let mut other = point();
         other.file = "extension/another/main.ts".into();

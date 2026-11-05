@@ -369,6 +369,15 @@ impl LogCapture {
         let state = self.state.lock().ok()?;
         state.run.has_output().then(|| state.run.clone())
     }
+    /// Native attribution remains available even when the callback emits no output.
+    pub fn context(&self) -> LogContext {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .run
+            .context
+            .clone()
+    }
     /// Whether an authenticated stream-end has arrived.
     pub fn finished(&self) -> bool {
         self.state.lock().is_ok_and(|state| !state.run.incomplete)
