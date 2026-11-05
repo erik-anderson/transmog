@@ -100,6 +100,14 @@ impl Values {
                 .ok()
                 .and_then(|key| object.get_own_property_descriptor(scope, key));
             let value = descriptor.and_then(|descriptor| data_value(scope, descriptor));
+            // End this page before unavailable object previews. The controller can
+            // release its previous page and continue at this exact property.
+            if self.handles.len() >= MAX_OBJECT_HANDLES
+                && !properties.is_empty()
+                && value.is_some_and(|value| value.is_object() && !value.is_proxy())
+            {
+                break;
+            }
             let before = self.next;
             let value = if let Some(value) = value {
                 self.preview(scope, value)

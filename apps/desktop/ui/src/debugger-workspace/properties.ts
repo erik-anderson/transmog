@@ -16,20 +16,18 @@ interface Branch {
   next: number | null;
   pages: number[];
 }
-/** Inert, bounded property pages. Handles are valid for one pause and frame only. */
+/** Inert property pages. Only visible pages and expanded branches retain handles. */
 export class PropertyTree {
   private branches = new Map<string, Branch>();
   private expanded = new Set<string>();
   private root = "";
-  private retained = new Set<number>();
   reset(): void {
     this.branches.clear();
     this.expanded.clear();
     this.root = "";
-    this.retained.clear();
   }
   handles(): Set<number> {
-    const handles = new Set(this.retained);
+    const handles = new Set<number>();
     for (const branch of this.branches.values()) {
       handles.add(branch.handle);
       for (const property of branch.properties) {
@@ -59,11 +57,6 @@ export class PropertyTree {
       return;
     }
     branch.properties = properties;
-    for (const property of properties) {
-      if (property.value.handle) {
-        this.retained.add(property.value.handle);
-      }
-    }
     branch.offset = offset;
     branch.next = next;
     if (!branch.pages.includes(offset)) {
@@ -71,15 +64,34 @@ export class PropertyTree {
     }
     branch.pages.sort((a, b) => a - b);
   }
+  private remove(path: string[], includeSelf: boolean): void {
+    const matches = (candidate: string[]): boolean =>
+      candidate.length >= path.length && path.every((part, index) => candidate[index] === part);
+    for (const [key, branch] of this.branches) {
+      if (matches(branch.path) && (includeSelf || branch.path.length > path.length)) {
+        this.branches.delete(key);
+      }
+    }
+    for (const key of this.expanded) {
+      const parts = JSON.parse(key) as string[];
+      if (matches(parts) && (includeSelf || parts.length > path.length)) {
+        this.expanded.delete(key);
+      }
+    }
+  }
   toggle(row: PropertyRow) {
     const branch = this.branches.get(row.branch);
     if (row.offset !== undefined && branch) {
+      this.remove(branch.path, false);
+      branch.properties = [];
+      branch.next = null;
       return { key: row.branch, handle: branch.handle, offset: row.offset };
     }
     if (!row.value.handle) {
       return;
     }
     if (this.expanded.delete(row.key)) {
+      this.remove(JSON.parse(row.key) as string[], true);
       return;
     }
     if (this.expanded.size >= 256) {
@@ -113,8 +125,9 @@ export class PropertyTree {
           ),
         );
       }
-      for (const property of branch.properties) {
-        const path = JSON.stringify([...branch.path, property.name]);
+      for (const [index, property] of branch.properties.entries()) {
+        // Preview names can be identical (symbols or shortened long keys).
+        const path = JSON.stringify([...branch.path, String(branch.offset + index)]);
         const expanded = this.expanded.has(path);
         rows.push({
           ...property,

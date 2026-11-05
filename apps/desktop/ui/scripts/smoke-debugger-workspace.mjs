@@ -194,10 +194,11 @@ export async function checkNativeDebuggerWorkspace({
     .locator("debug-value")
     .getByRole("button", { name: "Result", exact: false })
     .click();
-  await fullBudget
-    .getByText(/value handle limit reached/u)
-    .first()
-    .waitFor();
+  await fullBudget.getByRole("button", { name: "Next properties", exact: true }).click();
+  await fullBudget.getByRole("button", { name: "length", exact: true }).waitFor();
+  assert.equal(await fullBudget.getByText(/value handle limit reached/u).count(), 0);
+  await fullBudget.getByRole("button", { name: "Previous properties", exact: true }).click();
+  await fullBudget.getByRole("button", { name: "Next properties", exact: true }).waitFor();
   await surface.getByRole("textbox", { name: "Immediate expression" }).fill("preserved draft");
   await surface.evaluate((element) => element.place("bottom"));
   const dock = page.locator("debugger-workspace");

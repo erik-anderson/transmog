@@ -1312,32 +1312,79 @@ fn lexical_scopes_preserve_shadowing_closures_and_bounded_property_pages() {
         unreachable!()
     };
     request += 1;
-    assert_eq!(properties.len(), 100);
-    assert_eq!(next, Some(100));
+    assert!(next.is_some());
     assert!(
         properties
             .iter()
-            .any(|property| property.value.handle.is_none()
-                && property.value.display.contains("handle limit"))
+            .all(|property| property.value.handle.is_some())
     );
+    // Other retained values can still saturate the budget; report this honestly.
     command(
         &commands,
         request,
         DebugAction::Properties {
             pause,
             handle,
-            offset: 100,
+            offset: next.unwrap(),
         },
     );
     let DebugEventKind::Properties {
-        properties, next, ..
+        properties: saturated,
+        ..
     } = reply(&events, request).event
     else {
         unreachable!()
     };
     request += 1;
-    assert_eq!(properties.len(), 50);
-    assert_eq!(next, None);
+    assert!(saturated[0].value.handle.is_none());
+    assert!(saturated[0].value.display.contains("handle limit"));
+    let mut page = properties;
+    let mut next = next;
+    let mut count = 0;
+    loop {
+        for (index, property) in page.iter().enumerate() {
+            assert_eq!(property.name, format!("key{}", count + index));
+            assert!(property.value.handle.is_some());
+        }
+        count += page.len();
+        command(
+            &commands,
+            request,
+            DebugAction::Release {
+                pause,
+                handles: page
+                    .iter()
+                    .filter_map(|property| property.value.handle)
+                    .collect(),
+            },
+        );
+        reply(&events, request);
+        request += 1;
+        let Some(offset) = next else {
+            break;
+        };
+        command(
+            &commands,
+            request,
+            DebugAction::Properties {
+                pause,
+                handle,
+                offset,
+            },
+        );
+        let DebugEventKind::Properties {
+            properties,
+            next: more,
+            ..
+        } = reply(&events, request).event
+        else {
+            unreachable!()
+        };
+        request += 1;
+        page = properties;
+        next = more;
+    }
+    assert_eq!(count, 150);
     command(
         &commands,
         request,

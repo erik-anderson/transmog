@@ -18,6 +18,7 @@ export interface ValueView {
   expanded: boolean;
   rows: PropertyRow[];
   expired: boolean;
+  loading: boolean;
   issue: string;
 }
 interface Root {
@@ -33,6 +34,8 @@ interface Pending {
 export class Inspection {
   private releases = new Map<string, { scope: InspectionScope; handles: Set<number> }>();
   private releaseScheduled = false;
+  private releasePending: Promise<void> = Promise.resolve();
+  private releasing: ValueLease[] = [];
   private roots = new Map<string, Root>();
   private pending = new Map<string, Pending>();
   registering = 0;
@@ -87,6 +90,7 @@ export class Inspection {
       expanded: false,
       rows: [],
       expired: false,
+      loading: false,
       issue: "",
     };
     this.roots.set(key, { view, tree: new PropertyTree(), scope });
@@ -114,6 +118,9 @@ export class Inspection {
     for (const release of this.releases.values()) {
       add(release.scope, release.handles);
     }
+    for (const release of this.releasing) {
+      add(release.scope, release.handles);
+    }
     return [...groups.values()].map((group) => ({
       scope: group.scope,
       handles: [...group.handles].slice(0, 64),
@@ -121,7 +128,7 @@ export class Inspection {
   }
   releaseLeases(leases: ValueLease[]): void {
     for (const lease of leases) {
-      if (!this.valid(lease.scope)) {
+      if (!lease.handles.length || !this.valid(lease.scope)) {
         continue;
       }
       const key = `${lease.scope.session}/${lease.scope.pause}/${lease.scope.generation ?? ""}`;
@@ -133,23 +140,35 @@ export class Inspection {
     }
     if (!this.releaseScheduled && this.releases.size) {
       this.releaseScheduled = true;
-      queueMicrotask(() => {
-        this.releaseScheduled = false;
-        const groups = [...this.releases.values()];
-        this.releases.clear();
-        for (const group of groups) {
-          if (this.valid(group.scope)) {
-            void this.send(
-              {
-                kind: "release",
-                pause: group.scope.pause,
-                handles: [...group.handles].slice(0, 64),
-              },
-              group.scope.session,
-            );
-          }
-        }
-      });
+      const previous = this.releasePending;
+      this.releasePending = new Promise((resolve) =>
+        queueMicrotask(async () => {
+          await previous;
+          const groups = [...this.releases.values()];
+          this.releasing = groups.map((group) => ({
+            scope: group.scope,
+            handles: [...group.handles],
+          }));
+          this.releases.clear();
+          this.releaseScheduled = false;
+          await Promise.allSettled(
+            groups
+              .filter((group) => this.valid(group.scope))
+              .map((group) =>
+                this.send(
+                  {
+                    kind: "release",
+                    pause: group.scope.pause,
+                    handles: [...group.handles].slice(0, 64),
+                  },
+                  group.scope.session,
+                ),
+              ),
+          );
+          this.releasing = [];
+          resolve();
+        }),
+      );
     }
   }
   async toggle(key: string, row?: PropertyRow): Promise<void> {
@@ -157,21 +176,55 @@ export class Inspection {
     if (!root || root.view.expired || !root.view.value.handle || !this.valid(root.scope)) {
       return;
     }
+    if (row && root.view.loading) {
+      return;
+    }
+    const before = root.tree.handles();
     let branch;
     if (row) {
       branch = root.tree.toggle(row);
     } else {
       root.view.expanded = !root.view.expanded;
-      if (root.view.expanded && !root.view.rows.length) {
+      if (root.view.expanded && !root.view.loading) {
         branch = root.tree.select(root.view.value.handle);
+      } else if (!root.view.expanded && !root.view.loading) {
+        root.tree.reset();
+        root.view.issue = "";
       }
     }
+    const releaseRemoved = (handles: Set<number>): void => {
+      const retained = root.tree.handles();
+      this.releaseLeases([
+        {
+          scope: root.scope,
+          handles: [...handles].filter(
+            (handle) => handle !== root.view.value.handle && !retained.has(handle),
+          ),
+        },
+      ]);
+    };
+    releaseRemoved(before);
     root.view.rows = root.tree.rows();
     if (branch) {
+      root.view.loading = true;
       root.view.issue = "Loading…";
     }
     this.changed();
     if (branch) {
+      await this.releasePending;
+      if (this.roots.get(key) !== root || !this.valid(root.scope)) {
+        return;
+      }
+      if (!root.view.expanded) {
+        root.view.loading = false;
+        const handles = root.tree.handles();
+        root.tree.reset();
+        releaseRemoved(handles);
+        root.view.rows = [];
+        root.view.issue = "";
+        this.changed();
+        return;
+      }
       const event = await this.request(
         {
           kind: "properties",
@@ -201,6 +254,14 @@ export class Inspection {
       } else {
         root.view.issue = "Inspection unavailable. Collapse and expand to retry.";
       }
+      root.view.loading = false;
+      if (!root.view.expanded) {
+        const handles = root.tree.handles();
+        root.tree.reset();
+        releaseRemoved(handles);
+        root.view.rows = [];
+        root.view.issue = "";
+      }
       this.changed();
     }
   }
@@ -208,6 +269,7 @@ export class Inspection {
     for (const root of this.roots.values()) {
       if (!this.valid(root.scope)) {
         root.view.expired = true;
+        root.view.loading = false;
         root.view.expanded = false;
         root.view.rows = [];
         root.tree.reset();

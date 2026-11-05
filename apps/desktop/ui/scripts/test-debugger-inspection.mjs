@@ -93,3 +93,164 @@ test("idle values expire across a missed pause and resume, and stale leases cann
   assert.equal(sent.length, 0);
   registry.dispose();
 });
+
+test("paging frees hidden values before submitting the next read and ignores duplicate page clicks", async () => {
+  const sent = [];
+  let finishRelease;
+  const registry = new Inspection(
+    async (action) => {
+      const request = sent.push(action);
+      if (action.kind === "release")
+        await new Promise((resolve) => {
+          finishRelease = resolve;
+        });
+      return request;
+    },
+    () => true,
+    () => {},
+  );
+  const scope = { session: "s", pause: 1, frame: 0 };
+  registry.set("result", "Result", value(1), scope);
+  const first = registry.toggle("result");
+  await tick();
+  registry.receive("s", 1, {
+    kind: "properties",
+    pause: 1,
+    handle: 1,
+    offset: 0,
+    next: 100,
+    properties: [{ name: "old", value: value(2) }],
+  });
+  await first;
+  const next = registry.get("result").rows.at(-1);
+  const paging = registry.toggle("result", next);
+  await tick();
+  await registry.toggle("result", next);
+  assert.deepEqual(
+    sent.map((action) => action.kind),
+    ["properties", "release"],
+  );
+  assert.deepEqual(sent[1].handles, [2]);
+  assert.deepEqual(
+    registry.leases()[0].handles.sort(),
+    [1, 2],
+    "A surface move must retain in-flight release ownership",
+  );
+  finishRelease();
+  await tick();
+  assert.equal(sent[2].offset, 100);
+  registry.receive("s", 3, {
+    kind: "properties",
+    pause: 1,
+    handle: 1,
+    offset: 100,
+    next: null,
+    properties: [{ name: "new", value: value(3) }],
+  });
+  await paging;
+  assert.equal(registry.get("result").rows.at(-1).name, "new");
+  assert.deepEqual(registry.leases()[0].handles.sort(), [1, 3]);
+  registry.dispose();
+  await tick();
+  finishRelease();
+  await tick();
+});
+
+test("identical preview names expand independently and collapsing releases only descendants", async () => {
+  const sent = [];
+  const registry = new Inspection(
+    async (action) => sent.push(action),
+    () => true,
+    () => {},
+  );
+  registry.set("result", "Result", value(1), { session: "s", pause: 1, frame: 0 });
+  const first = registry.toggle("result");
+  await tick();
+  registry.receive("s", 1, {
+    kind: "properties",
+    pause: 1,
+    handle: 1,
+    offset: 0,
+    next: null,
+    properties: [2, 3].map((handle) => ({ name: "[Symbol key]", value: value(handle) })),
+  });
+  await first;
+  const [a, b] = registry.get("result").rows;
+  assert.notEqual(a.key, b.key);
+  const expand = registry.toggle("result", a);
+  await tick();
+  registry.receive("s", 2, {
+    kind: "properties",
+    pause: 1,
+    handle: 2,
+    offset: 0,
+    next: null,
+    properties: [{ name: "first child", value: value(4) }],
+  });
+  await expand;
+  const second = registry.toggle("result", b);
+  await tick();
+  registry.receive("s", 3, {
+    kind: "properties",
+    pause: 1,
+    handle: 3,
+    offset: 0,
+    next: null,
+    properties: [{ name: "second child", value: value(5) }],
+  });
+  await second;
+  await registry.toggle("result", registry.get("result").rows[0]);
+  await tick();
+  assert.deepEqual(sent.find((action) => action.kind === "release").handles, [4]);
+  assert.deepEqual(
+    registry.get("result").rows.map((row) => row.name),
+    ["[Symbol key]", "[Symbol key]", "second child"],
+  );
+  registry.dispose();
+  await tick();
+});
+
+test("collapsing a pending branch frees both its parent page and late results", async () => {
+  const sent = [];
+  const registry = new Inspection(
+    async (action) => sent.push(action),
+    () => true,
+    () => {},
+  );
+  registry.set("result", "Result", value(1), { session: "s", pause: 1, frame: 0 });
+  const first = registry.toggle("result");
+  await tick();
+  registry.receive("s", 1, {
+    kind: "properties",
+    pause: 1,
+    handle: 1,
+    offset: 0,
+    next: null,
+    properties: [{ name: "child", value: value(2) }],
+  });
+  await first;
+  const nested = registry.toggle("result", registry.get("result").rows[0]);
+  await tick();
+  await registry.toggle("result");
+  registry.receive("s", 2, {
+    kind: "properties",
+    pause: 1,
+    handle: 2,
+    offset: 0,
+    next: null,
+    properties: [{ name: "late", value: value(3) }],
+  });
+  await nested;
+  await tick();
+  assert.equal(registry.get("result").expanded, false);
+  assert.equal(registry.get("result").loading, false);
+  assert.deepEqual(
+    sent
+      .filter((action) => action.kind === "release")
+      .flatMap((action) => action.handles)
+      .sort(),
+    [2, 3],
+  );
+  registry.dispose();
+  await tick();
+});

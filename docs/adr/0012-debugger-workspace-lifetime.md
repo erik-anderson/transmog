@@ -13,6 +13,9 @@ Each surface transfers bounded value leases with its Console state. The destinat
 keeps live result roots and releases old scope and property handles. Native pause
 epochs qualify idle values as well as paused values; replayed events cannot renew
 an expired handle or duplicate output.
+Paging and collapsing release hidden child values before another read, preserving
+inspection capacity without retaining every visited page. Pending releases remain
+part of a surface's handoff until native command submission succeeds.
 
 Opening subscribes to current and future worker lifetimes. It does not reserve an
 exchange or activate unloaded extensions. Closing continues and detaches healthy

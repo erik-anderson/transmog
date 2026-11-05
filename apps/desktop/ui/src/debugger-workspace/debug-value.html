@@ -17,13 +17,14 @@
       ><if condition="value.value.truncated"><small>Shortened</small></if>
     </div>
     <if condition="value.expanded"
-      ><table>
+      ><table aria-busy="{{value.loading}}">
         <tbody>
           <for each="property in value.rows"
             ><tr key="{{property.key}}">
               <th data-depth="{{property.depth}}">
                 <button
                   type="button"
+                  aria-disabled="{{value.loading}}"
                   ?disabled="{{!property.expandable && property.offset == undefined}}"
                   aria-expanded="{{property.expanded}}"
                   @click="{toggle(property)}"

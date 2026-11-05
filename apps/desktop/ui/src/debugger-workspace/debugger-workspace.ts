@@ -905,7 +905,10 @@ export class DebuggerWorkspace extends WebUIElement {
         );
         this.debuggerConsole = saved.console.map((row) =>
           row.value
-            ? { ...row, value: { ...row.value, expired: true, expanded: false, rows: [] } }
+            ? {
+                ...row,
+                value: { ...row.value, expired: true, expanded: false, rows: [], loading: false },
+              }
             : row,
         );
         this.pendingValueLeases = saved.valueLeases ?? [];
@@ -2242,7 +2245,7 @@ export class DebuggerWorkspace extends WebUIElement {
           row.value
             ? {
                 ...row,
-                value: { ...row.value, expanded: false, rows: [], issue: "" },
+                value: { ...row.value, expanded: false, rows: [], loading: false, issue: "" },
               }
             : row,
         ),
