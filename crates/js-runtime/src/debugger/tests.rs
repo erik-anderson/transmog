@@ -339,6 +339,213 @@ fn command(sender: &SyncSender<DebugCommand>, request: u64, action: DebugAction)
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // Exercise one attachment's idle value lifetime through nested reads and release.
+fn idle_console_values_are_expandable_and_completion_never_invokes_accessors_or_proxies() {
+    let (commands, input) = mpsc::sync_channel(MAX_DEBUG_COMMANDS);
+    let (output, events) = mpsc::sync_channel(32);
+    let engine = std::thread::spawn(move || {
+        let mut runtime = Runtime::new(1024 * 1024, 32 * 1024 * 1024).unwrap();
+        runtime
+            .enable_debugger(
+                options(vec![]),
+                DebugTransport::new(input, move |event| output.try_send(event).is_ok()),
+            )
+            .unwrap();
+        runtime.execute_string("setup", "globalThis.touches=0;globalThis.sample={nested:{answer:42},get secret(){touches++;return 1}};globalThis.proxy=new Proxy({}, {ownKeys(){touches++;throw 0},get(){touches++;throw 0}});'ready'", 32).unwrap();
+        while runtime.debugger.is_some() {
+            runtime.poll_debugger();
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(
+            runtime
+                .execute_string("verify", "String(touches)", 32)
+                .unwrap(),
+            "0"
+        );
+    });
+    event(&events, |event| {
+        matches!(event.event, DebugEventKind::Attached)
+    });
+    for (request, expression, expected) in [
+        (1, "sample.n", vec!["nested"]),
+        (2, "sample.secret.", vec![]),
+        (3, "proxy.", vec![]),
+    ] {
+        command(
+            &commands,
+            request,
+            DebugAction::Complete {
+                expression: expression.into(),
+                pause: 0,
+                frame: None,
+            },
+        );
+        assert!(
+            matches!(reply(&events, request).event, DebugEventKind::Completions { matches, .. } if matches == expected)
+        );
+    }
+    command(
+        &commands,
+        4,
+        DebugAction::Evaluate {
+            expression: "sample".into(),
+            pause: 0,
+            frame: None,
+        },
+    );
+    let DebugEventKind::Evaluated {
+        value,
+        thrown: false,
+        ..
+    } = event(&events, |event| {
+        event.request == 4 && matches!(event.event, DebugEventKind::Evaluated { .. })
+    })
+    .event
+    else {
+        panic!("missing object result");
+    };
+    let handle = value.handle.unwrap();
+    command(
+        &commands,
+        5,
+        DebugAction::Properties {
+            pause: 0,
+            handle,
+            offset: 0,
+        },
+    );
+    let DebugEventKind::Properties { properties, .. } = reply(&events, 5).event else {
+        panic!("missing idle properties");
+    };
+    assert!(
+        properties
+            .iter()
+            .any(|property| property.name == "secret" && property.value.kind == "unavailable")
+    );
+    let nested = properties
+        .iter()
+        .find(|property| property.name == "nested")
+        .unwrap()
+        .value
+        .handle
+        .unwrap();
+    command(
+        &commands,
+        6,
+        DebugAction::Properties {
+            pause: 0,
+            handle: nested,
+            offset: 0,
+        },
+    );
+    assert!(
+        matches!(reply(&events, 6).event, DebugEventKind::Properties { properties, .. } if properties[0].value.display == "42")
+    );
+    command(
+        &commands,
+        7,
+        DebugAction::Release {
+            pause: 0,
+            handles: vec![handle, nested],
+        },
+    );
+    reply(&events, 7);
+    command(
+        &commands,
+        8,
+        DebugAction::Properties {
+            pause: 0,
+            handle,
+            offset: 0,
+        },
+    );
+    assert!(matches!(
+        reply(&events, 8).event,
+        DebugEventKind::Rejected { .. }
+    ));
+    command(&commands, 9, DebugAction::Detach);
+    reply(&events, 9);
+    engine.join().unwrap();
+}
+
+#[test]
+fn paused_inspection_refreshes_lexical_values_without_mutation() {
+    let (commands, input) = mpsc::sync_channel(MAX_DEBUG_COMMANDS);
+    let (output, events) = mpsc::sync_channel(32);
+    let engine = std::thread::spawn(move || {
+        let mut runtime = Runtime::new(1024 * 1024, 32 * 1024 * 1024).unwrap();
+        runtime
+            .enable_debugger(
+                options(vec![]),
+                DebugTransport::new(input, move |event| output.try_send(event).is_ok()),
+            )
+            .unwrap();
+        let entry = url::Url::parse(SOURCE).unwrap();
+        runtime.evaluate_modules(&entry, BTreeMap::from([(entry.clone(), "globalThis.touches=0;export function run(){const local=42; const sample={get secret(){touches++;return 1}};debugger;return String(touches)}globalThis.run=run;".into())])).unwrap();
+        assert_eq!(runtime.execute_string("invoke", "run()", 32).unwrap(), "0");
+    });
+    let DebugEventKind::Paused { pause, .. } = event(&events, |event| {
+        matches!(event.event, DebugEventKind::Paused { .. })
+    })
+    .event
+    else {
+        unreachable!()
+    };
+    command(
+        &commands,
+        1,
+        DebugAction::Complete {
+            expression: "loc".into(),
+            pause,
+            frame: Some(0),
+        },
+    );
+    assert!(
+        matches!(reply(&events, 1).event, DebugEventKind::Completions { matches, .. } if matches.contains(&"local".into()))
+    );
+    for (request, expression, thrown) in [
+        (2, "local+1", false),
+        (3, "touches++", true),
+        (4, "sample.secret", true),
+    ] {
+        command(
+            &commands,
+            request,
+            DebugAction::Inspect {
+                expression: expression.into(),
+                pause,
+                frame: Some(0),
+            },
+        );
+        let DebugEventKind::Evaluated {
+            value,
+            thrown: actual,
+            ..
+        } = event(&events, |event| {
+            event.request == request && matches!(event.event, DebugEventKind::Evaluated { .. })
+        })
+        .event
+        else {
+            unreachable!()
+        };
+        assert_eq!(actual, thrown);
+        if !thrown {
+            assert_eq!(value.display, "43");
+        }
+    }
+    command(
+        &commands,
+        5,
+        DebugAction::Resume {
+            pause,
+            action: ResumeAction::Continue,
+        },
+    );
+    reply(&events, 5);
+    engine.join().unwrap();
+}
+
+#[test]
 fn paused_detach_retires_its_input_without_stopping_the_next_operation() {
     let (commands, input) = mpsc::sync_channel(MAX_DEBUG_COMMANDS);
     let control = std::sync::Arc::new(std::sync::Mutex::new(Some(commands)));

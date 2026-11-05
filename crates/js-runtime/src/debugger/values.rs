@@ -14,6 +14,17 @@ pub(super) struct Values {
     scopes: BTreeMap<(u32, usize), u32>,
 }
 impl Values {
+    pub(super) fn remote(
+        &mut self,
+        scope: &mut v8::PinScope<'_, '_>,
+        session: &V8InspectorSession,
+        id: &str,
+    ) -> Option<DebugValue> {
+        let (value, _, _) = session
+            .unwrap_object(scope, StringView::from(id.as_bytes()))
+            .ok()?;
+        Some(self.preview(scope, value))
+    }
     pub(super) fn clear(&mut self) {
         self.handles.clear();
         self.scopes.clear();
@@ -220,7 +231,7 @@ fn text_value(scope: &v8::Isolate, value: v8::Local<v8::String>) -> (String, boo
         count < value.utf8_length(scope),
     )
 }
-fn data_value<'s>(
+pub(super) fn data_value<'s>(
     scope: &mut v8::PinScope<'s, '_>,
     descriptor: v8::Local<'s, v8::Value>,
 ) -> Option<v8::Local<'s, v8::Value>> {

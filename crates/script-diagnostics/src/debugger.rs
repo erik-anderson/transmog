@@ -148,21 +148,36 @@ impl DebugCommand {
                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
             && match &self.action {
                 DebugAction::Breakpoints { values } => valid_breakpoints(values),
-                DebugAction::Release { pause, handles } => {
-                    *pause > 0 && handles.len() <= MAX_OBJECT_HANDLES
-                }
+                DebugAction::Release { handles, .. } => handles.len() <= MAX_OBJECT_HANDLES,
                 DebugAction::Scopes { pause, frame } => {
                     *pause > 0 && (*frame as usize) < MAX_DEBUG_FRAMES
                 }
-                DebugAction::Properties { pause, handle, .. } => *pause > 0 && *handle > 0,
+                DebugAction::Properties { handle, .. } => *handle > 0,
                 DebugAction::Resume { pause, .. } => *pause > 0,
                 DebugAction::Evaluate {
+                    expression,
+                    pause,
+                    frame,
+                }
+                | DebugAction::Inspect {
                     expression,
                     pause,
                     frame,
                 } => {
                     !expression.trim().is_empty()
                         && expression.len() <= 8192
+                        && ((*pause == 0 && frame.is_none())
+                            || (*pause > 0
+                                && frame.is_some_and(|frame| (frame as usize) < MAX_DEBUG_FRAMES)))
+                }
+                DebugAction::Complete {
+                    expression,
+                    pause,
+                    frame,
+                } => {
+                    expression.len() <= 1024
+                        && !expression.chars().any(char::is_control)
+                        && expression.split('.').count() <= 8
                         && ((*pause == 0 && frame.is_none())
                             || (*pause > 0
                                 && frame.is_some_and(|frame| (frame as usize) < MAX_DEBUG_FRAMES)))
@@ -176,6 +191,24 @@ impl DebugCommand {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum DebugAction {
+    /// Side-effect-checked expression preview for watches and automatic inspection.
+    Inspect {
+        /// Bounded expression; mutation is rejected by the engine.
+        expression: String,
+        /// Current pause generation, or zero for idle globals.
+        pause: u64,
+        /// Exact paused lexical frame, absent for idle globals.
+        frame: Option<u32>,
+    },
+    /// Inert identifier/property completion; never evaluates an expression.
+    Complete {
+        /// Dot-separated data-property path and final name prefix.
+        expression: String,
+        /// Current pause generation, or zero for idle globals.
+        pause: u64,
+        /// Exact paused lexical frame, absent for idle globals.
+        frame: Option<u32>,
+    },
     /// Explicit local JavaScript, in a paused frame or an idle global context.
     Evaluate {
         /// Bounded command text, retained only in local developer memory.
@@ -211,9 +244,9 @@ pub enum DebugAction {
     },
     /// Read a bounded page of own data descriptors; getters and proxies stay unavailable.
     Properties {
-        /// Current pause generation.
+        /// Current pause generation, or zero for an idle console value.
         pause: u64,
-        /// Native value handle returned in this pause only.
+        /// Native value handle returned in this attachment and scope.
         handle: u32,
         /// Zero-based property offset, without running code between pages.
         offset: u32,
@@ -288,7 +321,7 @@ pub struct DebugValue {
     pub kind: String,
     /// Bounded primitive text or inert label.
     pub display: String,
-    /// Native pause-local value identity, with no Inspector object ID or pointer.
+    /// Native scope-local value identity, with no Inspector object ID or pointer.
     pub handle: Option<u32>,
     /// Some primitive text was shortened.
     pub truncated: bool,
@@ -321,6 +354,7 @@ impl std::fmt::Debug for DebugEvent {
             DebugEventKind::Output { .. } => "output",
             DebugEventKind::Evaluating => "evaluating",
             DebugEventKind::Evaluated { .. } => "evaluated",
+            DebugEventKind::Completions { .. } => "completions",
             DebugEventKind::Attached => "attached",
             DebugEventKind::Detached => "detached",
             DebugEventKind::Sources { .. } => "sources",
@@ -343,6 +377,15 @@ impl std::fmt::Debug for DebugEvent {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum DebugEventKind {
+    /// Bounded data-property names from the selected lexical or global scope.
+    Completions {
+        /// Requested scope epoch; zero selects idle globals.
+        pause: u64,
+        /// Full property names matching the final prefix.
+        matches: Vec<String>,
+        /// Additional names were omitted by the inspection budget.
+        omitted: bool,
+    },
     /// Console calls made by an explicit Immediate command, separate from callback logs.
     Output {
         /// Native console level.

@@ -55,6 +55,7 @@ struct Pending {
 }
 enum Expected {
     Evaluate(u64),
+    Complete(u64),
     Configure,
     Resume,
     Release,
@@ -65,7 +66,10 @@ enum Expected {
 impl Expected {
     fn from_action(action: &DebugAction) -> Self {
         match action {
-            DebugAction::Evaluate { pause, .. } => Self::Evaluate(*pause),
+            DebugAction::Evaluate { pause, .. } | DebugAction::Inspect { pause, .. } => {
+                Self::Evaluate(*pause)
+            }
+            DebugAction::Complete { pause, .. } => Self::Complete(*pause),
             DebugAction::Scopes { pause, frame } => Self::Scopes(*pause, *frame),
             DebugAction::Properties {
                 pause,
@@ -80,6 +84,9 @@ impl Expected {
     }
     fn accepts(&self, event: &DebugEventKind) -> bool {
         match event {
+            DebugEventKind::Completions { pause, .. } => {
+                matches!(self, Self::Complete(p) if p == pause)
+            }
             DebugEventKind::Evaluating | DebugEventKind::Output { .. } => {
                 matches!(self, Self::Evaluate(_))
             }
@@ -579,14 +586,22 @@ impl Session {
             return Err("Debugger session is unavailable");
         }
         let pause = match &action {
-            DebugAction::Evaluate { pause, .. } if *pause != 0 => Some(*pause),
-            DebugAction::Resume { pause, .. }
+            DebugAction::Evaluate { pause, .. }
+            | DebugAction::Inspect { pause, .. }
+            | DebugAction::Complete { pause, .. }
+            | DebugAction::Resume { pause, .. }
             | DebugAction::Scopes { pause, .. }
             | DebugAction::Properties { pause, .. }
             | DebugAction::Release { pause, .. } => Some(*pause),
             _ => None,
         };
-        if pause.is_some_and(|pause| state.paused_at.is_none() || pause != state.pause) {
+        if pause.is_some_and(|pause| {
+            if pause == 0 {
+                state.paused_at.is_some()
+            } else {
+                state.paused_at.is_none() || pause != state.pause
+            }
+        }) {
             return Err("Pause has expired or resumed");
         }
         if matches!(action, DebugAction::Detach)
@@ -620,6 +635,8 @@ impl Session {
                 inspection: matches!(
                     command.action,
                     DebugAction::Scopes { .. }
+                        | DebugAction::Inspect { .. }
+                        | DebugAction::Complete { .. }
                         | DebugAction::Properties { .. }
                         | DebugAction::Release { .. }
                 ),
@@ -676,6 +693,8 @@ impl Session {
             DebugEventKind::Evaluating
                 | DebugEventKind::Output { .. }
                 | DebugEventKind::Evaluated { .. }
+                | DebugEventKind::Completions { .. }
+                | DebugEventKind::Properties { pause: 0, .. }
                 | DebugEventKind::Sources { .. }
                 | DebugEventKind::Acknowledged
                 | DebugEventKind::Rejected { .. }
@@ -698,6 +717,7 @@ impl Session {
             && matches!(
                 event.event,
                 DebugEventKind::Scopes { .. }
+                    | DebugEventKind::Completions { .. }
                     | DebugEventKind::Properties { .. }
                     | DebugEventKind::Acknowledged
                     | DebugEventKind::Rejected { .. }
@@ -706,6 +726,19 @@ impl Session {
             return Err("Debugger reply requires a request identity");
         }
         match &mut event.event {
+            DebugEventKind::Completions { pause, matches, .. } => {
+                if (if *pause == 0 {
+                    state.paused_at.is_some()
+                } else {
+                    state.paused_at.is_none() || *pause != state.pause
+                }) || matches.len() > 64
+                    || matches
+                        .iter()
+                        .any(|name| name.len() > 256 || name.chars().any(char::is_control))
+                {
+                    return Err("Invalid debugger completion reply");
+                }
+            }
             DebugEventKind::Output { text, .. } => {
                 if text.len() > crate::MAX_LOG_RECORD_BYTES
                     || !state
@@ -738,10 +771,16 @@ impl Session {
                 {
                     return Err("Console result arrived before evaluation started");
                 }
-                if *pause > 0 && (state.paused_at.is_none() || *pause != state.pause) {
+                if if *pause == 0 {
+                    state.paused_at.is_some()
+                } else {
+                    state.paused_at.is_none() || *pause != state.pause
+                } {
                     return Err("Stale console reply");
                 }
-                if value.display.len() > crate::debugger::MAX_VALUE_BYTES || value.kind.len() > 128
+                if value.display.len() > crate::debugger::MAX_VALUE_BYTES
+                    || value.kind.len() > 128
+                    || value.handle == Some(0)
                 {
                     return Err("Console result exceeds its budget");
                 }
@@ -813,7 +852,11 @@ impl Session {
                 offset,
                 ..
             } => {
-                if state.paused_at.is_none() || *pause != state.pause {
+                if if *pause == 0 {
+                    state.paused_at.is_some()
+                } else {
+                    state.paused_at.is_none() || *pause != state.pause
+                } {
                     return Err("Stale debugger value reply");
                 }
                 if properties.len() > crate::debugger::MAX_PROPERTIES

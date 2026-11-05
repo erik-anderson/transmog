@@ -12,6 +12,80 @@ fn session() -> Arc<Session> {
     .unwrap()
 }
 #[test]
+fn inspection_replies_are_correlated_bounded_and_valid_in_the_exact_scope() {
+    let session = session();
+    session.bind(|_| true, || {});
+    session
+        .accept(event(&session, DebugEventKind::Attached))
+        .unwrap();
+    let request = session
+        .command(DebugAction::Complete {
+            expression: "Math.a".into(),
+            pause: 0,
+            frame: None,
+        })
+        .unwrap();
+    let mut reply = event(
+        &session,
+        DebugEventKind::Completions {
+            pause: 0,
+            matches: vec!["abs".into()],
+            omitted: false,
+        },
+    );
+    assert!(session.accept(reply.clone()).is_err());
+    reply.request = request;
+    if let DebugEventKind::Completions { matches, .. } = &mut reply.event {
+        matches[0] = "x".repeat(257);
+    }
+    assert!(session.accept(reply.clone()).is_err());
+    if let DebugEventKind::Completions { matches, .. } = &mut reply.event {
+        matches[0] = "abs".into();
+    }
+    session.accept(reply.clone()).unwrap();
+    assert!(session.accept(reply).is_err());
+    let request = session
+        .command(DebugAction::Properties {
+            pause: 0,
+            handle: 1,
+            offset: 0,
+        })
+        .unwrap();
+    let mut reply = event(
+        &session,
+        DebugEventKind::Properties {
+            pause: 0,
+            handle: 1,
+            offset: 0,
+            properties: vec![],
+            next: None,
+        },
+    );
+    reply.request = request;
+    session.accept(reply).unwrap();
+    session.begin(0);
+    session.accept(event(&session, paused())).unwrap();
+    assert!(
+        session
+            .command(DebugAction::Inspect {
+                expression: "value".into(),
+                pause: 0,
+                frame: None
+            })
+            .is_err()
+    );
+    assert!(
+        session
+            .command(DebugAction::Properties {
+                pause: 0,
+                handle: 1,
+                offset: 0
+            })
+            .is_err()
+    );
+    session.stop("Test ended");
+}
+#[test]
 fn workspace_detaches_after_a_queued_attachment_and_keeps_pause_snapshot() {
     let session = Session::new(DebugOptions {
         pause_on_start: false,

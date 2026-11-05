@@ -23,6 +23,7 @@ use v8::inspector::{
     Channel, ChannelImpl, StringBuffer, StringView, V8Inspector, V8InspectorClient,
     V8InspectorClientImpl, V8InspectorClientTrustLevel, V8InspectorSession,
 };
+mod completion;
 mod input;
 #[cfg(test)]
 mod tests;
@@ -135,7 +136,10 @@ impl Runtime {
     /// Services breakpoint/policy controls while the host is idle. Paused reads use V8 callbacks.
     pub fn poll_debugger(&mut self) {
         if let Some(debugger) = &self.debugger {
-            debugger.poll();
+            v8::scope!(let scope, &mut self.isolate);
+            let context = v8::Local::new(scope, &self.context);
+            let scope = &mut v8::ContextScope::new(scope, context);
+            debugger.poll(scope);
         }
         if self
             .debugger
@@ -286,7 +290,7 @@ impl Debugger {
             }
         }
     }
-    fn poll(&self) {
+    fn poll(&self, scope: &mut v8::PinScope<'_, '_>) {
         // Detach retires the input router's sender. Its resulting EOF belongs
         // to the old controller, not to the healthy execution context.
         if self.client.detached.get() || self.client.stopped.get() {
@@ -301,7 +305,7 @@ impl Debugger {
         for _ in 0..MAX_DEBUG_COMMANDS {
             match self.client.commands.try_recv() {
                 Ok(command) => {
-                    self.client.command(command, None);
+                    self.client.command(command, Some(scope));
                     if self.client.detached.get() || self.client.stopped.get() {
                         break;
                     }
@@ -516,6 +520,7 @@ impl Client {
         }
         self.last_request.set(command.request);
         let request = command.request;
+        let read_only = matches!(&command.action, DebugAction::Inspect { .. });
         match command.action {
             DebugAction::Stop => self.stop(request, "Debugger stopped by its owner"),
             DebugAction::Detach => {
@@ -551,12 +556,36 @@ impl Client {
                 expression,
                 pause,
                 frame,
+            }
+            | DebugAction::Inspect {
+                expression,
+                pause,
+                frame,
             } => {
-                if (pause == 0 && self.paused.get()) || (pause > 0 && !self.current_pause(pause)) {
+                if !self.current_scope(pause) {
                     self.reject(request, "The selected console scope has changed");
                     return;
                 }
-                self.evaluate(request, &expression, pause, frame);
+                if let Some(scope) = scope {
+                    self.evaluate(scope, request, &expression, pause, frame, read_only);
+                } else {
+                    self.reject(request, "Evaluation context is unavailable");
+                }
+            }
+            DebugAction::Complete {
+                expression,
+                pause,
+                frame,
+            } => {
+                if !self.current_scope(pause) {
+                    self.reject(request, "The selected completion scope has changed");
+                    return;
+                }
+                if let Some(scope) = scope {
+                    self.complete(scope, request, &expression, pause, frame);
+                } else {
+                    self.reject(request, "Completion context is unavailable");
+                }
             }
             DebugAction::Exceptions { policy } => {
                 self.options.borrow_mut().exceptions = policy;
@@ -599,7 +628,7 @@ impl Client {
                 handle,
                 offset,
             } => {
-                if !self.current_pause(pause) {
+                if !self.current_scope(pause) {
                     self.reject(request, "Pause has expired or resumed");
                     return;
                 }
@@ -618,7 +647,7 @@ impl Client {
                 }
             }
             DebugAction::Release { pause, handles } => {
-                if !self.current_pause(pause) {
+                if !self.current_scope(pause) {
                     self.reject(request, "Pause has expired or resumed");
                     return;
                 }
@@ -629,6 +658,13 @@ impl Client {
     }
     fn current_pause(&self, pause: u64) -> bool {
         self.paused.get() && self.epoch.get() == pause
+    }
+    fn current_scope(&self, pause: u64) -> bool {
+        if pause == 0 {
+            !self.paused.get()
+        } else {
+            self.current_pause(pause)
+        }
     }
     fn condition_matches(&self, pause: &Value) -> bool {
         self.condition_failed.set(false);
@@ -675,8 +711,20 @@ impl Client {
         }
         false
     }
-    fn evaluate(&self, request: u64, expression: &str, pause: u64, frame: Option<u32>) {
+    fn evaluate(
+        &self,
+        scope: &mut v8::PinScope<'_, '_>,
+        request: u64,
+        expression: &str,
+        pause: u64,
+        frame: Option<u32>,
+        read_only: bool,
+    ) {
         let mut params = json!({"expression":expression,"silent":true,"generatePreview":false,"returnByValue":false,"timeout":500,"disableBreaks":true,"objectGroup":"transmog-console"});
+        if read_only {
+            params["throwOnSideEffect"] = json!(true);
+            params["timeout"] = json!(50);
+        }
         let method = if let Some(frame) = frame {
             let id = self
                 .frames
@@ -734,7 +782,21 @@ impl Client {
             );
         }
         let _ = self.dispatch("Debugger.setSkipAllPauses", json!({"skip":false}));
-        let (value, thrown) = console_value(result);
+        let retained = result
+            .as_ref()
+            .ok()
+            .filter(|result| result.get("exceptionDetails").is_none())
+            .and_then(|result| result["result"]["objectId"].as_str())
+            .and_then(|id| {
+                self.session
+                    .borrow()
+                    .as_ref()
+                    .and_then(|session| self.values.borrow_mut().remote(scope, session, id))
+            });
+        let (mut value, thrown) = console_value(result);
+        if let Some(retained) = retained {
+            value = retained;
+        }
         let _ = self.dispatch(
             "Runtime.releaseObjectGroup",
             json!({"objectGroup":"transmog-console"}),
