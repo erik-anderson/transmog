@@ -19,6 +19,8 @@ export function installDebuggerWorkspaceFixture() {
         consoleVisible: true,
       },
       policy: "none",
+      skipPauses: false,
+      pauseNext: false,
       actions: [],
       info: {
         session: "workspace-worker",
@@ -66,6 +68,7 @@ export function installDebuggerWorkspaceFixture() {
       },
     ];
     const view = () => ({
+      skipPauses: debug.skipPauses,
       open: debug.open,
       files,
       targets: debug.open ? [debug.info, ...(debug.extraTargets ?? [])] : [],
@@ -73,19 +76,32 @@ export function installDebuggerWorkspaceFixture() {
       viewState: debug.viewState ?? null,
       layout: debug.layout,
     });
+    const binding = (point) => ({
+      id: point.breakpoint.id,
+      requested: point.breakpoint.location,
+      resolved: { source: js, line: point.breakpoint.location.line, column: 3 },
+      issue: null,
+    });
     const emit = (event, request = 0) =>
-      debug.events.push({ session: debug.info.session, invocation: 1, request, event });
+      debug.events.push({
+        session: debug.info.session,
+        invocation: 1,
+        request,
+        event,
+        valueGeneration: debug.epoch,
+      });
     debug.pause = (exception = null) => {
+      if (debug.skipPauses) return;
       const event = {
         kind: "paused",
         pause: ++debug.epoch,
-        reason: exception ? "exception" : "breakpoint",
+        reason: exception ? "exception" : debug.pauseNext ? "next callback" : "breakpoint",
         frames: [
           {
             index: 0,
             function: "run",
-            location: { source: js, line: 2, column: 3 },
-            original: { source: ts, line: 2, column: 3 },
+            location: { source: js, line: debug.pauseLine ?? 2, column: 3 },
+            original: { source: ts, line: debug.pauseLine ?? 2, column: 3 },
             unavailable: false,
           },
           {
@@ -99,9 +115,26 @@ export function installDebuggerWorkspaceFixture() {
         exception,
         truncated: false,
       };
+      debug.pauseNext = false;
+      delete debug.pauseLine;
       emit(event);
       debug.paused = debug.events.at(-1);
     };
+    debug.logpoint = (text) =>
+      emit({
+        kind: "logpoint",
+        text,
+        thrown: false,
+        omitted: 0,
+        timeUnixMs: Date.now(),
+        location: { source: js, line: 3, column: 1 },
+        original: { source: ts, line: 3, column: 1 },
+      });
+    if (command === "workspace_skip_pauses") {
+      debug.skipPauses = args.skip;
+      if (args.skip) debug.pauseNext = false;
+      return;
+    }
     if (command === "debugger_seen") return debug.seen;
     if (command === "debugger_layout") {
       if (args.layout) debug.layout = args.layout;
@@ -173,41 +206,79 @@ export function installDebuggerWorkspaceFixture() {
         if (index < 0) debug.points.push(structuredClone(point));
         else debug.points[index] = structuredClone(point);
       }
+      for (const point of debug.points.filter((point) => point.enabled)) {
+        emit({ kind: "sources", sources: [], breakpoints: [binding(point)] });
+      }
       return structuredClone(debug.points);
     }
     if (command === "workspace_debug_session")
       return {
+        request:
+          debug.paused && debug.requestContext !== false
+            ? { id: "first", method: "GET", url: debug.requestUrl ?? "http://example.test/first" }
+            : null,
         info:
           args.session === debug.info.session
             ? debug.info
             : debug.extraTargets.find((target) => target.session === args.session),
         outcome: null,
         stream: {
+          operation: debug.paused
+            ? {
+                callback: "onRequestHead",
+                invocation: 1,
+                exchangeId: debug.requestContext !== false ? "first" : null,
+              }
+            : null,
+          valueGeneration: debug.epoch,
+          skipPauses: debug.skipPauses,
+          pauseNext: debug.pauseNext,
           active: !!debug.paused,
           paused: args.session === debug.info.session ? debug.paused : null,
           closed: debug.closed,
           exceptions: debug.policy,
           cursor: debug.events.length,
           omitted: false,
-          inventory: {
-            sources: [{ source: js, bytes: 80 }],
-            breakpoints: debug.points.map((point) => ({
-              id: point.breakpoint.id,
-              requested: point.breakpoint.location,
-              resolved: { source: js, line: point.breakpoint.location.line, column: 3 },
-              issue: null,
-            })),
-          },
+          inventory:
+            args.after === 0
+              ? {
+                  sources: [{ source: js, bytes: 80 }],
+                  breakpoints: debug.points.filter((point) => point.enabled).map(binding),
+                }
+              : undefined,
           events: debug.events.slice(args.after).filter((item) => item.session === args.session),
           logs: debug.logs ?? [],
           sessionRemainingMs: 0,
           pauseRemainingMs: null,
         },
       };
+    if (command === "workspace_debug_request") {
+      if (
+        !debug.paused ||
+        debug.paused.event.pause !== args.pause ||
+        debug.requestContext === false
+      )
+        throw new Error("This pause has ended");
+      state.emitNative("debugger-request", "first");
+      return;
+    }
     if (command === "workspace_debug_command") {
       const request = ++debug.request;
       const action = args.action;
       debug.actions.push(structuredClone(action));
+      if (action.kind === "pause-next") {
+        debug.pauseNext = action.enabled;
+        emit(
+          { kind: "control", skipPauses: debug.skipPauses, pauseNext: debug.pauseNext },
+          request,
+        );
+      }
+      if (action.kind === "continue-to") {
+        debug.paused = null;
+        emit({ kind: "resumed" });
+        debug.pauseLine = action.location.line;
+        debug.pause();
+      }
       if (action.kind === "exceptions") debug.policy = action.policy;
       if (action.kind === "stop") {
         debug.closed = true;

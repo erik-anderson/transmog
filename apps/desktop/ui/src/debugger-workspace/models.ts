@@ -34,6 +34,7 @@ export interface DebugProperty {
   value: DebugValue;
 }
 export interface SourceBreakpoint {
+  logExpression?: string | undefined;
   id: number;
   location: SourceLocation;
   condition?: string | undefined;
@@ -49,6 +50,9 @@ export interface BreakpointResolution {
   issue: string | null;
 }
 export type DebugAction =
+  | { kind: "skip-pauses"; skip: boolean }
+  | { kind: "pause-next"; enabled: boolean }
+  | { kind: "continue-to"; pause: number; location: SourceLocation }
   | {
       kind: "evaluate" | "inspect" | "complete";
       expression: string;
@@ -63,6 +67,17 @@ export type DebugAction =
   | { kind: "breakpoints"; values: SourceBreakpoint[] }
   | { kind: "stop" | "detach" };
 export type DebugEvent =
+  | { kind: "control"; skipPauses: boolean; pauseNext: boolean }
+  | { kind: "logpoint-started" }
+  | {
+      kind: "logpoint";
+      location: SourceLocation | null;
+      original?: SourceLocation | null;
+      text: string;
+      thrown: boolean;
+      omitted: number;
+      timeUnixMs: number;
+    }
   | { kind: "completions"; pause: number; matches: string[]; omitted: boolean }
   | { kind: "output"; level: string; text: string }
   | { kind: "evaluating" }
@@ -93,10 +108,21 @@ export type DebugEvent =
   | { kind: "rejected"; message: string }
   | { kind: "stopped"; reason: string };
 export interface DebugSessionView {
+  request?: { id: string; method: string; url: string } | null;
   info: DebugSessionInfo;
   stream: {
+    operation?: { callback: string; invocation: number; exchangeId: string | null } | null;
+    valueGeneration?: number;
+    skipPauses?: boolean;
+    pauseNext?: boolean;
     exceptions?: "none" | "uncaught" | "all";
-    paused?: { session: string; invocation: number; request: number; event: DebugEvent } | null;
+    paused?: {
+      session: string;
+      invocation: number;
+      request: number;
+      event: DebugEvent;
+      valueGeneration?: number;
+    } | null;
     inventory?: {
       sources: Array<{ source: string; bytes: number | null }>;
       breakpoints: BreakpointResolution[];
@@ -110,7 +136,13 @@ export interface DebugSessionView {
     pauseRemainingMs: number | null;
     sessionRemainingMs: number;
     logs: LogRun[];
-    events: Array<{ session: string; invocation: number; request: number; event: DebugEvent }>;
+    events: Array<{
+      session: string;
+      invocation: number;
+      request: number;
+      event: DebugEvent;
+      valueGeneration?: number;
+    }>;
   };
   outcome: {
     status: string;

@@ -9,6 +9,11 @@ visualizer instance. Native code commits a move only after the destination has
 loaded its editor and acknowledged readiness. Commands from the previous surface
 are then rejected. A failed handoff restores the previous placement.
 
+Each surface transfers bounded value leases with its Console state. The destination
+keeps live result roots and releases old scope and property handles. Native pause
+epochs qualify idle values as well as paused values; replayed events cannot renew
+an expired handle or duplicate output.
+
 Opening subscribes to current and future worker lifetimes. It does not reserve an
 exchange or activate unloaded extensions. Closing continues and detaches healthy
 workers, including pending attachments. Document/window loss ends ownership.
@@ -28,6 +33,11 @@ the selected native call-frame ID. Conditions use V8's side-effect check. Object
 inspection continues to use inert own descriptors. The app exposes typed commands
 over authenticated inherited pipes, without an Inspector endpoint or MCP command.
 
+The current callback comes from supervisor-owned attribution, including silent
+callbacks. Its request is resolved through the same application's retained catalog.
+Show request validates the current pause and routes only to that debugger's owning
+window; it does not accept an arbitrary request or window identity from the UI.
+
 Temporary pause settings apply to current and future workers without editing
 saved breakpoints. Pause-next and Continue to here are execution controls, not
 durable breakpoint records. Logpoints use side-effect-checked expressions and
@@ -36,5 +46,5 @@ Queued inspection shares a progress budget so a valid running evaluation cannot
 make waiting reads expire. Stalled evaluations and automatic inspection retain
 independent native deadlines.
 
-Script tests and visualizers share this workspace. Fresh fixtures pause before
+Script tests and visualizers share this workspace. With pauses enabled, fresh fixtures pause before
 their first user statement, allowing breakpoint setup before execution.

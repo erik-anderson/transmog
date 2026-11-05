@@ -1,62 +1,708 @@
 <template shadowrootmode="open" @keydown="{keyboard(e)}">
- <link w-ref="{sourceStyles}" rel="stylesheet" href="/monaco.css">
- <section class="workspace" aria-label="Debugger" data-console-share="{{debuggerConsoleShare}}" data-sources-share="{{debuggerSourcesShare}}" data-inspector-share="{{debuggerInspectorShare}}" ?data-sources-hidden="{{!debuggerSourcesVisible}}" ?data-inspector-hidden="{{!debuggerInspectorVisible}}" ?data-console-hidden="{{!debuggerConsoleVisible}}" ?data-compact="{{debuggerCompact}}" data-pane="{{debuggerCompactPane}}">
-  <header class="toolbar">
-   <strong>Debugger</strong>
-   <span class="debug-tool"><button type="button" class="secondary debug-icon-button" aria-label="Continue (F8)" ?disabled="{{!debuggerPaused}}" @click="{resume('continue')}"><debug-icon name="continue" aria-hidden="true"></debug-icon></button><span class="debug-tooltip" role="tooltip">Continue <kbd>F8</kbd> / <kbd>Ctrl+\</kbd> (also F5)</span></span>
-   <span class="debug-tool"><button type="button" class="secondary debug-icon-button" aria-label="Step over (F10)" ?disabled="{{!debuggerPaused}}" @click="{resume('over')}"><debug-icon name="step-over" aria-hidden="true"></debug-icon></button><span class="debug-tooltip" role="tooltip">Step over <kbd>F10</kbd></span></span>
-   <span class="debug-tool"><button type="button" class="secondary debug-icon-button" aria-label="Step into (F11)" ?disabled="{{!debuggerPaused}}" @click="{resume('into')}"><debug-icon name="step-into" aria-hidden="true"></debug-icon></button><span class="debug-tooltip" role="tooltip">Step into <kbd>F11</kbd></span></span>
-   <span class="debug-tool"><button type="button" class="secondary debug-icon-button" aria-label="Step out (Shift+F11)" ?disabled="{{!debuggerPaused}}" @click="{resume('out')}"><debug-icon name="step-out" aria-hidden="true"></debug-icon></button><span class="debug-tooltip" role="tooltip">Step out <kbd>Shift+F11</kbd></span></span>
-   <span class="debug-tool"><button type="button" class="secondary debug-icon-button" aria-label="Restart" ?disabled="{{!debuggerRestartable}}" @click="{restart()}"><debug-icon name="restart" aria-hidden="true"></debug-icon></button><span class="debug-tooltip" role="tooltip">Restart selected worker · aborts current work</span></span>
-   <span class="debug-tool"><button type="button" class="secondary debug-icon-button" aria-label="Stop (Shift+F5)" ?disabled="{{debuggerClosed}}" @click="{stop()}"><debug-icon name="stop" aria-hidden="true"></debug-icon></button><span class="debug-tooltip" role="tooltip">Stop <kbd>Shift+F5</kbd> · aborts selected work</span></span>
-   <span class="debug-tool"><button type="button" class="secondary debug-icon-button" aria-label="Continue and detach" @click="{place('closed')}"><debug-icon name="detach" aria-hidden="true"></debug-icon></button><span class="debug-tooltip" role="tooltip">Continue all workers and close debugger</span></span>
-   <label class="exception-policy">Exceptions <select aria-label="Pause on exceptions" ?disabled="{{debuggerClosed}}" value="{{debuggerExceptions}}" @change="{policy(e)}"><option value="none">Do not pause</option><option value="uncaught">Uncaught</option><option value="all">All</option></select></label>
-   <span class="spacer"></span>
-   <button type="button" class="secondary" popovertarget="debugger-view">View</button>
-   <div id="debugger-view" class="placement" popover="auto">
-    <button type="button" @click="{openNavigation(false)}" popovertarget="debugger-view">Open source… <kbd>Ctrl+P</kbd></button>
-    <button type="button" @click="{openNavigation(true)}" popovertarget="debugger-view">Search sources… <kbd>Ctrl+Shift+F</kbd></button>
-    <if condition="debuggerCompact"><button type="button" @click="{showCode()}" popovertarget="debugger-view">Code</button></if>
-    <button type="button" @click="{toggleSidebar('sources')}" popovertarget="debugger-view">Sources</button>
-    <button type="button" @click="{toggleSidebar('inspector')}" popovertarget="debugger-view">Inspector</button>
-    <button type="button" @click="{toggleConsole()}" popovertarget="debugger-view">Console <kbd>Esc</kbd></button>
-   </div>
-   <button type="button" class="secondary" popovertarget="debugger-placement">Dock</button>
-   <span class="debug-tool"><button type="button" class="secondary debug-icon-button" aria-label="Close debugger and continue execution" aria-keyshortcuts="F12" @click="{place('closed')}"><debug-icon name="close" aria-hidden="true"></debug-icon></button><span class="debug-tooltip" role="tooltip">Close debugger <kbd>F12</kbd> · continues paused work</span></span>
-   <div id="debugger-placement" class="placement" popover="auto">
-    <button type="button" @click="{place('bottom')}" popovertarget="debugger-placement">Dock to bottom</button>
-    <button type="button" @click="{place('right')}" popovertarget="debugger-placement">Dock to right</button>
-    <button type="button" @click="{place('window')}" popovertarget="debugger-placement">Open separate window</button>
-   </div>
-  </header>
-  <div class="status"><span role="status">{{debuggerStatus}}</span><label>Worker <select aria-label="Debugger worker" value="{{debuggerTarget}}" @change="{targetChanged(e)}"><option value="">Select a worker</option><for each="target in debuggerTargets"><option value="{{target.session}}">{{target.mode}} · {{target.label}}</option></for></select></label></div>
-  <p class="error" role="alert" ?hidden="{{!debuggerError}}">{{debuggerError}}</p>
-  <div class="panes" data-sources-share="{{debuggerSourcesShare}}" data-inspector-share="{{debuggerInspectorShare}}">
-   <nav class="sources" aria-label="Script sources">
-    <header class="pane-heading"><h3>Sources</h3><button type="button" class="secondary" aria-label="Close sources" @click="{toggleSidebar('sources')}">×</button></header><div class="source-actions"><button type="button" class="secondary" title="Open source (Ctrl+P)" @click="{openNavigation(false)}">Open…</button><button type="button" class="secondary" title="Search sources (Ctrl+Shift+F)" @click="{openNavigation(true)}">Search…</button></div>
-    <if condition="!debuggerSources.length"><p>Saved scripts and installed extension sources appear here.</p></if>
-    <for id="debug-source-node" each="node in debuggerSources"><div key="{{node.key}}" class="source-node">
-     <if condition="!node.file"><details ?open="{{node.open}}" @toggle="{sourceGroupToggled(node,e)}"><summary>{{node.label}}</summary><div class="source-folder"><for id="debug-source-node" each="node in node.children" /></div></details></if>
-     <if condition="node.file"><button type="button" class="source" ?data-selected="{{node.selected}}" aria-current="{{node.selected}}" title="{{node.file.path}}" @click="{openFile(node.file)}">{{node.label}} <small>{{node.file.state}}</small></button></if>
-    </div></for>
-    <details class="breakpoints" open><summary>Breakpoints</summary><if condition="!debuggerPoints.length"><p>Click beside a line number to add a breakpoint. Right-click for conditions.</p></if><for each="point in debuggerPoints"><div class="breakpoint"><button type="button" class="secondary" title="{{point.breakpoint.condition}}" @click="{showPoint(point)}">{{point.label}}</button><button type="button" class="secondary" aria-label="Remove breakpoint" @click="{removePoint(point)}">×</button></div></for></details>
-   </nav>
-   <pane-divider class="sources-divider" orientation="vertical" label="Resize sources" value="{{debuggerSourcesSplit}}" initial="18" @pane-resize="{resizeSidebar('sources',e)}"></pane-divider>
-   <section class="source-pane" aria-label="Source code"><header><button type="button" class="secondary" aria-label="Back (Alt+Left)" ?disabled="{{!debuggerCanBack}}" @click="{navigateHistory(-1)}">←</button><button type="button" class="secondary" aria-label="Forward (Alt+Right)" ?disabled="{{!debuggerCanForward}}" @click="{navigateHistory(1)}">→</button><span class="source-label" title="{{debuggerSourceLabel}}">{{debuggerSourceLabel}}</span><select aria-label="Source representation" ?disabled="{{!debuggerCanSwitch}}" value="{{debuggerRepresentation}}" @change="{switchRepresentation(e)}"><option value="typescript">TypeScript</option><option value="javascript">JavaScript</option></select></header>
-    <nav class="source-tabs" aria-label="Open sources" role="tablist" @keydown="{tabsKey(e)}"><for each="tab in debuggerTabs"><span key="{{tab.key}}" class="source-tab"><button id="source-tab-{{tab.key}}" type="button" role="tab" aria-selected="{{tab.selected}}" ?data-selected="{{tab.selected}}" tabindex="{{tab.tabIndex}}" title="{{tab.file.path}}" @click="{openFile(tab.file)}">{{tab.label}}</button><button type="button" class="secondary" aria-label="Close {{tab.label}}" @click="{closeTab(tab.key)}">×</button></span></for></nav>
-    <div w-ref="{sourceHost}" class="editor"></div></section>
-   <pane-divider class="inspector-divider" orientation="vertical" label="Resize inspector" value="{{debuggerInspectorSplit}}" initial="78" @pane-resize="{resizeSidebar('inspector',e)}"></pane-divider>
-   <aside class="variables" aria-label="Call stack and variables" @inspect-toggle="{inspectionToggled(e)}">
-    <button type="button" class="secondary pane-close" aria-label="Close inspector" @click="{toggleSidebar('inspector')}">×</button>
-    <details open><summary>Call stack</summary><if condition="!debuggerPaused"><p>Stack and variables appear when execution pauses.</p></if><ol class="call-stack"><for each="frame in debuggerStack"><li><button type="button" class="secondary" ?data-selected="{{frame.selected}}" aria-current="{{frame.selected}}" @click="{selectFrame(frame.index)}"><strong>{{frame.function}}</strong><span>{{frame.label}}</span></button></li></for></ol><if condition="debuggerStackTruncated"><p>Call stack shortened.</p></if></details>
-    <details open class="watches"><summary>Watch</summary><form @submit="{addWatch(e)}"><input aria-label="Watch expression" placeholder="Add expression" maxlength="1024" value="{{debuggerWatchInput}}" @input="{watchInput(e)}"><button type="submit" aria-label="Add watch" ?disabled="{{!debuggerWatchInput || debuggerWatches.length >= 16}}">+</button><button type="button" class="secondary" aria-label="Refresh watches" ?disabled="{{!debuggerPaused}}" @click="{refreshWatches()}">↻</button></form><for each="watch in debuggerWatches"><div class="watch"><if condition="watch.value"><debug-value :value="{{watch.value}}"></debug-value></if><if condition="!watch.value"><span>{{watch.expression}}: {{watch.output}}</span></if><button type="button" class="secondary" aria-label="Remove watch {{watch.expression}}" @click="{removeWatch(watch.id)}">×</button></div></for><if condition="!debuggerWatches.length"><p>Expressions refresh when paused or stepping. Side effects are blocked.</p></if></details>
-    <details open><summary>Scopes</summary><for each="value in debuggerScopeValues"><debug-value :value="{{value}}"></debug-value></for></details>
-   </aside>
-  </div>
-  <pane-divider class="console-divider" orientation="horizontal" label="Resize debugger console" value="{{debuggerConsoleSplit}}" initial="70" @pane-resize="{resizeConsole(e)}"></pane-divider>
-  <section class="console" aria-label="Console and immediate commands"><header><strong>Console</strong><span>{{debuggerScope}}</span><select aria-label="Console workers" value="{{debuggerConsoleFilter}}" @change="{consoleFilter(e)}"><option value="all">All workers</option><option value="selected">Selected worker</option></select><select aria-label="Console level" value="{{debuggerConsoleLevel}}" @change="{consoleFilter(e,true)}"><option value="all">All levels</option><option value="info">Info</option><option value="warn">Warning</option><option value="error">Error</option><option value="debug">Debug</option><option value="trace">Trace</option></select><button type="button" class="secondary" @click="{clearConsole()}">Clear</button><button type="button" class="secondary" aria-label="Hide console (Escape)" @click="{toggleConsole()}">×</button></header><div w-ref="{consoleOutput}" class="console-output" tabindex="0" data-copy-surface><script-diagnostics w-ref="{diagnostics}" expanded navigate-sources :evidence="{{debuggerEvidence}}" @diagnostic-source="{navigateSource(e)}"></script-diagnostics><if condition="debuggerSummary"><p>{{debuggerSummary}}</p></if><if condition="debuggerResult"><details><summary>Fixture result</summary><pre>{{debuggerResult}}</pre></details></if><for each="row in debuggerFeed"><div class="command" key="{{row.id}}" data-level="{{row.level}}"><if condition="row.input"><pre>› {{row.input}}</pre></if><if condition="row.label"><small>{{row.label}}</small></if><pre ?data-thrown="{{row.thrown}}">{{row.output}}</pre><if condition="row.value"><if condition="row.value.value.handle"><debug-value :value="{{row.value}}" @inspect-toggle="{inspectionToggled(e)}"></debug-value></if></if><if condition="row.source"><button type="button" class="secondary console-source" @click="{consoleSource(row)}">Source</button></if><if condition="row.technical"><details><summary>Details</summary><pre>{{row.technical}}</pre></details></if></div></for></div>
-   <div class="console-entry"><if condition="debuggerCompletions.length"><div class="completions" role="listbox" id="runtime-completions" aria-label="Runtime completions"><for each="item in debuggerCompletions"><button type="button" role="option" id="completion-{{item.name}}" aria-selected="{{item.selected}}" @mousedown="{completionMouse(e)}" @click="{acceptCompletion(item.name)}">{{item.name}}</button></for></div></if><form @submit="{submitConsole(e)}"><textarea w-ref="{consolePrompt}" aria-label="Immediate expression" aria-autocomplete="list" aria-controls="runtime-completions" aria-activedescendant="{{debuggerCompletionActive}}" placeholder="Run JavaScript · Enter to execute, Shift+Enter for a new line" rows="1" maxlength="8192" value="{{debuggerInput}}" @input="{consoleInput(e)}" @keydown="{consoleKey(e)}" @blur="{closeCompletions()}"></textarea><button type="submit" ?disabled="{{debuggerClosed || debuggerSubmitting || !debuggerTarget || !debuggerInput}}">Run</button></form></div></section>
- </section>
- <dialog w-ref="{navigationDialog}" class="source-dialog" aria-labelledby="debug-navigation-heading" @cancel="{navigationCanceled()}"><header><h2 id="debug-navigation-heading">{{debuggerNavigationTitle}}</h2><button type="button" class="secondary" aria-label="Close source navigation" @click="{closeNavigation()}">×</button></header><input w-ref="{navigationInput}" aria-label="Source query" autofocus maxlength="256" value="{{debuggerNavigationQuery}}" @input="{navigationInputChanged(e)}" @keydown="{navigationKey(e)}"><p role="status">{{debuggerNavigationStatus}}</p><div class="source-results"><for each="result in debuggerNavigationResults"><button id="source-result-{{result.key}}" key="{{result.key}}" type="button" class="source-result secondary" ?data-selected="{{result.selected}}" @click="{openNavigationResult(result)}"><strong>{{result.label}}</strong><span>{{result.snippet}}</span></button></for></div></dialog>
- <dialog w-ref="{conditionDialog}" aria-labelledby="debug-condition-heading"><form @submit="{saveCondition(e)}"><h2 id="debug-condition-heading">Breakpoint condition</h2><p class="condition-source">{{debuggerConditionSource}}</p><label>Pause when this expression is true<input aria-label="Breakpoint condition" autofocus maxlength="4096" value="{{debuggerCondition}}" @input="{conditionInput(e)}"></label><p>Conditions must be free of side effects. An empty condition always pauses.</p><p class="error" role="alert" ?hidden="{{!debuggerError}}">{{debuggerError}}</p><footer><button type="button" class="secondary" @click="{closeCondition()}">Cancel</button><button type="submit">Save</button></footer></form></dialog>
+  <link w-ref="{sourceStyles}" rel="stylesheet" href="/monaco.css" />
+  <section
+    class="workspace"
+    aria-label="Debugger"
+    data-console-share="{{debuggerConsoleShare}}"
+    data-sources-share="{{debuggerSourcesShare}}"
+    data-inspector-share="{{debuggerInspectorShare}}"
+    ?data-sources-hidden="{{!debuggerSourcesVisible}}"
+    ?data-inspector-hidden="{{!debuggerInspectorVisible}}"
+    ?data-console-hidden="{{!debuggerConsoleVisible}}"
+    ?data-compact="{{debuggerCompact}}"
+    data-pane="{{debuggerCompactPane}}"
+  >
+    <header class="toolbar">
+      <strong>Debugger</strong>
+      <span class="debug-tool"
+        ><button
+          type="button"
+          class="secondary debug-icon-button"
+          aria-label="{{debuggerPauseButton}}"
+          ?disabled="{{debuggerClosed || debuggerControlSubmitting}}"
+          ?data-scheduled="{{debuggerPauseNext}}"
+          @click="{togglePause()}"
+        >
+          <debug-icon name="{{debuggerPauseIcon}}" aria-hidden="true"></debug-icon></button
+        ><span class="debug-tooltip" role="tooltip"
+          ><if condition="debuggerPaused">Continue <kbd>F8</kbd> / <kbd>Ctrl+\</kbd> (also F5)</if
+          ><if condition="!debuggerPaused"
+            ><if condition="debuggerPauseNext">Cancel callback pause</if
+            ><if condition="!debuggerPauseNext">Pause next callback</if> <kbd>F8</kbd> /
+            <kbd>Ctrl+\</kbd></if
+          ></span
+        ></span
+      >
+      <span class="debug-tool"
+        ><button
+          type="button"
+          class="secondary debug-icon-button"
+          aria-label="Skip all pauses"
+          aria-pressed="{{debuggerSkipPauses}}"
+          ?disabled="{{debuggerControlSubmitting}}"
+          @click="{toggleSkipPauses()}"
+        >
+          <debug-icon name="skip-pauses" aria-hidden="true"></debug-icon></button
+        ><span class="debug-tooltip" role="tooltip">Skip future pauses and logpoints</span></span
+      >
+      <span class="debug-tool"
+        ><button
+          type="button"
+          class="secondary debug-icon-button"
+          aria-label="Step over (F10)"
+          ?disabled="{{!debuggerPaused}}"
+          @click="{resume('over')}"
+        >
+          <debug-icon name="step-over" aria-hidden="true"></debug-icon></button
+        ><span class="debug-tooltip" role="tooltip">Step over <kbd>F10</kbd></span></span
+      >
+      <span class="debug-tool"
+        ><button
+          type="button"
+          class="secondary debug-icon-button"
+          aria-label="Step into (F11)"
+          ?disabled="{{!debuggerPaused}}"
+          @click="{resume('into')}"
+        >
+          <debug-icon name="step-into" aria-hidden="true"></debug-icon></button
+        ><span class="debug-tooltip" role="tooltip">Step into <kbd>F11</kbd></span></span
+      >
+      <span class="debug-tool"
+        ><button
+          type="button"
+          class="secondary debug-icon-button"
+          aria-label="Step out (Shift+F11)"
+          ?disabled="{{!debuggerPaused}}"
+          @click="{resume('out')}"
+        >
+          <debug-icon name="step-out" aria-hidden="true"></debug-icon></button
+        ><span class="debug-tooltip" role="tooltip">Step out <kbd>Shift+F11</kbd></span></span
+      >
+      <span class="debug-tool"
+        ><button
+          type="button"
+          class="secondary debug-icon-button"
+          aria-label="Restart"
+          ?disabled="{{!debuggerRestartable}}"
+          @click="{restart()}"
+        >
+          <debug-icon name="restart" aria-hidden="true"></debug-icon></button
+        ><span class="debug-tooltip" role="tooltip"
+          >Restart selected worker · aborts current work</span
+        ></span
+      >
+      <span class="debug-tool"
+        ><button
+          type="button"
+          class="secondary debug-icon-button"
+          aria-label="Stop (Shift+F5)"
+          ?disabled="{{debuggerClosed}}"
+          @click="{stop()}"
+        >
+          <debug-icon name="stop" aria-hidden="true"></debug-icon></button
+        ><span class="debug-tooltip" role="tooltip"
+          >Stop <kbd>Shift+F5</kbd> · aborts selected work</span
+        ></span
+      >
+      <span class="debug-tool"
+        ><button
+          type="button"
+          class="secondary debug-icon-button"
+          aria-label="Continue and detach"
+          @click="{place('closed')}"
+        >
+          <debug-icon name="detach" aria-hidden="true"></debug-icon></button
+        ><span class="debug-tooltip" role="tooltip"
+          >Continue all workers and close debugger</span
+        ></span
+      >
+      <label class="exception-policy"
+        >Exceptions
+        <select
+          aria-label="Pause on exceptions"
+          ?disabled="{{debuggerClosed}}"
+          value="{{debuggerExceptions}}"
+          @change="{policy(e)}"
+        >
+          <option value="none">Do not pause</option>
+          <option value="uncaught">Uncaught</option>
+          <option value="all">All</option>
+        </select></label
+      >
+      <span class="spacer"></span>
+      <button type="button" class="secondary" popovertarget="debugger-view">View</button>
+      <div id="debugger-view" class="placement" popover="auto">
+        <button type="button" @click="{openNavigation(false)}" popovertarget="debugger-view">
+          Open source… <kbd>Ctrl+P</kbd>
+        </button>
+        <button type="button" @click="{openNavigation(true)}" popovertarget="debugger-view">
+          Search sources… <kbd>Ctrl+Shift+F</kbd>
+        </button>
+        <if condition="debuggerCompact"
+          ><button type="button" @click="{showCode()}" popovertarget="debugger-view">
+            Code
+          </button></if
+        >
+        <button type="button" @click="{toggleSidebar('sources')}" popovertarget="debugger-view">
+          Sources
+        </button>
+        <button type="button" @click="{toggleSidebar('inspector')}" popovertarget="debugger-view">
+          Inspector
+        </button>
+        <button type="button" @click="{toggleConsole()}" popovertarget="debugger-view">
+          Console <kbd>Esc</kbd>
+        </button>
+      </div>
+      <button type="button" class="secondary" popovertarget="debugger-placement">Dock</button>
+      <span class="debug-tool"
+        ><button
+          type="button"
+          class="secondary debug-icon-button"
+          aria-label="Close debugger and continue execution"
+          aria-keyshortcuts="F12"
+          @click="{place('closed')}"
+        >
+          <debug-icon name="close" aria-hidden="true"></debug-icon></button
+        ><span class="debug-tooltip" role="tooltip"
+          >Close debugger <kbd>F12</kbd> · continues paused work</span
+        ></span
+      >
+      <div id="debugger-placement" class="placement" popover="auto">
+        <button type="button" @click="{place('bottom')}" popovertarget="debugger-placement">
+          Dock to bottom
+        </button>
+        <button type="button" @click="{place('right')}" popovertarget="debugger-placement">
+          Dock to right
+        </button>
+        <button type="button" @click="{place('window')}" popovertarget="debugger-placement">
+          Open separate window
+        </button>
+      </div>
+    </header>
+    <div class="status" ?data-paused="{{debuggerPaused}}">
+      <div class="pause-summary"><strong ?hidden="{{!debuggerPaused}}">{{debuggerPauseContext}}</strong><span role="status">{{debuggerStatus}}</span><span class="pause-request" title="{{debuggerRequestUrl}}" ?hidden="{{!debuggerRequestLabel}}">{{debuggerRequestLabel}}</span></div>
+      <if condition="debuggerRequestLabel"><button type="button" class="secondary" @click="{revealRequest()}">Show request</button></if>
+      <label
+        >Worker
+        <select
+          aria-label="Debugger worker"
+          value="{{debuggerTarget}}"
+          @change="{targetChanged(e)}"
+        >
+          <option value="">Select a worker</option>
+          <for each="target in debuggerWorkerOptions"
+            ><option value="{{target.session}}">
+              {{target.mode}} · {{target.label}} · {{target.state}}
+            </option></for
+          >
+        </select></label
+      >
+    </div>
+    <p class="error" role="alert" ?hidden="{{!debuggerError}}">{{debuggerError}}</p>
+    <div
+      class="panes"
+      data-sources-share="{{debuggerSourcesShare}}"
+      data-inspector-share="{{debuggerInspectorShare}}"
+    >
+      <nav class="sources" aria-label="Script sources">
+        <header class="pane-heading">
+          <h3>Sources</h3>
+          <button
+            type="button"
+            class="secondary"
+            aria-label="Close sources"
+            @click="{toggleSidebar('sources')}"
+          >
+            ×
+          </button>
+        </header>
+        <div class="source-actions">
+          <button
+            type="button"
+            class="secondary"
+            title="Open source (Ctrl+P)"
+            @click="{openNavigation(false)}"
+          >
+            Open…</button
+          ><button
+            type="button"
+            class="secondary"
+            title="Search sources (Ctrl+Shift+F)"
+            @click="{openNavigation(true)}"
+          >
+            Search…
+          </button>
+        </div>
+        <if condition="!debuggerSources.length"
+          ><p>Saved scripts and installed extension sources appear here.</p></if
+        >
+        <for id="debug-source-node" each="node in debuggerSources"
+          ><div key="{{node.key}}" class="source-node">
+            <if condition="!node.file"
+              ><details ?open="{{node.open}}" @toggle="{sourceGroupToggled(node,e)}">
+                <summary>{{node.label}}</summary>
+                <div class="source-folder">
+                  <for id="debug-source-node" each="node in node.children" />
+                </div></details
+            ></if>
+            <if condition="node.file"
+              ><button
+                type="button"
+                class="source"
+                ?data-selected="{{node.selected}}"
+                aria-current="{{node.selected}}"
+                title="{{node.file.path}}"
+                @click="{openFile(node.file)}"
+              >
+                {{node.label}} <small>{{node.file.state}}</small>
+              </button></if
+            >
+          </div></for
+        >
+        <details class="breakpoints" open>
+          <summary>Breakpoints</summary>
+          <if condition="!debuggerPoints.length"
+            ><p>
+              Click beside a line number to add a breakpoint. Right-click for conditions or
+              logpoints.
+            </p></if
+          ><if condition="debuggerPoints.length"
+            ><div class="breakpoint-actions">
+              <button
+                type="button"
+                class="secondary"
+                ?disabled="{{debuggerEnabledPoints == debuggerPoints.length}}"
+                @click="{enableAllPoints(true)}"
+              >
+                Enable all</button
+              ><button
+                type="button"
+                class="secondary"
+                ?disabled="{{!debuggerEnabledPoints}}"
+                @click="{enableAllPoints(false)}"
+              >
+                Disable all
+              </button>
+            </div></if
+          >
+          <for each="group in debuggerPointGroups"
+            ><details
+              key="{{group.key}}"
+              class="breakpoint-group"
+              ?open="{{group.open}}"
+              @toggle="{breakpointGroupToggled(group,e)}"
+            >
+              <summary>{{group.label}}</summary>
+              <for each="point in group.points"
+                ><div
+                  class="breakpoint"
+                  key="{{point.breakpoint.id}}"
+                  ?data-disabled="{{!point.enabled}}"
+                >
+                  <input
+                    type="checkbox"
+                    aria-label="Enable breakpoint {{point.label}}"
+                    ?checked="{{point.enabled}}"
+                    @change="{pointChecked(point,e)}"
+                  />
+                  <div class="breakpoint-body">
+                    <button
+                      type="button"
+                      class="secondary breakpoint-location"
+                      @click="{showPoint(point)}"
+                    >
+                      Line {{point.line}} · {{point.status}}</button
+                    ><code title="{{point.anchor}}">{{point.snippet}}</code
+                    ><if condition="point.breakpoint.condition"
+                      ><small>if {{point.breakpoint.condition}}</small></if
+                    ><if condition="point.breakpoint.logExpression"
+                      ><small>log {{point.breakpoint.logExpression}}</small></if
+                    >
+                  </div>
+                  <button
+                    type="button"
+                    class="secondary"
+                    aria-label="Edit breakpoint {{point.label}}"
+                    title="Edit breakpoint"
+                    @click="{editPoint(point)}"
+                  >
+                    …</button
+                  ><button
+                    type="button"
+                    class="secondary"
+                    aria-label="Remove breakpoint {{point.label}}"
+                    title="Remove breakpoint"
+                    @click="{removePoint(point)}"
+                  >
+                    ×
+                  </button>
+                </div></for
+              >
+            </details></for
+          >
+        </details>
+      </nav>
+      <pane-divider
+        class="sources-divider"
+        orientation="vertical"
+        label="Resize sources"
+        value="{{debuggerSourcesSplit}}"
+        initial="18"
+        @pane-resize="{resizeSidebar('sources',e)}"
+      ></pane-divider>
+      <section class="source-pane" aria-label="Source code">
+        <header>
+          <button
+            type="button"
+            class="secondary"
+            aria-label="Back (Alt+Left)"
+            ?disabled="{{!debuggerCanBack}}"
+            @click="{navigateHistory(-1)}"
+          >
+            ←</button
+          ><button
+            type="button"
+            class="secondary"
+            aria-label="Forward (Alt+Right)"
+            ?disabled="{{!debuggerCanForward}}"
+            @click="{navigateHistory(1)}"
+          >
+            →</button
+          ><span class="source-label" title="{{debuggerSourceLabel}}">{{debuggerSourceLabel}}</span
+          ><select
+            aria-label="Source representation"
+            ?disabled="{{!debuggerCanSwitch}}"
+            value="{{debuggerRepresentation}}"
+            @change="{switchRepresentation(e)}"
+          >
+            <option value="typescript">TypeScript</option>
+            <option value="javascript">JavaScript</option>
+          </select>
+        </header>
+        <nav class="source-tabs" aria-label="Open sources" role="tablist" @keydown="{tabsKey(e)}">
+          <for each="tab in debuggerTabs"
+            ><span key="{{tab.key}}" class="source-tab"
+              ><button
+                id="source-tab-{{tab.key}}"
+                type="button"
+                role="tab"
+                aria-selected="{{tab.selected}}"
+                ?data-selected="{{tab.selected}}"
+                tabindex="{{tab.tabIndex}}"
+                title="{{tab.file.path}}"
+                @click="{openFile(tab.file)}"
+              >
+                {{tab.label}}</button
+              ><button
+                type="button"
+                class="secondary"
+                aria-label="Close {{tab.label}}"
+                @click="{closeTab(tab.key)}"
+              >
+                ×
+              </button></span
+            ></for
+          >
+        </nav>
+        <div w-ref="{sourceHost}" class="editor"></div>
+      </section>
+      <pane-divider
+        class="inspector-divider"
+        orientation="vertical"
+        label="Resize inspector"
+        value="{{debuggerInspectorSplit}}"
+        initial="78"
+        @pane-resize="{resizeSidebar('inspector',e)}"
+      ></pane-divider>
+      <aside
+        class="variables"
+        aria-label="Call stack and variables"
+        @inspect-toggle="{inspectionToggled(e)}"
+      >
+        <button
+          type="button"
+          class="secondary pane-close"
+          aria-label="Close inspector"
+          @click="{toggleSidebar('inspector')}"
+        >
+          ×
+        </button>
+        <details open>
+          <summary>Call stack</summary>
+          <if condition="!debuggerPaused"
+            ><p>Stack and variables appear when execution pauses.</p></if
+          >
+          <ol class="call-stack">
+            <for each="frame in debuggerStack"
+              ><li>
+                <button
+                  type="button"
+                  class="secondary"
+                  ?data-selected="{{frame.selected}}"
+                  aria-current="{{frame.selected}}"
+                  @click="{selectFrame(frame.index)}"
+                >
+                  <strong>{{frame.function}}</strong><span>{{frame.label}}</span>
+                </button>
+              </li></for
+            >
+          </ol>
+          <if condition="debuggerStackTruncated"><p>Call stack shortened.</p></if>
+        </details>
+        <details open class="watches">
+          <summary>Watch</summary>
+          <form @submit="{addWatch(e)}">
+            <input
+              aria-label="Watch expression"
+              placeholder="Add expression"
+              maxlength="1024"
+              value="{{debuggerWatchInput}}"
+              @input="{watchInput(e)}"
+            /><button
+              type="submit"
+              aria-label="Add watch"
+              ?disabled="{{!debuggerWatchInput || debuggerWatches.length >= 16}}"
+            >
+              +</button
+            ><button
+              type="button"
+              class="secondary"
+              aria-label="Refresh watches"
+              ?disabled="{{!debuggerPaused}}"
+              @click="{refreshWatches()}"
+            >
+              ↻
+            </button>
+          </form>
+          <for each="watch in debuggerWatches"
+            ><div class="watch">
+              <if condition="watch.value"><debug-value :value="{{watch.value}}"></debug-value></if
+              ><if condition="!watch.value"><span>{{watch.expression}}: {{watch.output}}</span></if
+              ><button
+                type="button"
+                class="secondary"
+                aria-label="Remove watch {{watch.expression}}"
+                @click="{removeWatch(watch.id)}"
+              >
+                ×
+              </button>
+            </div></for
+          ><if condition="!debuggerWatches.length"
+            ><p>Expressions refresh when paused or stepping. Side effects are blocked.</p></if
+          >
+        </details>
+        <details open>
+          <summary>Scopes</summary>
+          <for each="value in debuggerScopeValues"
+            ><debug-value :value="{{value}}"></debug-value
+          ></for>
+        </details>
+      </aside>
+    </div>
+    <pane-divider
+      class="console-divider"
+      orientation="horizontal"
+      label="Resize debugger console"
+      value="{{debuggerConsoleSplit}}"
+      initial="70"
+      @pane-resize="{resizeConsole(e)}"
+    ></pane-divider>
+    <section class="console" aria-label="Console and immediate commands">
+      <header>
+        <strong>Console</strong><span>{{debuggerScope}}</span
+        ><select
+          aria-label="Console workers"
+          value="{{debuggerConsoleFilter}}"
+          @change="{consoleFilter(e)}"
+        >
+          <option value="all">All workers</option>
+          <option value="selected">Selected worker</option></select
+        ><select
+          aria-label="Console level"
+          value="{{debuggerConsoleLevel}}"
+          @change="{consoleFilter(e,true)}"
+        >
+          <option value="all">All levels</option>
+          <option value="info">Info</option>
+          <option value="warn">Warning</option>
+          <option value="error">Error</option>
+          <option value="debug">Debug</option>
+          <option value="trace">Trace</option></select
+        ><button type="button" class="secondary" @click="{clearConsole()}">Clear</button
+        ><button
+          type="button"
+          class="secondary"
+          aria-label="Hide console (Escape)"
+          @click="{toggleConsole()}"
+        >
+          ×
+        </button>
+      </header>
+      <div w-ref="{consoleOutput}" class="console-output" tabindex="0" data-copy-surface>
+        <script-diagnostics
+          w-ref="{diagnostics}"
+          expanded
+          navigate-sources
+          :evidence="{{debuggerEvidence}}"
+          @diagnostic-source="{navigateSource(e)}"
+        ></script-diagnostics
+        ><if condition="debuggerSummary"><p>{{debuggerSummary}}</p></if
+        ><if condition="debuggerResult"
+          ><details>
+            <summary>Fixture result</summary>
+            <pre>{{debuggerResult}}</pre>
+          </details></if
+        ><for each="row in debuggerFeed"
+          ><div class="command" key="{{row.id}}" data-level="{{row.level}}">
+            <if condition="row.input"><pre>› {{row.input}}</pre></if
+            ><if condition="row.label"><small>{{row.label}}</small></if>
+            <pre ?data-thrown="{{row.thrown}}">{{row.output}}</pre>
+            <if condition="row.value"
+              ><if condition="row.value.value.handle"
+                ><debug-value
+                  :value="{{row.value}}"
+                  @inspect-toggle="{inspectionToggled(e)}"
+                ></debug-value></if></if
+            ><if condition="row.source"
+              ><button type="button" class="secondary console-source" @click="{consoleSource(row)}">
+                Source
+              </button></if
+            ><if condition="row.technical"
+              ><details>
+                <summary>Details</summary>
+                <pre>{{row.technical}}</pre>
+              </details></if
+            >
+          </div></for
+        >
+      </div>
+      <div class="console-entry">
+        <if condition="debuggerCompletions.length"
+          ><div
+            class="completions"
+            role="listbox"
+            id="runtime-completions"
+            aria-label="Runtime completions"
+          >
+            <for each="item in debuggerCompletions"
+              ><button
+                type="button"
+                role="option"
+                id="completion-{{item.name}}"
+                aria-selected="{{item.selected}}"
+                @mousedown="{completionMouse(e)}"
+                @click="{acceptCompletion(item.name)}"
+              >
+                {{item.name}}
+              </button></for
+            >
+          </div></if
+        >
+        <form @submit="{submitConsole(e)}">
+          <textarea
+            w-ref="{consolePrompt}"
+            aria-label="Immediate expression"
+            aria-autocomplete="list"
+            aria-controls="runtime-completions"
+            aria-activedescendant="{{debuggerCompletionActive}}"
+            placeholder="Run JavaScript · Enter to execute, Shift+Enter for a new line"
+            rows="1"
+            maxlength="8192"
+            value="{{debuggerInput}}"
+            @input="{consoleInput(e)}"
+            @keydown="{consoleKey(e)}"
+            @blur="{closeCompletions()}"
+          ></textarea
+          ><button
+            type="submit"
+            ?disabled="{{debuggerClosed || debuggerSubmitting || !debuggerTarget || !debuggerInput}}"
+          >
+            Run
+          </button>
+        </form>
+      </div>
+    </section>
+  </section>
+  <dialog
+    w-ref="{navigationDialog}"
+    class="source-dialog"
+    aria-labelledby="debug-navigation-heading"
+    @cancel="{navigationCanceled()}"
+  >
+    <header>
+      <h2 id="debug-navigation-heading">{{debuggerNavigationTitle}}</h2>
+      <button
+        type="button"
+        class="secondary"
+        aria-label="Close source navigation"
+        @click="{closeNavigation()}"
+      >
+        ×
+      </button>
+    </header>
+    <input
+      w-ref="{navigationInput}"
+      aria-label="Source query"
+      autofocus
+      maxlength="256"
+      value="{{debuggerNavigationQuery}}"
+      @input="{navigationInputChanged(e)}"
+      @keydown="{navigationKey(e)}"
+    />
+    <p role="status">{{debuggerNavigationStatus}}</p>
+    <div class="source-results">
+      <for each="result in debuggerNavigationResults"
+        ><button
+          id="source-result-{{result.key}}"
+          key="{{result.key}}"
+          type="button"
+          class="source-result secondary"
+          ?data-selected="{{result.selected}}"
+          @click="{openNavigationResult(result)}"
+        >
+          <strong>{{result.label}}</strong><span>{{result.snippet}}</span>
+        </button></for
+      >
+    </div>
+  </dialog>
+  <dialog w-ref="{conditionDialog}" aria-labelledby="debug-condition-heading" @cancel="{cancelCondition(e)}">
+    <form @submit="{saveCondition(e)}" aria-busy="{{debuggerConditionSaving}}">
+      <h2 id="debug-condition-heading">{{debuggerConditionTitle}}</h2>
+      <p class="condition-source">{{debuggerConditionSource}}</p>
+      <label
+        >Action<select
+          aria-label="Breakpoint action"
+          ?disabled="{{debuggerConditionSaving}}"
+          value="{{debuggerConditionKind}}"
+          @change="{conditionKindChanged(e)}"
+        >
+          <option value="pause">Pause</option>
+          <option value="log">Log</option>
+        </select></label
+      ><label
+        >Condition (optional)<input
+          aria-label="Breakpoint condition"
+          ?disabled="{{debuggerConditionSaving}}"
+          autofocus
+          maxlength="4096"
+          value="{{debuggerCondition}}"
+          @input="{conditionInput(e)}" /></label
+      ><if condition="debuggerConditionKind == 'log'"
+        ><label
+          >Log expression<input
+            aria-label="Log expression"
+            ?disabled="{{debuggerConditionSaving}}"
+            maxlength="4096"
+            placeholder='"value: " + value'
+            value="{{debuggerLogExpression}}"
+            @input="{logExpressionInput(e)}" /></label
+      ></if>
+      <p>Leave the condition empty to match every hit. Expressions must be free of side effects.</p>
+      <p class="error" role="alert" ?hidden="{{!debuggerError}}">{{debuggerError}}</p>
+      <footer>
+        <button type="button" class="secondary" ?disabled="{{debuggerConditionSaving}}" @click="{closeCondition()}">Cancel</button
+        ><if condition="debuggerConditionSaving"><button type="submit" disabled>Saving…</button></if><if condition="!debuggerConditionSaving"><button type="submit" ?disabled="{{debuggerConditionKind == 'log' && !debuggerLogExpression}}">Save</button></if>
+      </footer>
+    </form>
+  </dialog>
 </template>

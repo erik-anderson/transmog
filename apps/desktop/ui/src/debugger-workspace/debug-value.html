@@ -1,10 +1,46 @@
 <template shadowrootmode="open">
- <if condition="value">
-  <div class="heading">
-   <if condition="value.value.handle"><button type="button" ?disabled="{{value.expired}}" aria-expanded="{{value.expanded}}" @click="{toggle()}"><if condition="value.expanded">▾ </if><if condition="!value.expanded">▸ </if>{{value.label}}</button></if>
-   <if condition="!value.value.handle"><span>{{value.label}}:</span></if>
-   <span>{{value.value.display}}</span><if condition="value.expired"><small>Expired</small></if><if condition="value.value.truncated"><small>Shortened</small></if>
-  </div>
-  <if condition="value.expanded"><table><tbody><for each="property in value.rows"><tr key="{{property.key}}"><th data-depth="{{property.depth}}"><button type="button" ?disabled="{{!property.expandable &amp;&amp; property.offset == undefined}}" aria-expanded="{{property.expanded}}" @click="{toggle(property)}"><if condition="property.expandable"><if condition="property.expanded">▾ </if><if condition="!property.expanded">▸ </if></if>{{property.name}}</button></th><td>{{property.value.display}}<if condition="property.value.truncated"> …</if></td></tr></for></tbody></table><if condition="!value.rows.length"><p>No properties</p></if></if>
- </if>
+  <if condition="value">
+    <div class="heading">
+      <if condition="value.value.handle"
+        ><button
+          type="button"
+          ?disabled="{{value.expired}}"
+          aria-expanded="{{value.expanded}}"
+          @click="{toggle()}"
+        >
+          <if condition="value.expanded">▾ </if
+          ><if condition="!value.expanded">▸ </if>{{value.label}}
+        </button></if
+      >
+      <if condition="!value.value.handle"><span>{{value.label}}:</span></if>
+      <span>{{value.value.display}}</span><if condition="value.expired"><small>Expired</small></if
+      ><if condition="value.value.truncated"><small>Shortened</small></if>
+    </div>
+    <if condition="value.expanded"
+      ><table>
+        <tbody>
+          <for each="property in value.rows"
+            ><tr key="{{property.key}}">
+              <th data-depth="{{property.depth}}">
+                <button
+                  type="button"
+                  ?disabled="{{!property.expandable && property.offset == undefined}}"
+                  aria-expanded="{{property.expanded}}"
+                  @click="{toggle(property)}"
+                >
+                  <if condition="property.expandable"
+                    ><if condition="property.expanded">▾ </if
+                    ><if condition="!property.expanded">▸ </if></if
+                  >{{property.name}}
+                </button>
+              </th>
+              <td>{{property.value.display}}<if condition="property.value.truncated"> …</if></td>
+            </tr></for
+          >
+        </tbody>
+      </table>
+      <if condition="value.issue"><p role="status">{{value.issue}}</p></if
+      ><if condition="!value.rows.length && !value.issue"><p>No properties</p></if></if
+    >
+  </if>
 </template>

@@ -4398,6 +4398,8 @@ await page.addInitScript(
           case "debugger_layout":
           case "workspace_breakpoints":
           case "workspace_debug_session":
+          case "workspace_debug_request":
+          case "workspace_skip_pauses":
           case "workspace_debug_command":
             return globalThis.__debuggerWorkspaceCommand(command, args);
           case "start_debug_test":

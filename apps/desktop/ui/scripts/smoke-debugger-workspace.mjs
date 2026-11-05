@@ -60,6 +60,39 @@ export async function checkNativeDebuggerWorkspace({
   await assert.rejects(() => invoke("debugger_workspace"));
   const paused = proxyGet(listener, `${base}/workspace`);
   await wait(() => surface.evaluate((element) => element.debuggerPaused), "normal traffic pause");
+  await surface.locator(".status").getByText("Paused in onRequestHead", { exact: true }).waitFor();
+  const pausedRequest = await surface.evaluate(
+    (element) => element.views.get(element.debuggerTarget)?.request,
+  );
+  assert.ok(pausedRequest?.url.endsWith("/workspace"), JSON.stringify(pausedRequest));
+  const pauseIdentity = await surface.evaluate((element) => ({
+    session: element.debuggerTarget,
+    pause: element.pause,
+  }));
+  await assert.rejects(() => invoke("workspace_debug_request", pauseIdentity));
+  assert.equal(
+    await surface.evaluate(async (element) => {
+      try {
+        await window.__TAURI_INTERNALS__.invoke("workspace_debug_request", {
+          session: element.debuggerTarget,
+          pause: element.pause + 1,
+        });
+        return false;
+      } catch {
+        return true;
+      }
+    }),
+    true,
+    "Request navigation rejects a stale pause",
+  );
+  await surface.getByRole("button", { name: "Show request", exact: true }).click();
+  await wait(
+    () =>
+      page
+        .locator("traffic-workspace")
+        .evaluate((element, id) => element.selectedSessionId === id, pausedRequest.id),
+    "paused request selected in owning Traffic window",
+  );
   await page.getByRole("button", { name: "Debugger · 1 paused", exact: true }).waitFor();
   const gutter = await surface.evaluate((element) => {
     const editor = element.editor;
@@ -104,6 +137,67 @@ export async function checkNativeDebuggerWorkspace({
     .waitFor();
   await object.getByRole("button", { name: "nested", exact: false }).click();
   await object.getByText("answer", { exact: true }).waitFor();
+  const skip = surface.getByRole("button", { name: "Skip all pauses", exact: true });
+  await skip.click();
+  await wait(
+    () =>
+      surface.evaluate(
+        (element) => element.views.get(element.debuggerTarget)?.stream.skipPauses === true,
+      ),
+    "skip pauses acknowledged",
+  );
+  assert.equal(await surface.evaluate((element) => element.debuggerPaused), true);
+  await skip.click();
+  await wait(
+    () =>
+      surface.evaluate(
+        (element) => element.views.get(element.debuggerTarget)?.stream.skipPauses === false,
+      ),
+    "pauses enabled",
+  );
+  await surface.evaluate((element) => element.condition(6, "log"));
+  await surface
+    .getByRole("textbox", { name: "Log expression", exact: true })
+    .fill('"workspace local: " + local');
+  await surface.getByRole("button", { name: "Save", exact: true }).click();
+  try {
+    await surface.locator(".debug-logpoint").waitFor({ timeout: 10000 });
+  } catch {
+    throw new Error(
+      "Native logpoint did not bind: " +
+        JSON.stringify(
+          await surface.evaluate((element) => ({
+            error: element.debuggerError,
+            selected: element.selected,
+            points: element.points,
+            positions: [...element.positions],
+            inventory: element.views.get(element.debuggerTarget)?.stream.inventory,
+          })),
+        ),
+    );
+  }
+  const beforeContinue = await surface.evaluate((element) => element.pause);
+  await surface.evaluate((element) => element.continueTo(6));
+  await wait(
+    () =>
+      surface.evaluate(
+        (element, before) => element.debuggerPaused && element.pause > before,
+        beforeContinue,
+      ),
+    "temporary continue to location",
+  );
+  await surface.locator(".command").getByText("workspace local: 7", { exact: true }).waitFor();
+  await prompt.fill("Array.from({length:64},(_,i)=>({i}))");
+  await surface.getByRole("button", { name: "Run", exact: true }).click();
+  const fullBudget = surface.locator(".command").filter({ hasText: "› Array.from" });
+  await fullBudget
+    .locator("debug-value")
+    .getByRole("button", { name: "Result", exact: false })
+    .click();
+  await fullBudget
+    .getByText(/value handle limit reached/u)
+    .first()
+    .waitFor();
   await surface.getByRole("textbox", { name: "Immediate expression" }).fill("preserved draft");
   await surface.evaluate((element) => element.place("bottom"));
   const dock = page.locator("debugger-workspace");
@@ -115,6 +209,18 @@ export async function checkNativeDebuggerWorkspace({
     await dock.getByRole("textbox", { name: "Immediate expression" }).inputValue(),
     "preserved draft",
   );
+  assert.equal(
+    await dock.locator(".command").getByText("workspace local: 7", { exact: true }).count(),
+    1,
+    "Moving the debugger must not replay logpoint output",
+  );
+  await dock.locator(".watch").getByText("7", { exact: true }).waitFor();
+  const keptResult = dock.locator(".command").filter({ hasText: "› Array.from" });
+  await keptResult
+    .locator("debug-value")
+    .getByRole("button", { name: "Result", exact: false })
+    .click();
+  await keptResult.getByRole("button", { name: "0", exact: false }).first().waitFor();
   await dock.getByRole("combobox", { name: "Source representation" }).selectOption("javascript");
   await dock.locator(".debug-execution-line").waitFor();
   let queuedFinished = false;

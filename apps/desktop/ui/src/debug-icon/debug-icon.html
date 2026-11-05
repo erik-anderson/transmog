@@ -1,12 +1,28 @@
 <template shadowrootmode="open">
   <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
     <g class="continue"><path d="m7 4 12 8-12 8Z"></path></g>
-    <g class="step-over"><path d="M4 10a8 6 0 0 1 16 0v2m-3-3 3 3 3-3"></path><circle class="solid" cx="12" cy="18" r="1.75"></circle></g>
-    <g class="step-into"><path d="M12 3v11m-4-4 4 4 4-4"></path><circle class="solid" cx="12" cy="19" r="1.75"></circle></g>
-    <g class="step-out"><path d="M12 14V3M8 7l4-4 4 4"></path><circle class="solid" cx="12" cy="19" r="1.75"></circle></g>
+    <g class="pause"><path d="M8 4v16M16 4v16"></path></g>
+    <g class="skip-pauses">
+      <circle cx="12" cy="12" r="7"></circle>
+      <path d="m4 20 16-16"></path>
+    </g>
+    <g class="step-over">
+      <path d="M4 10a8 6 0 0 1 16 0v2m-3-3 3 3 3-3"></path>
+      <circle class="solid" cx="12" cy="18" r="1.75"></circle>
+    </g>
+    <g class="step-into">
+      <path d="M12 3v11m-4-4 4 4 4-4"></path>
+      <circle class="solid" cx="12" cy="19" r="1.75"></circle>
+    </g>
+    <g class="step-out">
+      <path d="M12 14V3M8 7l4-4 4 4"></path>
+      <circle class="solid" cx="12" cy="19" r="1.75"></circle>
+    </g>
     <g class="restart"><path d="M4 10a8 8 0 1 1 .8 6M4 3v7h7"></path></g>
     <g class="stop"><rect x="5" y="5" width="14" height="14" rx="1.5"></rect></g>
-    <g class="detach"><path d="m10 15-3 3a3.5 3.5 0 0 1-5-5l3-3m9-1 3-3a3.5 3.5 0 0 1 5 5l-3 3"></path></g>
+    <g class="detach">
+      <path d="m10 15-3 3a3.5 3.5 0 0 1-5-5l3-3m9-1 3-3a3.5 3.5 0 0 1 5 5l-3 3"></path>
+    </g>
     <g class="close"><path d="m6 6 12 12M18 6 6 18"></path></g>
     <g class="breakpoint"><circle class="solid" cx="12" cy="12" r="6"></circle></g>
     <g class="breakpoint-pending"><circle cx="12" cy="12" r="6"></circle></g>

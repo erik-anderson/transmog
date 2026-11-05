@@ -66,6 +66,7 @@ export class AppShell extends WebUIElement {
   private debuggerAccessListener?: UnlistenFn;
   private debuggerNativeShortcut?: UnlistenFn;
   private debuggerAccessError?: UnlistenFn;
+  private debuggerRequestListener?: UnlistenFn;
   private debuggerToggling = false;
   private debuggerTogglePending = false;
   debuggerDock!: DebuggerWorkspace;
@@ -125,6 +126,14 @@ export class AppShell extends WebUIElement {
         return;
       }
       this.debuggerAccessError = errors;
+      const requests = await listen<string>("debugger-request", (event) => {
+        void this.revealDebuggerRequest(event.payload);
+      });
+      if (!this.isConnected) {
+        requests();
+        return;
+      }
+      this.debuggerRequestListener = requests;
       const seen = await invoke<boolean>("debugger_seen");
       if (this.isConnected) {
         this.debuggerSeen ||= seen;
@@ -955,6 +964,20 @@ export class AppShell extends WebUIElement {
       }
     }
   }
+  private async revealDebuggerRequest(id: string): Promise<void> {
+    try {
+      if (await this.activateView("traffic")) {
+        if (this.traffic.previewReportDialog.open) {
+          this.traffic.closePreviewReport();
+        }
+        if (!(await this.traffic.revealSession(id))) {
+          this.diagnosticText = "This request is no longer available.";
+        }
+      }
+    } catch (error) {
+      this.diagnosticText = describeError(error);
+    }
+  }
   onTrafficRefreshed(): void {
     if (this.activeView === "automation") {
       void this.automation.refreshSourceAvailability();
@@ -1206,6 +1229,7 @@ export class AppShell extends WebUIElement {
     this.debuggerAccessListener?.();
     this.debuggerNativeShortcut?.();
     this.debuggerAccessError?.();
+    this.debuggerRequestListener?.();
     document.removeEventListener("keydown", this.debuggerShortcut, true);
     this.removeEventListener("keydown", this.inspectorShortcut, true);
     document.removeEventListener("keydown", this.shortcutListener);

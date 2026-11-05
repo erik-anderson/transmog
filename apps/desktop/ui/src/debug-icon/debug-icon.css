@@ -16,9 +16,16 @@ svg {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-g { display: none; }
-.solid { fill: currentColor; stroke: none; }
+g {
+  display: none;
+}
+.solid {
+  fill: currentColor;
+  stroke: none;
+}
 :host([name="continue"]) .continue,
+:host([name="pause"]) .pause,
+:host([name="skip-pauses"]) .skip-pauses,
 :host([name="step-over"]) .step-over,
 :host([name="step-into"]) .step-into,
 :host([name="step-out"]) .step-out,
@@ -27,4 +34,6 @@ g { display: none; }
 :host([name="detach"]) .detach,
 :host([name="close"]) .close,
 :host([name="breakpoint"]) .breakpoint,
-:host([name="breakpoint-pending"]) .breakpoint-pending { display: inline; }
+:host([name="breakpoint-pending"]) .breakpoint-pending {
+  display: inline;
+}

@@ -137,6 +137,14 @@ export async function checkDebuggerInspection(page, workspace, root) {
   assert.equal(await log.getByText("opaque-worker", { exact: false }).isVisible(), false);
   await log.getByText("Details", { exact: true }).click();
   await log.getByText("opaque-worker", { exact: false }).waitFor();
+  await workspace.getByText("2 console records omitted", { exact: true }).waitFor();
+  assert.equal(
+    await workspace.getByText("Console capture incomplete", { exact: false }).count(),
+    0,
+  );
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.workspaceDebug.logs[0].context.invocation = 0;
+  });
   await workspace
     .getByText("2 console records omitted · Console capture incomplete", { exact: true })
     .waitFor();

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import { checkDebuggerNavigation } from "./check-debugger-navigation.mjs";
 import { checkDebuggerInspection } from "./check-debugger-inspection.mjs";
+import { checkDebuggerControls } from "./check-debugger-controls.mjs";
 
 export async function checkDebuggerWorkspace(page, root) {
   const shortcut = page.getByRole("button", { name: "Debugger", exact: true });
@@ -175,6 +176,7 @@ export async function checkDebuggerWorkspace(page, root) {
   await workspace.getByRole("button", { name: "Run", exact: true }).click();
   await workspace.locator(".command > pre").filter({ hasText: "42" }).waitFor();
   await checkDebuggerInspection(page, workspace, root);
+  await checkDebuggerControls(page, workspace, root);
   await page.evaluate(() => {
     const debug = globalThis.__workspaceFixture.workspaceDebug;
     debug.extraTargets = [{ ...debug.info, session: "other-worker", label: "Other worker" }];

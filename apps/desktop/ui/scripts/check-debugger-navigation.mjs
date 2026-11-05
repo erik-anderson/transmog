@@ -25,7 +25,10 @@ export async function checkDebuggerNavigation(page, workspace) {
     .click();
   await workspace.locator(".sources summary").filter({ hasText: /^src$/u }).click();
   await workspace.getByRole("button", { name: "view.ts Unloaded", exact: true }).waitFor();
-  assert.equal(await workspace.locator(".source[data-selected]").textContent(), "view.ts Unloaded");
+  assert.equal(
+    (await workspace.locator(".source[data-selected]").textContent()).trim(),
+    "view.ts Unloaded",
+  );
   await workspace.getByRole("tab", { name: "main.ts", exact: true }).click();
   await workspace.getByRole("button", { name: "Back (Alt+Left)", exact: true }).click();
   assert.equal(await source(), "example/src/view.ts");
