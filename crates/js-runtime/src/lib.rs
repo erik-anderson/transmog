@@ -96,6 +96,8 @@ pub struct Runtime {
     // Persistent handles must be dropped before their isolate.
     #[cfg(feature = "debugger")]
     debugger: Option<debugger::Debugger>,
+    #[cfg(feature = "debugger")]
+    inspector: Rc<debugger::ContextInspector>,
     context: v8::Global<v8::Context>,
     isolate: v8::OwnedIsolate,
 }
@@ -156,6 +158,8 @@ impl Runtime {
         Ok(Self {
             #[cfg(feature = "debugger")]
             debugger: None,
+            #[cfg(feature = "debugger")]
+            inspector: debugger::ContextInspector::new(&mut isolate, &context),
             context,
             isolate,
         })
@@ -319,9 +323,13 @@ impl Drop for Runtime {
     fn drop(&mut self) {
         #[cfg(feature = "debugger")]
         if let Some(debugger) = self.debugger.take() {
-            v8::scope!(let scope, &mut self.isolate);
-            debugger.close(v8::Local::new(scope, &self.context));
+            debugger.close();
             drop(debugger);
+        }
+        #[cfg(feature = "debugger")]
+        {
+            v8::scope!(let scope, &mut self.isolate);
+            self.inspector.close(v8::Local::new(scope, &self.context));
         }
         // Clear module and rejection handles while the isolate is still alive.
         // OwnedIsolate then notifies its default platform and discards queued tasks.

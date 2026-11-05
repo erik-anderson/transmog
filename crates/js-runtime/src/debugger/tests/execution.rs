@@ -1,6 +1,94 @@
 use super::*;
 
 #[test]
+fn live_attachment_can_add_a_logpoint_after_paused_inspection_and_skip_changes() {
+    let (commands, input) = mpsc::sync_channel(MAX_DEBUG_COMMANDS);
+    let (output, events) = mpsc::sync_channel(32);
+    let engine = std::thread::spawn(move || {
+        let mut runtime = Runtime::new(1024 * 1024, 32 * 1024 * 1024).unwrap();
+        let entry = url::Url::parse(SOURCE).unwrap();
+        runtime.evaluate_modules(&entry, BTreeMap::from([(entry.clone(), "let count=0; debugger;\nexport function run(event) {\n  const local=7;\n  debugger;\n  count++;\n  return local;\n}\nglobalThis.entry=run;".into())])).unwrap();
+        runtime
+            .enable_debugger(
+                options(vec![]),
+                DebugTransport::new(input, move |event| output.try_send(event).is_ok()),
+            )
+            .unwrap();
+        runtime.begin_debug_operation(1);
+        assert_eq!(
+            runtime
+                .execute_string("transmog:invoke", "String(entry({}))", 32)
+                .unwrap(),
+            "7"
+        );
+        runtime.disable_debugger();
+        assert_eq!(
+            runtime
+                .execute_string("transmog:invoke", "String(entry({}))", 32)
+                .unwrap(),
+            "7"
+        );
+    });
+    let DebugEventKind::Paused { pause, .. } = event(&events, |event| {
+        matches!(event.event, DebugEventKind::Paused { .. })
+    })
+    .event
+    else {
+        unreachable!()
+    };
+    for (request, skip) in [(1, true), (2, false)] {
+        command(&commands, request, DebugAction::SkipPauses { skip });
+        reply(&events, request);
+    }
+    command(
+        &commands,
+        3,
+        DebugAction::Evaluate {
+            pause,
+            frame: Some(0),
+            expression: "({nested:{answer:42},get secret(){throw Error('getter ran')}})".into(),
+        },
+    );
+    event(&events, |event| {
+        event.request == 3 && matches!(event.event, DebugEventKind::Evaluated { .. })
+    });
+    command(
+        &commands,
+        4,
+        DebugAction::Breakpoints {
+            values: vec![SourceBreakpoint {
+                id: 1,
+                condition: None,
+                log_expression: Some("'local: ' + local".into()),
+                location: SourceLocation {
+                    source: SOURCE.into(),
+                    line: 5,
+                    column: 3,
+                },
+            }],
+        },
+    );
+    let resolution = event(&events, |event| {
+        event.request == 4 && matches!(event.event, DebugEventKind::Sources { .. })
+    });
+    let DebugEventKind::Sources { breakpoints, .. } = resolution.event else {
+        unreachable!()
+    };
+    assert!(breakpoints[0].resolved.is_some(), "{breakpoints:?}");
+    reply(&events, 4);
+    command(
+        &commands,
+        5,
+        DebugAction::Resume {
+            pause,
+            action: ResumeAction::Continue,
+        },
+    );
+    reply(&events, 5);
+    engine.join().unwrap();
+}
+
+#[test]
 fn skipped_pauses_apply_before_initialization_without_discarding_breakpoint_intent() {
     let (_commands, input) = mpsc::sync_channel(MAX_DEBUG_COMMANDS);
     let (output, events) = mpsc::sync_channel(32);

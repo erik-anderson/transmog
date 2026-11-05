@@ -10,7 +10,7 @@ repository.workspace = true
 [features]
 # Development-only proof of the pinned Inspector API; never enabled by a host.
 inspector-probe = ["dep:serde_json"]
-# Shared native debugger. No Inspector is constructed until explicitly attached.
+# Shared native debugger. Sessions stay disabled until explicitly attached.
 debugger = ["dep:serde_json"]
 
 [dependencies]

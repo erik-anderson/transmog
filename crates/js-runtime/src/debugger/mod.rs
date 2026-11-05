@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use std::{
     cell::{Cell, RefCell},
     collections::BTreeMap,
-    rc::Rc,
+    rc::{Rc, Weak},
     sync::mpsc::{Receiver, RecvTimeoutError},
     time::{Duration, Instant},
 };
@@ -55,8 +55,37 @@ impl DebugTransport {
 }
 
 pub(crate) struct Debugger {
-    inspector: V8Inspector,
+    inspector: Rc<ContextInspector>,
     client: Rc<Client>,
+}
+/// Context registration must precede compilation so later attachments can resolve existing code.
+/// There is no session, channel, or enabled debugger until an explicit attachment.
+pub(crate) struct ContextInspector {
+    inspector: V8Inspector,
+    client: Rc<RefCell<Weak<Client>>>,
+}
+impl ContextInspector {
+    pub(crate) fn new(
+        isolate: &mut v8::OwnedIsolate,
+        context: &v8::Global<v8::Context>,
+    ) -> Rc<Self> {
+        let client = Rc::new(RefCell::new(Weak::new()));
+        let inspector = V8Inspector::create(
+            isolate,
+            V8InspectorClient::new(Box::new(InspectorClient(Rc::clone(&client)))),
+        );
+        v8::scope!(let scope, isolate);
+        inspector.context_created(
+            v8::Local::new(scope, context),
+            1,
+            StringView::from(&b"Transmog script"[..]),
+            StringView::from(&b"{}"[..]),
+        );
+        Rc::new(Self { inspector, client })
+    }
+    pub(crate) fn close(&self, context: v8::Local<v8::Context>) {
+        self.inspector.context_destroyed(context);
+    }
 }
 struct Client {
     runtime_state: Rc<super::State>,
@@ -122,8 +151,7 @@ impl Runtime {
         // breakpoint event precedes it before another operation may be admitted.
         connection.client.emit(0, DebugEventKind::Attached);
         if connection.client.stopped.get() {
-            v8::scope!(let scope,&mut self.isolate);
-            connection.close(v8::Local::new(scope, &self.context));
+            connection.close();
             return Err(debug_error("Debugger event transport unavailable"));
         }
         self.debugger = Some(connection);
@@ -168,8 +196,7 @@ impl Runtime {
     /// Detaches an idle connection while keeping the actual worker context and globals.
     pub fn disable_debugger(&mut self) {
         if let Some(debugger) = self.debugger.take() {
-            v8::scope!(let scope, &mut self.isolate);
-            debugger.close(v8::Local::new(scope, &self.context));
+            debugger.close();
         }
     }
 
@@ -233,20 +260,9 @@ impl Debugger {
             logpoint_epoch: Cell::new(Instant::now()),
             values: RefCell::new(values::Values::default()),
         });
-        let inspector = V8Inspector::create(
-            &mut runtime.isolate,
-            V8InspectorClient::new(Box::new(InspectorClient(Rc::clone(&client)))),
-        );
-        {
-            v8::scope!(let scope, &mut runtime.isolate);
-            inspector.context_created(
-                v8::Local::new(scope, &runtime.context),
-                1,
-                StringView::from(&b"Transmog script"[..]),
-                StringView::from(&b"{}"[..]),
-            );
-        }
-        *client.session.borrow_mut() = Some(Rc::new(inspector.connect(
+        let inspector = Rc::clone(&runtime.inspector);
+        *inspector.client.borrow_mut() = Rc::downgrade(&client);
+        *client.session.borrow_mut() = Some(Rc::new(inspector.inspector.connect(
             1,
             Channel::new(Box::new(Output(Rc::clone(&client)))),
             StringView::from(&b"{}"[..]),
@@ -265,8 +281,7 @@ impl Debugger {
             })
             .and_then(|_| connection.client.policy());
         if let Err(error) = configured {
-            v8::scope!(let scope, &mut runtime.isolate);
-            connection.close(v8::Local::new(scope, &runtime.context));
+            connection.close();
             return Err(error);
         }
         Ok(connection)
@@ -345,10 +360,10 @@ impl Debugger {
             }
         }
     }
-    pub(crate) fn close(&self, context: v8::Local<v8::Context>) {
+    pub(crate) fn close(&self) {
         self.client.values.borrow_mut().clear();
         self.client.session.borrow_mut().take();
-        self.inspector.context_destroyed(context);
+        *self.inspector.client.borrow_mut() = Weak::new();
     }
 }
 impl Drop for Debugger {
@@ -1052,11 +1067,13 @@ fn short(value: &str, limit: usize) -> String {
     value[..end].to_owned()
 }
 
-struct InspectorClient(Rc<Client>);
+struct InspectorClient(Rc<RefCell<Weak<Client>>>);
 impl V8InspectorClientImpl for InspectorClient {
     #[allow(unsafe_code)] // V8 invokes this callback on the owning isolate thread while paused.
     fn run_message_loop_on_pause(&self, _group: i32) {
-        let client = &self.0;
+        let Some(client) = self.0.borrow().upgrade() else {
+            return;
+        };
         if client.stopped.get() {
             return;
         }
@@ -1090,7 +1107,9 @@ impl V8InspectorClientImpl for InspectorClient {
         }
     }
     fn quit_message_loop_on_pause(&self) {
-        self.0.paused.set(false);
+        if let Some(client) = self.0.borrow().upgrade() {
+            client.paused.set(false);
+        }
     }
     fn value_subtype<'s>(
         &self,

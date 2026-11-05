@@ -16,9 +16,10 @@ continuation state. A paused worker cannot serve ordinary queued work safely.
 ## Decision
 
 Share runtime-neutral diagnostic/debugger contracts in `script-diagnostics`.
-Keep all Inspector and V8 value access on the worker's engine thread. Inspector
-is created only for an explicitly owned session and communicates over inherited,
-authenticated native pipes. Expose only typed native commands, with no listening
+Keep all Inspector and V8 value access on the worker's engine thread. Register the
+context before compilation so later attachments can resolve existing modules.
+Create a session and enable debugging only for an explicit local owner, using
+inherited, authenticated native pipes. Expose only typed native commands, with no listening
 port or unrestricted Inspector bridge.
 
 Register actual compiled module IDs. Authored sourceURL labels never determine
