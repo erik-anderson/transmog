@@ -81,10 +81,11 @@ export async function checkDebuggerNavigation(page, workspace, root) {
     "const value",
   );
   await checkSourceLoadRaces(page, workspace);
+  const actions = await page.evaluate(() => globalThis.__workspaceFixture.workspaceDebug.actions);
   assert.equal(
-    await page.evaluate(() => globalThis.__workspaceFixture.workspaceDebug.actions.length),
+    actions.length,
     before,
-    "Reading unloaded sources must not activate or control a worker",
+    `Reading unloaded sources must not activate or control a worker: ${JSON.stringify(actions.slice(before))}`,
   );
   await editor();
   await page.keyboard.press("Control+Shift+f");
@@ -219,14 +220,17 @@ async function checkSourceLoadRaces(page, workspace) {
   const prompt = workspace.getByRole("textbox", { name: "Immediate expression", exact: true });
   try {
     await start();
-    await prompt.fill("Keep this draft");
+    // End the draft with punctuation so the focus probe does not request completions.
+    await prompt.fill("Keep this draft;");
+    // Exercise completion before releasing the source read, including on fast hosts.
+    await workspace.evaluate((element) => element.completePrompt());
     await finish();
     assert.equal(
       await prompt.evaluate((element) => element.getRootNode().activeElement === element),
       true,
       "A delayed source must not steal Console focus",
     );
-    assert.equal(await prompt.inputValue(), "Keep this draft");
+    assert.equal(await prompt.inputValue(), "Keep this draft;");
     await start();
     await workspace.evaluate(async (element, file) => {
       await element.openFile(file);
