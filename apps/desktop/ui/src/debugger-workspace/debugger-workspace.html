@@ -133,24 +133,24 @@
       <span class="spacer"></span>
       <button type="button" w-ref="{viewMenuButton}" class="secondary view-trigger" popovertarget="debugger-view">View</button>
       <div id="debugger-view" class="placement" popover="auto">
-        <button type="button" @click="{openNavigation(false)}" popovertarget="debugger-view">
+        <button type="button" @click="{openNavigation(false)}" popovertarget="debugger-view" popovertargetaction="hide">
           Open source… <kbd>Ctrl+P</kbd>
         </button>
-        <button type="button" @click="{openNavigation(true)}" popovertarget="debugger-view">
+        <button type="button" @click="{openNavigation(true)}" popovertarget="debugger-view" popovertargetaction="hide">
           Search sources… <kbd>Ctrl+Shift+F</kbd>
         </button>
         <if condition="debuggerCompact"
-          ><button type="button" @click="{showCode()}" popovertarget="debugger-view">
+          ><button type="button" @click="{showCode()}" popovertarget="debugger-view" popovertargetaction="hide">
             Code
           </button></if
         >
-        <button type="button" @click="{toggleSidebar('sources')}" popovertarget="debugger-view">
+        <button type="button" @click="{toggleSidebar('sources')}" popovertarget="debugger-view" popovertargetaction="hide">
           Sources
         </button>
-        <button type="button" @click="{toggleSidebar('inspector')}" popovertarget="debugger-view">
+        <button type="button" @click="{toggleSidebar('inspector')}" popovertarget="debugger-view" popovertargetaction="hide">
           Inspector
         </button>
-        <button type="button" @click="{toggleConsole()}" popovertarget="debugger-view">
+        <button type="button" @click="{toggleConsole()}" popovertarget="debugger-view" popovertargetaction="hide">
           Console <kbd>Esc</kbd>
         </button>
       </div>
@@ -169,13 +169,13 @@
         ></span
       >
       <div id="debugger-placement" class="placement" popover="auto">
-        <button type="button" @click="{place('bottom')}" popovertarget="debugger-placement">
+        <button type="button" @click="{place('bottom')}" popovertarget="debugger-placement" popovertargetaction="hide">
           Dock to bottom
         </button>
-        <button type="button" @click="{place('right')}" popovertarget="debugger-placement">
+        <button type="button" @click="{place('right')}" popovertarget="debugger-placement" popovertargetaction="hide">
           Dock to right
         </button>
-        <button type="button" @click="{place('window')}" popovertarget="debugger-placement">
+        <button type="button" @click="{place('window')}" popovertarget="debugger-placement" popovertargetaction="hide">
           Open separate window
         </button>
       </div>
@@ -694,7 +694,7 @@
     w-ref="{navigationDialog}"
     class="source-dialog"
     aria-labelledby="debug-navigation-heading"
-    @cancel="{navigationCanceled()}"
+    @cancel="{navigationCanceled(e)}"
   >
     <header>
       <h2 id="debug-navigation-heading">{{debuggerNavigationTitle}}</h2>

@@ -145,6 +145,7 @@ export class DebuggerWorkspace extends WebUIElement {
   @observable debuggerNavigationStatus = "";
   @observable debuggerNavigationResults: SourceResult[] = [];
   navigationDialog!: HTMLDialogElement;
+  private navigationFocus: HTMLElement | null = null;
   dockMenuButton!: HTMLButtonElement;
   viewMenuButton!: HTMLButtonElement;
   navigationInput!: HTMLInputElement;
@@ -392,6 +393,10 @@ export class DebuggerWorkspace extends WebUIElement {
     this.shadowRoot?.getElementById(`source-tab-${tab.key}`)?.focus();
   }
   openNavigation(search = false): void {
+    if (!this.navigationDialog.open) {
+      const focus = this.activeElement();
+      this.navigationFocus = focus instanceof HTMLElement ? focus : null;
+    }
     this.navigationSearch = search;
     this.debuggerNavigationTitle = search ? "Search sources" : "Open source";
     this.debuggerNavigationQuery = "";
@@ -405,13 +410,24 @@ export class DebuggerWorkspace extends WebUIElement {
     this.navigationInput.focus();
   }
   closeNavigation(): void {
+    const restoreFocus =
+      this.navigationDialog.open && this.navigationDialog.contains(this.activeElement());
+    const focus = this.navigationFocus;
+    this.navigationFocus = null;
     this.navigationGeneration++;
     window.clearTimeout(this.navigationTimer);
     this.navigationDialog.close();
+    if (restoreFocus && this.isConnected && !this.debuggerTransition) {
+      if (focus?.isConnected && focus !== document.body && focus.checkVisibility()) {
+        focus.focus();
+      } else {
+        this.viewMenuButton.focus();
+      }
+    }
   }
-  navigationCanceled(): void {
-    this.navigationGeneration++;
-    window.clearTimeout(this.navigationTimer);
+  navigationCanceled(event: Event): void {
+    event.preventDefault();
+    this.closeNavigation();
   }
   navigationInputChanged(event: Event): void {
     this.debuggerNavigationQuery = (event.target as HTMLInputElement).value;
@@ -2856,6 +2872,7 @@ export class DebuggerWorkspace extends WebUIElement {
     this.decorations?.set(decorations);
   }
   disconnectedCallback(): void {
+    this.navigationFocus = null;
     this.inspection.dispose();
     this.inspectionGeneration++;
     this.closeCompletions();

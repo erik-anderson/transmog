@@ -151,6 +151,18 @@ export async function checkDebuggerNavigation(page, workspace, root) {
   await workspace.locator(".source-pane").waitFor();
   await view("Inspector");
   await workspace.locator(".variables").waitFor();
+  await workspace.getByRole("button", { name: "View", exact: true }).click();
+  await workspace
+    .locator("#debugger-view")
+    .getByRole("button", { name: /^Open source/u })
+    .click();
+  await workspace.getByRole("textbox", { name: "Source query", exact: true }).press("Escape");
+  assert.ok(
+    await workspace
+      .getByRole("button", { name: "View", exact: true })
+      .evaluate((element) => element.getRootNode().activeElement === element),
+    "Canceling source navigation restores visible focus when Code is hidden",
+  );
   await workspace.getByRole("button", { name: "Close inspector", exact: true }).click();
   await workspace.locator(".source-pane").waitFor();
   await editor();

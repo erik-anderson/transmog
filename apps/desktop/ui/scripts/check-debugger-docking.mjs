@@ -34,10 +34,46 @@ export async function checkDebuggerDocking(page, workspace, root) {
   );
   const divider = page.getByRole("separator", { name: "Resize debugger", exact: true });
   const dock = workspace.getByRole("button", { name: "Dock", exact: true });
+  for (const [action, title] of [
+    [/^Open source/u, "Open source"],
+    [/^Search sources/u, "Search sources"],
+  ]) {
+    for (const escape of [true, false]) {
+      await workspace.getByRole("button", { name: "View", exact: true }).click();
+      await workspace.locator("#debugger-view").getByRole("button", { name: action }).click();
+      const dialog = workspace.getByRole("dialog", { name: title, exact: true });
+      await dialog.waitFor();
+      assert.equal(
+        await workspace.locator("#debugger-view").isVisible(),
+        false,
+        "Opening source navigation must close its menu",
+      );
+      if (escape)
+        await workspace.getByRole("textbox", { name: "Source query", exact: true }).press("Escape");
+      else
+        await dialog.getByRole("button", { name: "Close source navigation", exact: true }).click();
+      await dialog.waitFor({ state: "hidden" });
+      assert.ok(
+        await workspace.evaluate(
+          (element) =>
+            element.editor.hasTextFocus() ||
+            element.shadowRoot.activeElement === element.viewMenuButton,
+        ),
+        "Closing source navigation restores focus to a visible source control",
+      );
+    }
+  }
   await page.waitForFunction(
     () =>
       document.querySelector("app-shell").shadowRoot.querySelector("debugger-workspace")
         .debuggerWorkerOptions.length > 0,
+  );
+  const prompt = workspace.getByRole("textbox", { name: "Immediate expression", exact: true });
+  await prompt.press("Control+p");
+  await workspace.getByRole("textbox", { name: "Source query", exact: true }).press("Escape");
+  assert.ok(
+    await prompt.evaluate((element) => element.getRootNode().activeElement === element),
+    "Canceling source navigation preserves Console focus",
   );
   assert.equal(
     await workspace.getByRole("combobox", { name: "Debugger worker", exact: true }).inputValue(),

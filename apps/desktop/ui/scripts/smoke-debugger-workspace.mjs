@@ -100,6 +100,42 @@ export async function checkNativeDebuggerWorkspace({
     await surface.getByRole("combobox", { name: "Debugger worker", exact: true }).inputValue(),
     await surface.evaluate((element) => element.debuggerTarget),
   );
+  for (const [action, title, escape] of [
+    [/^Open source/u, "Open source", true],
+    [/^Search sources/u, "Search sources", false],
+  ]) {
+    await surface.getByRole("button", { name: "View", exact: true }).click();
+    await surface.locator("#debugger-view").getByRole("button", { name: action }).click();
+    const dialog = surface.getByRole("dialog", { name: title, exact: true });
+    await dialog.waitFor();
+    assert.equal(await surface.locator("#debugger-view").isVisible(), false);
+    await detached.screenshot({
+      path: resolve(
+        output,
+        title === "Open source"
+          ? "debugger-open-source-menu-native.png"
+          : "debugger-search-sources-menu-native.png",
+      ),
+    });
+    if (escape)
+      await surface.getByRole("textbox", { name: "Source query", exact: true }).press("Escape");
+    else await dialog.getByRole("button", { name: "Close source navigation", exact: true }).click();
+    await dialog.waitFor({ state: "hidden" });
+    assert.ok(
+      await surface
+        .getByRole("button", { name: "View", exact: true })
+        .evaluate((element) => element.getRootNode().activeElement === element),
+    );
+  }
+  const navigationPrompt = surface.getByRole("textbox", {
+    name: "Immediate expression",
+    exact: true,
+  });
+  await navigationPrompt.press("Control+p");
+  await surface.getByRole("textbox", { name: "Source query", exact: true }).press("Escape");
+  assert.ok(
+    await navigationPrompt.evaluate((element) => element.getRootNode().activeElement === element),
+  );
   const paused = proxyGet(listener, `${base}/workspace`);
   await wait(() => surface.evaluate((element) => element.debuggerPaused), "normal traffic pause");
   await surface.locator(".status").getByText("Paused in onRequestHead", { exact: true }).waitFor();
@@ -577,6 +613,7 @@ export async function checkNativeDebuggerWorkspace({
     resizeLimits: true,
     workerSelection: true,
     menuFocus: true,
+    navigationMenuActions: true,
     dockingPointerAxes: true,
     anchoredMenus: true,
     pauseNextRearmed: true,
