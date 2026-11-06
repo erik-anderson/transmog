@@ -4,7 +4,7 @@ use std::{io::Read, sync::OnceLock};
 
 use crate::UiError;
 
-/// The existing per-resource response ceiling, also enforced by the build.
+/// The per-resource ceiling for assets and the protocol, enforced by the build.
 const MAX_ASSET_BYTES: usize = 16 * 1024 * 1024;
 
 struct EmbeddedAsset {
@@ -33,27 +33,27 @@ impl EmbeddedAsset {
 
     fn bytes(&self) -> Result<&[u8], UiError> {
         self.decoded
-            .get_or_init(|| self.decompress())
+            .get_or_init(|| decompress(self.compressed, self.decoded_len))
             .as_deref()
             .map_err(|message| UiError::InvalidAsset(format!("{}: {message}", self.path)))
     }
+}
 
-    fn decompress(&self) -> Result<Vec<u8>, String> {
-        if self.decoded_len > MAX_ASSET_BYTES {
-            return Err("decoded asset exceeds its byte limit".to_owned());
-        }
-        let mut decoded = Vec::with_capacity(self.decoded_len + 1);
-        // Bound decoded output to the build-recorded length plus one detection
-        // byte, so an oversized stream cannot grow the response without limit.
-        brotli::Decompressor::new(self.compressed, 4096)
-            .take(self.decoded_len as u64 + 1)
-            .read_to_end(&mut decoded)
-            .map_err(|error| error.to_string())?;
-        if decoded.len() != self.decoded_len {
-            return Err("decoded asset length differs from its build metadata".to_owned());
-        }
-        Ok(decoded)
+fn decompress(compressed: &[u8], decoded_len: usize) -> Result<Vec<u8>, String> {
+    if decoded_len > MAX_ASSET_BYTES {
+        return Err("decoded asset exceeds its byte limit".to_owned());
     }
+    let mut decoded = Vec::with_capacity(decoded_len + 1);
+    // Bound decoded output to the build-recorded length plus one detection
+    // byte, so an oversized stream cannot grow the response without limit.
+    brotli::Decompressor::new(compressed, 4096)
+        .take(decoded_len as u64 + 1)
+        .read_to_end(&mut decoded)
+        .map_err(|error| error.to_string())?;
+    if decoded.len() != decoded_len {
+        return Err("decoded asset length differs from its build metadata".to_owned());
+    }
+    Ok(decoded)
 }
 
 include!(concat!(env!("OUT_DIR"), "/assets.rs"));
@@ -75,14 +75,37 @@ pub(super) fn respond(method: &str, path: &str) -> Result<Option<crate::UiRespon
     )))
 }
 
-pub(super) fn protocol_bytes() -> &'static [u8] {
-    PROTOCOL_BYTES
+pub(super) fn protocol_bytes() -> Result<Vec<u8>, UiError> {
+    // Parsing owns the resulting Protocol; discard this temporary buffer rather
+    // than retaining a second decompressed copy in an asset cache.
+    decompress(PROTOCOL_BYTES, PROTOCOL_DECODED_LEN).map_err(UiError::InvalidProtocol)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{AppRenderer, ShellView};
+
+    #[test]
+    fn compressed_protocol_matches_the_original_build_output() {
+        assert_eq!(protocol_bytes().unwrap(), ORIGINAL_PROTOCOL);
+        assert!(PROTOCOL_BYTES.len() < ORIGINAL_PROTOCOL.len());
+    }
+
+    #[test]
+    fn invalid_protocol_streams_and_lengths_fail_bounded_decoding() {
+        for (bytes, length) in [
+            (b"invalid".as_slice(), PROTOCOL_DECODED_LEN),
+            (
+                &PROTOCOL_BYTES[..PROTOCOL_BYTES.len() / 2],
+                PROTOCOL_DECODED_LEN,
+            ),
+            (PROTOCOL_BYTES, 0),
+            (PROTOCOL_BYTES, MAX_ASSET_BYTES + 1),
+        ] {
+            assert!(decompress(bytes, length).is_err());
+        }
+    }
 
     #[test]
     fn all_embedded_responses_match_original_build_outputs() {

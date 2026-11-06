@@ -315,6 +315,10 @@ there is no production fallback to an unsandboxed process.
 
 ### UI assets
 
+Release builds use `opt-level="s"` for the desktop, app, session and CLI packages.
+Dependencies retain their normal optimization settings. ThinLTO, one codegen
+unit and full debug symbols remain enabled.
+
 Workspace builds on every platform require generated UI assets. Install Node.js
 24+ and generate them before invoking Cargo directly; CLI-only builds do not need
 this step. From the repository root:
@@ -329,10 +333,11 @@ npm --prefix apps/desktop/ui run check
 and builds the client bundle, styles, local Monaco workers, icon, and WebUI
 projection manifest, including on a clean checkout. Run it before invoking
 Cargo directly. Each UI build clears stale generated chunks. `transmog-app-webui`
-compiles `protocol.bin` and hashed CSS into Cargo's output directory and embeds
-the allowlisted resources with lossless Brotli compression. The custom protocol
-decodes and caches resources on first use; Tauri does not embed another copy of
-the UI build directory. The repository build
+compiles `protocol.bin` and hashed CSS into Cargo's output directory. The protocol
+and allowlisted resources are embedded with lossless Brotli compression. Renderer
+construction decodes and parses the protocol, then releases the temporary decoded
+bytes. Other resources are decoded and cached on first use; Tauri does not embed
+another copy of the UI build directory. The repository build
 task generates the assets before Cargo consumes them:
 
 ```powershell

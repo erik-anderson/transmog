@@ -148,3 +148,16 @@ lto = "thin"
 codegen-units = 1
 debug = 2
 strip = "none"
+
+# Reduce application code size while retaining normal dependency optimization.
+[profile.release.package.transmog-desktop]
+opt-level = "s"
+
+[profile.release.package.transmog-app]
+opt-level = "s"
+
+[profile.release.package.transmog-session]
+opt-level = "s"
+
+[profile.release.package.transmog]
+opt-level = "s"

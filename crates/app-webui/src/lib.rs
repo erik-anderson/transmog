@@ -122,13 +122,13 @@ pub struct AppRenderer {
 }
 
 impl AppRenderer {
-    /// Loads and validates the embedded protocol.
+    /// Decompresses and validates the embedded protocol.
     ///
     /// # Errors
     ///
     /// Returns [`UiError::InvalidProtocol`] if build output is malformed.
     pub fn new() -> Result<Self, UiError> {
-        let protocol = Protocol::from_protobuf(assets::protocol_bytes())
+        let protocol = Protocol::from_protobuf(&assets::protocol_bytes()?)
             .map_err(|error| UiError::InvalidProtocol(error.to_string()))?;
         Ok(Self {
             protocol: Arc::new(protocol),
