@@ -104,13 +104,16 @@ async function checkDragScrolling(page, viewer, screenshotPath) {
       await page.screenshot({ path: screenshotPath.replace(".png", `-drag-${column}.png`) });
 
       // Reverse without releasing, including movement outside the viewport.
-      const bottom = await grid.evaluate((element) => element.scrollTop);
+      const bottom = await viewer.evaluate((element) => ({
+        scrollTop: element.viewport.scrollTop,
+        end: Number(element.rangeEnd),
+      }));
       await page.mouse.move(x, bounds.y - 10);
-      await waitForScroll(bottom, -1);
+      await waitForScroll(bottom.scrollTop, -1);
       const reversed = await grid.evaluate((element) => element.scrollTop);
       await waitForScroll(reversed, -1);
       assert.ok(
-        (await viewer.evaluate((element) => Number(element.rangeEnd))) < selectedBefore,
+        (await viewer.evaluate((element) => Number(element.rangeEnd))) < bottom.end,
         "Dragging above the viewport did not shrink the anchored range",
       );
       await page.mouse.move(x, bounds.y + bounds.height / 2);
