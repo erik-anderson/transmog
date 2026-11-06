@@ -96,6 +96,10 @@ export async function checkNativeDebuggerWorkspace({
       "one-shot pause consumed",
     );
   }
+  assert.equal(
+    await surface.getByRole("combobox", { name: "Debugger worker", exact: true }).inputValue(),
+    await surface.evaluate((element) => element.debuggerTarget),
+  );
   const paused = proxyGet(listener, `${base}/workspace`);
   await wait(() => surface.evaluate((element) => element.debuggerPaused), "normal traffic pause");
   await surface.locator(".status").getByText("Paused in onRequestHead", { exact: true }).waitFor();
@@ -326,6 +330,11 @@ export async function checkNativeDebuggerWorkspace({
     "Array.from({length:150},(_,i)=>({i}))",
   );
   const dockButton = dock.getByRole("button", { name: "Dock", exact: true });
+  assert.equal(
+    await dock.getByRole("combobox", { name: "Debugger worker", exact: true }).inputValue(),
+    await dock.evaluate((element) => element.debuggerTarget),
+  );
+  const consoleVisible = await dock.locator(".console").isVisible();
   await dockButton.click();
   const dockMenu = dock.locator("#debugger-placement");
   const triggerBox = await dockButton.boundingBox();
@@ -340,8 +349,15 @@ export async function checkNativeDebuggerWorkspace({
     menuBox.x < triggerBox.x + triggerBox.width && menuBox.x + menuBox.width > triggerBox.x,
   );
   await page.screenshot({ path: resolve(output, "debugger-dock-menu-native.png") });
-  await dockButton.press("Escape");
+  await dockMenu.getByRole("button").first().focus();
+  await page.keyboard.down("Escape");
   await dockMenu.waitFor({ state: "hidden" });
+  await page.keyboard.down("Escape");
+  await page.keyboard.up("Escape");
+  assert.ok(
+    await dockButton.evaluate((element) => element.getRootNode().activeElement === element),
+  );
+  assert.equal(await dock.locator(".console").isVisible(), consoleVisible);
   await dock.getByRole("textbox", { name: "Immediate expression" }).press("ArrowDown");
   assert.equal(
     await dock.getByRole("textbox", { name: "Immediate expression" }).inputValue(),
@@ -521,6 +537,21 @@ export async function checkNativeDebuggerWorkspace({
   const growth = (await dock.boundingBox()).width - beforeDrag.width;
   assert.ok(growth >= 20 && growth <= 60, `Right dock follows horizontal dragging, grew ${growth}`);
   await outerDivider.press("Home");
+  for (let step = 0; step < 5; step++) await outerDivider.press("Shift+ArrowRight");
+  const minimum = await dock.boundingBox();
+  const limit = await outerDivider.boundingBox();
+  await page.screenshot({ path: resolve(output, "debugger-right-minimum-native.png") });
+  const limitX = limit.x + limit.width / 2,
+    limitY = limit.y + limit.height / 2;
+  await page.mouse.move(limitX, limitY);
+  await page.mouse.down();
+  await page.mouse.move(limitX - 30, limitY, { steps: 5 });
+  await page.mouse.up();
+  assert.ok(
+    (await dock.boundingBox()).width - minimum.width > 15,
+    "Dragging away from the minimum dock width responds immediately",
+  );
+  await outerDivider.press("Home");
   await dock.getByRole("button", { name: "Hide console (Escape)", exact: true }).click();
   await wait(
     async () => (await invoke("debugger_layout")).consoleVisible === false,
@@ -543,6 +574,9 @@ export async function checkNativeDebuggerWorkspace({
   await dock.evaluate((element) => element.toggleConsole());
   await dock.getByRole("button", { name: "Close debugger and continue execution" }).click();
   return {
+    resizeLimits: true,
+    workerSelection: true,
+    menuFocus: true,
     dockingPointerAxes: true,
     anchoredMenus: true,
     pauseNextRearmed: true,

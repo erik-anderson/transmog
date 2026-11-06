@@ -131,7 +131,7 @@
         </select></label
       >
       <span class="spacer"></span>
-      <button type="button" class="secondary view-trigger" popovertarget="debugger-view">View</button>
+      <button type="button" w-ref="{viewMenuButton}" class="secondary view-trigger" popovertarget="debugger-view">View</button>
       <div id="debugger-view" class="placement" popover="auto">
         <button type="button" @click="{openNavigation(false)}" popovertarget="debugger-view">
           Open source… <kbd>Ctrl+P</kbd>
@@ -154,7 +154,7 @@
           Console <kbd>Esc</kbd>
         </button>
       </div>
-      <button type="button" class="secondary dock-trigger" popovertarget="debugger-placement">Dock</button>
+      <button type="button" w-ref="{dockMenuButton}" class="secondary dock-trigger" popovertarget="debugger-placement">Dock</button>
       <span class="debug-tool"
         ><button
           type="button"
@@ -203,9 +203,9 @@
           value="{{debuggerTarget}}"
           @change="{targetChanged(e)}"
         >
-          <option value="">Select a worker</option>
+          <option value="" ?selected="{{!debuggerTarget}}">Select a worker</option>
           <for each="target in debuggerWorkerOptions"
-            ><option value="{{target.session}}">
+            ><option key="{{target.session}}" value="{{target.session}}" ?selected="{{target.session == debuggerTarget}}">
               {{target.mode}} · {{target.label}} · {{target.state}}
             </option></for
           >

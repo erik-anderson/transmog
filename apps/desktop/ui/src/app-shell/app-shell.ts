@@ -80,6 +80,16 @@ export class AppShell extends WebUIElement {
   resizeDebugger(event: CustomEvent<{ value: number }>): void {
     this.debuggerSplit = String(event.detail.value);
     this.debuggerShare = `${event.detail.value}%`;
+    this.$flushUpdates();
+    const bounds = this.workspaceContent.parentElement!.getBoundingClientRect();
+    const content = this.workspaceContent.getBoundingClientRect();
+    const extent = this.debuggerPlacement === "right" ? bounds.width : bounds.height;
+    const size = this.debuggerPlacement === "right" ? content.width : content.height;
+    if (extent > 0) {
+      const actual = Math.round((size / extent) * 100);
+      this.debuggerSplit = String(actual);
+      this.debuggerShare = `${actual}%`;
+    }
   }
   private async toggleDebugger(): Promise<void> {
     this.debuggerTogglePending = !this.debuggerTogglePending;

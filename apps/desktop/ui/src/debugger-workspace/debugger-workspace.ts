@@ -145,6 +145,8 @@ export class DebuggerWorkspace extends WebUIElement {
   @observable debuggerNavigationStatus = "";
   @observable debuggerNavigationResults: SourceResult[] = [];
   navigationDialog!: HTMLDialogElement;
+  dockMenuButton!: HTMLButtonElement;
+  viewMenuButton!: HTMLButtonElement;
   navigationInput!: HTMLInputElement;
   consolePrompt!: HTMLTextAreaElement;
   private navigationSearch = false;
@@ -2630,8 +2632,17 @@ export class DebuggerWorkspace extends WebUIElement {
     }
   }
   keyboard(event: KeyboardEvent): void {
-    if (event.key === "Escape" && this.shadowRoot?.querySelector(".placement:popover-open")) {
-      return;
+    if (event.key === "Escape" && !event.isComposing && !event.defaultPrevented) {
+      const menu = this.shadowRoot?.querySelector<HTMLElement>(".placement:popover-open");
+      if (event.repeat || menu) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (menu) {
+          menu.hidePopover();
+          (menu.id === "debugger-placement" ? this.dockMenuButton : this.viewMenuButton).focus();
+        }
+        return;
+      }
     }
     if (
       (event.key === "Escape" || event.key === "Enter") &&

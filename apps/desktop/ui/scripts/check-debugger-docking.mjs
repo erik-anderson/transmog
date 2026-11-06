@@ -2,8 +2,48 @@ import assert from "node:assert/strict";
 import { resolve } from "node:path";
 
 export async function checkDebuggerDocking(page, workspace, root) {
+  const requestSplit = await page.locator("traffic-workspace").evaluate((element) => {
+    const preferences = element.preferences;
+    const expanded = element.inspectorExpanded;
+    const expandedSplit = element.expandedRequestSplit;
+    try {
+      element.preferences = { ...preferences, requestSplit: 65 };
+      element.inspectorExpanded = false;
+      element.$flushUpdates();
+      const normal = element.querySelector(
+        'pane-divider[label="Resize request and response inspectors"]',
+      ).value;
+      element.expandedRequestSplit = 55;
+      element.inspectorExpanded = true;
+      element.$flushUpdates();
+      return [
+        normal,
+        element.querySelector('pane-divider[label="Resize request and response inspectors"]').value,
+      ];
+    } finally {
+      element.preferences = preferences;
+      element.inspectorExpanded = expanded;
+      element.expandedRequestSplit = expandedSplit;
+      element.$flushUpdates();
+    }
+  });
+  assert.deepEqual(
+    requestSplit,
+    ["65", "55"],
+    "The request/response divider must use the current normal or expanded split",
+  );
   const divider = page.getByRole("separator", { name: "Resize debugger", exact: true });
   const dock = workspace.getByRole("button", { name: "Dock", exact: true });
+  await page.waitForFunction(
+    () =>
+      document.querySelector("app-shell").shadowRoot.querySelector("debugger-workspace")
+        .debuggerWorkerOptions.length > 0,
+  );
+  assert.equal(
+    await workspace.getByRole("combobox", { name: "Debugger worker", exact: true }).inputValue(),
+    await workspace.evaluate((element) => element.debuggerTarget),
+    "Worker selector must show the active worker",
+  );
   const checkMenu = async (name, id) => {
     const consoleVisible = await workspace.locator(".console").isVisible();
     const button = workspace.getByRole("button", { name, exact: true });
@@ -24,8 +64,15 @@ export async function checkDebuggerDocking(page, workspace, root) {
         `../../../target/ui-check/debugger-${name.toLowerCase()}-anchored-${page.viewportSize().width}.png`,
       ),
     });
-    await button.press("Escape");
+    await menu.getByRole("button").first().focus();
+    await page.keyboard.down("Escape");
     await menu.waitFor({ state: "hidden" });
+    await page.keyboard.down("Escape");
+    await page.keyboard.up("Escape");
+    assert.ok(
+      await button.evaluate((element) => element.getRootNode().activeElement === element),
+      "Closing a menu restores focus to its trigger",
+    );
     assert.equal(
       await workspace.locator(".console").isVisible(),
       consoleVisible,
@@ -42,7 +89,7 @@ export async function checkDebuggerDocking(page, workspace, root) {
     await page.mouse.up();
   };
   for (const width of [1440, 800]) {
-    await page.setViewportSize({ width, height: 900 });
+    await page.setViewportSize({ width, height: width === 800 ? 600 : 900 });
     await dock.click();
     await workspace.getByRole("button", { name: "Dock to right", exact: true }).click();
     assert.equal(await divider.getAttribute("aria-orientation"), "vertical");
@@ -64,10 +111,33 @@ export async function checkDebuggerDocking(page, workspace, root) {
       `A right dock follows horizontal motion without jumping, grew ${growth}`,
     );
     await divider.press("Home");
+    const restored = await workspace.boundingBox();
+    const handle = await divider.boundingBox();
+    const x = handle.x + handle.width / 2,
+      y = handle.y + handle.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x - 30, y);
+    await divider.press("Escape");
+    await page.mouse.up();
+    assert.ok(
+      Math.abs((await workspace.boundingBox()).width - restored.width) < 2,
+      "Canceling a resize restores its original width",
+    );
     await checkMenu("Dock", "#debugger-placement");
     await checkMenu("View", "#debugger-view");
+    for (let step = 0; step < 5; step++) await divider.press("Shift+ArrowRight");
+    const edge = await workspace.boundingBox();
+    assert.ok(edge.x + edge.width <= width + 1, "Resizing must keep the debugger inside the app");
+    await drag(-40, 0);
+    const recovered = (await workspace.boundingBox()).width - edge.width;
+    assert.ok(
+      recovered > 15,
+      `Dragging away from the minimum dock width must respond immediately, grew ${recovered}`,
+    );
+    await divider.press("Home");
   }
-  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.setViewportSize({ width: 1440, height: 600 });
   await dock.click();
   await workspace.getByRole("button", { name: "Dock to bottom", exact: true }).click();
   assert.equal(await divider.getAttribute("aria-orientation"), "horizontal");
@@ -82,4 +152,14 @@ export async function checkDebuggerDocking(page, workspace, root) {
   await divider.press("Home");
   await checkMenu("Dock", "#debugger-placement");
   await checkMenu("View", "#debugger-view");
+  for (let step = 0; step < 5; step++) await divider.press("Shift+ArrowDown");
+  const edge = await workspace.boundingBox();
+  assert.ok(edge.y + edge.height <= 601, "Resizing must keep the bottom dock inside the app");
+  await drag(0, -35);
+  assert.ok(
+    (await workspace.boundingBox()).height - edge.height > 15,
+    "Dragging away from the minimum dock height must respond immediately",
+  );
+  await divider.press("Home");
+  await page.setViewportSize({ width: 1440, height: 900 });
 }

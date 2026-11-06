@@ -5,6 +5,7 @@ export class PaneDivider extends WebUIElement {
   @attr label = "Resize panels";
   @attr value = "45";
   @attr initial = "45";
+  @attr basis = "";
   private pointer: number | null = null;
   private previous = 45;
   private origin = 0;
@@ -15,7 +16,7 @@ export class PaneDivider extends WebUIElement {
     }
     event.preventDefault();
     this.pointer = event.pointerId;
-    this.previous = Number(this.value);
+    this.previous = this.currentValue();
     this.origin = this.orientation === "horizontal" ? event.clientY : event.clientX;
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
   }
@@ -35,7 +36,7 @@ export class PaneDivider extends WebUIElement {
       return;
     }
     this.pointer = null;
-    this.change(Number(this.value), true);
+    this.change(this.currentValue(), true);
   }
   cancelResize(event: PointerEvent): void {
     if (this.pointer !== event.pointerId) {
@@ -62,12 +63,24 @@ export class PaneDivider extends WebUIElement {
     this.change(
       event.key === "Home"
         ? Number(this.initial)
-        : Number(this.value) + (event.key === increase ? 1 : -1) * (event.shiftKey ? 10 : 2),
+        : this.currentValue() + (event.key === increase ? 1 : -1) * (event.shiftKey ? 10 : 2),
       true,
     );
   }
   reset(): void {
     this.change(Number(this.initial), true);
+  }
+  private currentValue(): number {
+    const pane = this.previousElementSibling;
+    const parent = this.parentElement;
+    if (this.basis !== "previous" || !(pane instanceof HTMLElement) || !parent) {
+      return Number(this.value);
+    }
+    const bounds = parent.getBoundingClientRect();
+    const previous = pane.getBoundingClientRect();
+    const extent = this.orientation === "horizontal" ? bounds.height : bounds.width;
+    const size = this.orientation === "horizontal" ? previous.height : previous.width;
+    return extent > 0 ? (size / extent) * 100 : Number(this.value);
   }
   private change(value: number, committed: boolean): void {
     this.value = String(Math.max(15, Math.min(85, Math.round(value))));
