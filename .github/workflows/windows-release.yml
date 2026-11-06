@@ -131,13 +131,14 @@ jobs:
         with:
           path: |
             .tools/downloads
+            .tools/rusty-v8
+            target/native-v8
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-            ~/.cargo/.rusty_v8
-          key: release-downloads-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'scripts/setup-windows-ci.ps1', 'scripts/cache-v8.py') }}-${{ hashFiles('Cargo.lock', 'fuzz/Cargo.lock') }}
+          key: release-downloads-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'scripts/setup-windows-ci.ps1', 'scripts/cache-v8.py', 'scripts/v8_native.py', 'third_party/rusty-v8/**') }}-${{ hashFiles('Cargo.lock', 'fuzz/Cargo.lock') }}
           restore-keys: |
-            release-downloads-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'scripts/setup-windows-ci.ps1', 'scripts/cache-v8.py') }}-
+            release-downloads-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'scripts/setup-windows-ci.ps1', 'scripts/cache-v8.py', 'scripts/v8_native.py', 'third_party/rusty-v8/**') }}-
       - name: Set up pinned native and Rust tools
         run: |
           rustup set default-host ${{ matrix.target }}

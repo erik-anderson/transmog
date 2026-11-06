@@ -612,6 +612,11 @@ The manifest requires `runtime: "javascript-es2022"`, independently of the packa
 and visualizer API versions. Executable entries and dependencies are `.js` or
 `.mjs` ES modules. ES2022 is the supported authoring baseline; newer syntax is not
 a compatibility promise. Transmog executes JavaScript without transpiling it.
+The worker uses the same [restricted JavaScript runtime](scripting.md#javascript-runtime)
+as traffic scripts: Sparkplug compilation with ICU-backed Unicode and `Intl`
+support, without `Temporal` or WebAssembly. Unicode normalization, property
+escapes, locale-sensitive casing/comparison, formatting and segmentation retain
+their standard behavior. Specify locales and time zones for repeatable output.
 Authors may use TypeScript, JavaScript with JSDoc, or another language that emits
 compatible JavaScript. Pin that compiler in the extension's own build, target
 ES2022 and emit ES modules before packaging. Compiler upgrades do not change

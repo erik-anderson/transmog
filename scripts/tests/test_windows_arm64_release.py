@@ -1,6 +1,4 @@
 """Exercise architecture selection and signed updater asset boundaries."""
-import hashlib
-import io
 import json
 import os
 from pathlib import Path
@@ -59,22 +57,13 @@ class WindowsArm64ReleaseTests(unittest.TestCase):
                         module.main()
                     self.assertEqual(signer.call_count, 1)
 
-    def test_v8_archives_are_verified_and_cached_separately(self):
+    def test_v8_preparation_builds_the_reviewed_profile_for_each_target(self):
         module = load("cache-v8")
-        for target in module.ARCHIVES:
-            with self.subTest(target=target), tempfile.TemporaryDirectory() as temporary:
-                payload = ("archive for " + target).encode()
-                argv = ["cache-v8", "--target", target]
-                with patch.object(sys, "argv", argv), patch.dict(os.environ, {"CARGO_HOME": temporary}), patch.dict(module.ARCHIVES, {target: hashlib.sha256(payload).hexdigest()}), patch.object(module, "urlopen", return_value=io.BytesIO(payload)) as download:
-                    module.main()
-                    self.assertIn(target + ".lib.gz", download.call_args.args[0])
-                    cached = list((Path(temporary) / ".rusty_v8").iterdir())
-                    self.assertEqual(len(cached), 1)
-                    self.assertEqual(cached[0].read_bytes(), payload)
-                    self.assertIn(target.replace("-", "_"), cached[0].name)
-                    cached[0].write_bytes(b"wrong architecture or changed bytes")
-                    with self.assertRaisesRegex(ValueError, "SHA-256 mismatch"):
-                        module.main()
+        for target in module.TARGETS:
+            with self.subTest(target=target), patch.object(sys, "argv", ["cache-v8", "--target", target]), \
+                 patch.object(module, "development_environment", return_value={}), patch.object(module, "command") as build:
+                module.main()
+                self.assertEqual(build.call_args.args[0], ["cargo", "build", "--release", "--locked", "-p", "transmog-js-runtime", "--target", target])
 
     def test_arm64_native_environment_uses_arm64_sdk_and_linker(self):
         with tempfile.TemporaryDirectory() as temporary:

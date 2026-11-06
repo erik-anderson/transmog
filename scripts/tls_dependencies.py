@@ -174,3 +174,5 @@ def preflight(cargo, arguments, cwd, environment):
             verify_stack(metadata, owner)
             from transport_dependencies import check_repository
             check_repository(owner, metadata)
+            from v8_dependencies import check_repository as check_v8
+            check_v8(owner, metadata)

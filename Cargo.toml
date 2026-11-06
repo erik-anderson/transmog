@@ -1,5 +1,5 @@
 [workspace]
-exclude = ["sdk", "third_party/rust-transport/vendor/h2", "third_party/rust-transport/vendor/hyper", "third_party/rust-transport/vendor/quiche", "third_party/swc-ecma-parser"]
+exclude = ["sdk", "third_party/rust-transport/vendor/h2", "third_party/rust-transport/vendor/hyper", "third_party/rust-transport/vendor/quiche", "third_party/swc-ecma-parser", "third_party/rusty-v8"]
 resolver = "2"
 members = [
     "crates/install-support",
@@ -121,6 +121,7 @@ zip = { version = "=9.0.4", default-features = false, features = ["deflate-flate
 zstd = { version = "=0.14.3", default-features = false }
 
 [patch.crates-io]
+v8 = { path = "third_party/rusty-v8" }
 swc_ecma_parser = { path = "third_party/swc-ecma-parser" }
 h2 = { path = "third_party/rust-transport/vendor/h2" }
 hyper = { path = "third_party/rust-transport/vendor/hyper" }

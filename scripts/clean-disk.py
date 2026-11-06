@@ -16,7 +16,7 @@ def main():
                         help="Use the default aggressive policy: keep one build variant, trim obsolete native outputs, and clear completed-run bulk data; keep reports, logs and screenshots.")
     parser.set_defaults(deep=True)
     parser.add_argument("--include-release", action="store_true",
-                        help="Also trim recognized release cache groups; preserve signed bundles and other outputs.")
+                        help="Also trim recognized release groups, shared V8 native outputs and older prepared sources; preserve current sources, installed tools and signed bundles.")
     args = parser.parse_args()
     report = clean_disk(ROOT, **vars(args))
     print(json.dumps(report, indent=2))

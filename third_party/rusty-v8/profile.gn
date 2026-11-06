@@ -1,0 +1,10 @@
+v8_enable_sparkplug = true
+v8_enable_turbofan = false
+v8_enable_maglev = false
+v8_enable_webassembly = false
+v8_enable_i18n_support = true
+v8_enable_temporal_support = false
+enable_rust = false
+enable_rust_cxx = false
+# Chromium's warning policy also covers the host's MSVC standard library.
+treat_warnings_as_errors = false

@@ -12,6 +12,11 @@ import sdk_tools
 from repo_tools import command
 
 
+class SelectionTests(unittest.TestCase):
+    def test_sdk_overrides_match_the_repository(self):
+        sdk_tools.verify_selections()
+
+
 class GeneratorEnvironmentTests(unittest.TestCase):
     @unittest.skipIf(os.name == "nt", "Linux compiler-private linkage")
     def test_llvm_linkage_and_runtime_paths_are_scoped_to_the_generator(self):

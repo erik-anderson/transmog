@@ -78,6 +78,15 @@ fingerprint or incremental/build directory protects that scope; a parent pin als
 protects nested caches. Pin release qualification caches while needed. There is
 no blanket cleanup of `.local`, `.tools` or unregistered `artifacts` directories.
 
+With `--include-release`, cleanup also finds shared V8 archives under registered
+`target/native-v8/<triple>/<key>` caches and verified prepared sources under
+`.tools/rusty-v8/sources`, including the older archive-named source folders.
+It retains the current prepared source and one native variant per target
+(three variants with `--conservative`, with a one-day age guard). Installed
+GN/Clang tools and download archives remain. Native preparation/build leases,
+Cargo locks, parent pins and pins inside a cache protect active or retained work.
+Unknown layouts and links are preserved.
+
 The JSON report explains decisions, incomplete dependency graphs, errors and
 estimated reclaimable bytes. Estimates exclude hardlinks retained outside each
 deletion plan and can undercount content released across profiles. Observed
@@ -186,8 +195,8 @@ LLVM lets Rust build scripts load its libclang DLL; native CMake lets BoringSSL
 select ARM64 assembly instead of x64 NASM objects. Setup verifies both tools'
 executable architecture. Ninja and NASM use verified portable tools through
 Windows emulation. `dev-env.py` selects the
-ARM64 linker, CRT and Windows SDK libraries. `cache-v8.py` selects the pinned
-archive for the native host, or accepts `--target` explicitly. To package ARM64,
+ARM64 linker, CRT and Windows SDK libraries. `cache-v8.py` builds the reviewed
+native profile for the host, or accepts `--target` explicitly. To package ARM64,
 run `package-windows.ps1 -Target aarch64-pc-windows-msvc` on an ARM64 build host;
 optimized outputs are under `target/aarch64-pc-windows-msvc/release`. The signed
 release workflow can bundle these prebuilt outputs on its protected x64 signer.
@@ -278,17 +287,25 @@ Desktop dependency versions are pinned in the [Cargo](../Cargo.lock) and
 [npm](../apps/desktop/ui/package-lock.json) lockfiles. See the
 [dependency map](dependencies.md) for their roles and ownership.
 
-The reviewed Windows V8 archive URL and SHA-256 are pinned in
-[`scripts/cache-v8.py`](../scripts/cache-v8.py). Prime Cargo's `.rusty_v8` cache
-before an offline build:
+The reviewed V8 registry source archive and native profile are pinned in
+[`third_party/rusty-v8`](../third_party/rusty-v8/README.md). The first native
+build downloads the pinned GN, Ninja and Chromium Clang tools. Prime the native
+cache before an offline build:
 
 ```powershell
 python scripts/cache-v8.py
-# Verify and cache an internally mirrored/downloaded copy:
-python scripts/cache-v8.py --archive-path C:\staging\rusty_v8.lib.gz
+# Only verify and stage the source, without compiling:
+python scripts/cache-v8.py --prepare-only
 ```
 
-The script rejects bytes that do not match the pinned hash.
+The build verifies the source archive, binding/profile snapshot and native patch.
+It builds Sparkplug without optimizing JIT tiers, WebAssembly or Temporal,
+retaining Inspector and ICU-backed Unicode/Intl support. The pinned ICU bundle
+excludes legacy charset-converter tables and unused NFKC Simple Casefold data;
+all other upstream resource bytes are preserved. Native outputs are shared across Rust
+debug/release builds in `target/native-v8` and honor `CARGO_TARGET_DIR`.
+Stock prebuilt V8 archives cannot provide this profile. The source and tool cache
+must already be available for an offline native rebuild.
 Release packaging builds `transmog-script-host` and the isolated
 `transmog-preview-worker` beside the desktop executable.
 The script-host executable also contains the extension runtime, launched in a

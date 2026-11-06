@@ -1,7 +1,7 @@
 # Convenience entry point for preparing the native Windows build cache.
-param([string]$ArchivePath, [ValidateSet('x86_64-pc-windows-msvc', 'aarch64-pc-windows-msvc')][string]$Target)
+param([switch]$PrepareOnly, [ValidateSet('x86_64-pc-windows-msvc', 'aarch64-pc-windows-msvc')][string]$Target)
 . (Join-Path $PSScriptRoot 'python-tools.ps1')
 $arguments = @()
-if ($ArchivePath) { $arguments += @('--archive-path', $ArchivePath) }
+if ($PrepareOnly) { $arguments += '--prepare-only' }
 if ($Target) { $arguments += @('--target', $Target) }
 Invoke-TransmogPython 'cache-v8.py' $arguments

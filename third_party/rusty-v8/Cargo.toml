@@ -1,0 +1,55 @@
+# Derived from the pinned registry crate; local changes are recorded in bindings.patch.
+[package]
+edition = "2024"
+name = "v8"
+version = "152.2.0"
+authors = ["the Deno authors"]
+build = "build.rs"
+publish = false
+
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Rust bindings to V8"
+readme = "README.md"
+license = "MIT AND BSD-3-Clause AND Unicode-3.0"
+repository = "https://github.com/denoland/rusty_v8"
+
+[features]
+default = ["use_custom_libcxx"]
+simdutf = []
+use_custom_libcxx = []
+v8_enable_pointer_compression = []
+v8_enable_sandbox = ["v8_enable_pointer_compression"]
+v8_enable_v8_checks = []
+
+[lib]
+name = "v8"
+path = "src/lib.rs"
+
+[dependencies.bitflags]
+version = "2.5"
+
+[dependencies.paste]
+version = "1.0"
+
+[build-dependencies.bindgen]
+version = "0.72"
+
+[build-dependencies.fslock]
+version = "0.2"
+
+[build-dependencies.gzip-header]
+version = "1.0.0"
+
+[build-dependencies.home]
+version = "0"
+
+[build-dependencies.miniz_oxide]
+version = "0.8.8"
+
+[build-dependencies.which]
+version = "6"
+

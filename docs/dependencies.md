@@ -131,6 +131,14 @@ synchronization; V8 remains confined to the worker runtime.
 configuration without depending on V8, so SDK consumers do not acquire an
 embedded engine. Both hosts retain their authenticated IPC and external process
 watchdogs; V8 heap limits supplement AppContainer and Job Object containment.
+The local `v8` binding fork builds its checksum-pinned native source archive with
+Sparkplug as its only JavaScript compiler. TurboFan, Maglev, WebAssembly and
+Temporal are omitted; Inspector and ICU-backed Unicode/Intl remain available.
+The ICU data filter removes only legacy charset converters and unused NFKC
+Simple Casefold data, retaining every other upstream resource byte.
+The reviewed profile and native adaptations are in `third_party/rusty-v8`.
+Rust dependencies used for ordinary URL/IDNA handling remain independent of
+V8's native ICU payload. See the [runtime contract](scripting.md#javascript-runtime).
 
 Monaco's desktop TypeScript diagnostics and native source validation have
 different roles: SWC does not perform full TypeScript type checking. The

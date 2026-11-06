@@ -52,13 +52,14 @@ jobs:
         with:
           path: |
             .tools/downloads
+            .tools/rusty-v8
+            target/native-v8
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-            ~/.cargo/.rusty_v8
-          key: windows-installer-downloads-v1-${{ hashFiles('scripts/setup-windows-ci.ps1', 'scripts/cache-v8.ps1', 'rust-toolchain.toml') }}-${{ hashFiles('Cargo.lock') }}
+          key: windows-installer-downloads-v2-${{ hashFiles('scripts/setup-windows-ci.ps1', 'scripts/cache-v8.py', 'scripts/v8_native.py', 'third_party/rusty-v8/**', 'rust-toolchain.toml') }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            windows-installer-downloads-v1-${{ hashFiles('scripts/setup-windows-ci.ps1', 'scripts/cache-v8.ps1', 'rust-toolchain.toml') }}-
+            windows-installer-downloads-v2-${{ hashFiles('scripts/setup-windows-ci.ps1', 'scripts/cache-v8.py', 'scripts/v8_native.py', 'third_party/rusty-v8/**', 'rust-toolchain.toml') }}-
 
       - name: Test and build the unsigned NSIS installer
         run: ./scripts/ci-windows-installer.ps1

@@ -28,11 +28,11 @@ const ERROR_BYTES: usize = 2048;
 pub fn initialize() {
     static INITIALIZE: Once = Once::new();
     INITIALIZE.call_once(|| {
-        // Retain the previous embedding's language features. Extension bootstrap
-        // still removes queueMicrotask; traffic scripts retain its native API.
+        // Temporal and WebAssembly are omitted by the native build.
+        // Extension bootstrap removes queueMicrotask; traffic scripts retain it.
         v8::V8::set_flags_from_string(concat!(
             "--disallow-code-generation-from-strings",
-            " --harmony-temporal --js-float16array --js-explicit-resource-management",
+            " --js-float16array --js-explicit-resource-management",
             " --js-source-phase-imports --js-defer-import-eval --enable-queue-microtask",
         ));
         let platform = v8::new_default_platform(4, false).make_shared();
@@ -538,11 +538,11 @@ mod tests {
                 runtime
                     .execute_string(
                         "test",
-                        "`${ready}:${typeof Temporal}:${typeof Float16Array}`",
+                        "`${ready}:${typeof Intl}:${typeof Temporal}:${typeof WebAssembly}:${typeof Float16Array}`",
                         100
                     )
                     .unwrap(),
-                "2:object:function"
+                "2:object:undefined:undefined:function"
             );
             runtime
                 .execute_script("test", "queueMicrotask(() => ready++);")
@@ -581,6 +581,83 @@ mod tests {
             error
                 .to_string()
                 .contains("file:///transmog-script/main.js:1:")
+        );
+    }
+
+    #[test]
+    fn omitted_globals_report_script_errors_without_poisoning_the_runtime() {
+        let mut runtime = runtime();
+        for source in ["Temporal.Now.instant()", "WebAssembly.compile()"] {
+            let error = runtime
+                .execute_string("unsupported", source, 100)
+                .unwrap_err();
+            assert_eq!(error.kind, ErrorKind::Exception);
+            assert!(error.message.contains("is not defined"));
+        }
+        assert_eq!(
+            runtime
+                .execute_string("supported", "String(6 * 7)", 20)
+                .unwrap(),
+            "42"
+        );
+    }
+
+    #[test]
+    fn unicode_normalization_and_regular_expressions_keep_their_standard_behavior() {
+        let mut runtime = runtime();
+        let result = runtime
+            .execute_string(
+                "unicode",
+                r"JSON.stringify([
+                    new Date('2026-01-02T03:04:05Z').getUTCFullYear(),
+                    'e\u0301'.normalize() === '\u00e9',
+                    '\u00e9'.normalize('NFD') === 'e\u0301',
+                    '\ufb03'.normalize('NFKC') === 'ffi',
+                    '\ufb03'.normalize('NFKD') === 'ffi',
+                    '\ud800e\u0301'.normalize() === '\ud800\u00e9',
+                    /\u{1f600}/u.test(String.fromCodePoint(0x1f600)),
+                    /^\p{Letter}+$/u.test('東京'),
+                    /^\p{Script=Greek}+$/u.test('Αθήνα'),
+                    /^\p{Number}+$/u.test('١٢٣'),
+                    /^\p{RGI_Emoji}$/v.test('👩🏽‍💻')
+                ])",
+                100,
+            )
+            .unwrap();
+        assert_eq!(
+            result,
+            "[2026,true,true,true,true,true,true,true,true,true,true]"
+        );
+    }
+
+    #[test]
+    fn international_operations_retain_locale_and_segmentation_data() {
+        let mut runtime = runtime();
+        let result = runtime
+            .execute_string(
+                "international",
+                r"JSON.stringify([
+                    'istanbul'.toLocaleUpperCase('tr') === 'İSTANBUL',
+                    'İ'.toLocaleLowerCase('tr') === 'i',
+                    'ä'.localeCompare('z', 'de') < 0,
+                    'ä'.localeCompare('z', 'sv') > 0,
+                    new Intl.NumberFormat('de-DE').format(1234.5) === '1.234,5',
+                    new Intl.NumberFormat('ar-EG', { numberingSystem: 'arab', useGrouping: false }).format(123) === '١٢٣',
+                    new Intl.DisplayNames(['fr'], { type: 'language' }).of('de') === 'allemand',
+                    new Intl.PluralRules('ru').select(2) === 'few',
+                    new Intl.Collator('en', { numeric: true }).compare('2', '10') < 0,
+                    new Intl.ListFormat('fr', { type: 'conjunction' }).format(['a', 'b']) === 'a et b',
+                    new Intl.RelativeTimeFormat('es', { numeric: 'auto' }).format(-1, 'day') === 'ayer',
+                    [...new Intl.Segmenter('th', { granularity: 'word' }).segment('ภาษาไทย')].map(part => part.segment).join('|') === 'ภาษา|ไทย',
+                    new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hourCycle: 'h23' }).format(new Date('2024-01-01T00:00:00Z')) === '19',
+                    new Intl.DateTimeFormat('en-US-u-ca-japanese', { year: 'numeric', timeZone: 'UTC' }).formatToParts(new Date('2024-03-01T00:00:00Z')).some(part => part.type === 'year' && part.value === '6')
+                ])",
+                1024,
+            )
+            .unwrap();
+        assert_eq!(
+            result,
+            "[true,true,true,true,true,true,true,true,true,true,true,true,true,true]"
         );
     }
 

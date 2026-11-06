@@ -570,7 +570,10 @@ async fn complete_scenario_uses_native_helpers_state_selection_and_timing() {
         const form=readForm(event.body,event.request.headers);
         return {...replaceForm([...form,['extra','yes']]),state:{...event.state,form}};
       }
-      export function onResponseBody(event) { return replaceJson(event.state); }
+      export function onResponseBody(event) {
+        const name=event.state.form.find(([key])=>key==='name')[1].normalize();
+        return replaceJson({...event.state,name,letters:/^\p{L}+$/u.test(name),localizedPrice:new Intl.NumberFormat('de-DE').format(1234.5)});
+      }
       export function onCompleted(event) {
         if(event.context.source !== 'sandbox' || event.context.elapsedMs !== 400 || event.context.nowUnixMs !== 1400) throw new Error('wrong context');
         return pass({diagnostics:['scenario complete']});
@@ -629,7 +632,7 @@ async fn complete_scenario_uses_native_helpers_state_selection_and_timing() {
                     redacted: false,
                 }],
             }),
-            request_body: b"x=one&x=two".to_vec(),
+            request_body: b"x=one&x=two&name=E%CC%81lodie".to_vec(),
             response_body: b"{}".to_vec(),
             local_response: false,
             failure: None,
@@ -641,7 +644,10 @@ async fn complete_scenario_uses_native_helpers_state_selection_and_timing() {
     .await
     .unwrap();
     assert_eq!(result.outcome, "completed");
-    assert_eq!(result.request_body, b"x=one&x=two&extra=yes");
+    assert_eq!(
+        result.request_body,
+        b"x=one&x=two&name=E%CC%81lodie&extra=yes"
+    );
     let output: serde_json::Value = serde_json::from_slice(&result.response_body).unwrap();
     assert_eq!(
         output["cookies"],
@@ -649,8 +655,11 @@ async fn complete_scenario_uses_native_helpers_state_selection_and_timing() {
     );
     assert_eq!(
         output["form"],
-        serde_json::json!([["x", "one"], ["x", "two"]])
+        serde_json::json!([["x", "one"], ["x", "two"], ["name", "E\u{301}lodie"]])
     );
+    assert_eq!(output["name"], "Élodie");
+    assert_eq!(output["letters"], true);
+    assert_eq!(output["localizedPrice"], "1.234,5");
     assert_eq!(
         result.steps[5].result.as_ref().unwrap().diagnostics,
         ["scenario complete"]

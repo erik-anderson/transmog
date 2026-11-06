@@ -1,0 +1,53 @@
+[
+  {
+    "name": "Strongtalk assembler",
+    "source": "https://raw.githubusercontent.com/denoland/v8/c4ca1eccb90c5464d826b7713dc27178a53b0cfe/LICENSE.strongtalk",
+    "sha256": "6a585a9f466654abc8fc0829d56b1bc987e3a073d31faa03bba37d33640a23cd"
+  },
+  {
+    "name": "fdlibm",
+    "source": "https://raw.githubusercontent.com/denoland/v8/c4ca1eccb90c5464d826b7713dc27178a53b0cfe/LICENSE.fdlibm",
+    "sha256": "e7115e18444dae09d17f361ddc365fb1d342640fe500796209c63f7c80dfae10"
+  },
+  {
+    "name": "Inspector protocol",
+    "source": "https://raw.githubusercontent.com/denoland/v8/c4ca1eccb90c5464d826b7713dc27178a53b0cfe/third_party/inspector_protocol/LICENSE",
+    "sha256": "450ebb9e9e50c2809d9ca581931fc8946d8d5aa0c8c35aae9ac471342fe4a88e"
+  },
+  {
+    "name": "Abseil",
+    "source": "https://chromium.googlesource.com/chromium/src/third_party/abseil-cpp/+/d16e32215c3ab90ba57c2e904a5344d85c7353e4/LICENSE?format=TEXT",
+    "sha256": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
+  },
+  {
+    "name": "Highway",
+    "source": "https://raw.githubusercontent.com/google/highway/2607d3b5b0113992fe84d3848859eae13b3b52c1/LICENSE",
+    "sha256": "e340270d4f64384569a91d546acb5b094d69ce47f0c015db77abb74dc6f815af"
+  },
+  {
+    "name": "simdutf",
+    "source": "https://chromium.googlesource.com/chromium/src/third_party/simdutf/+/f7356eed293f8208c40b3c1b344a50bd70971983/LICENSE?format=TEXT",
+    "sha256": "fc8dbc04e03ad4efc08a647ffe7f995b811a95bc04c0e85a56d5277c6593fa5f"
+  },
+  {
+    "name": "Dragonbox",
+    "source": "https://raw.githubusercontent.com/jk-jeon/dragonbox/beeeef91cf6fef89a4d4ba5e95d47ca64ccb3a44/LICENSE-Apache2-LLVM",
+    "sha256": "9e45e856bedccee9f67254082ca11851d954de2fed7448c4bed19ad9aab99a91"
+  },
+  {
+    "name": "fast_float",
+    "source": "https://raw.githubusercontent.com/fastfloat/fast_float/34164f547b7df3f5d794ff67e9f885c36819ebfc/LICENSE-MIT",
+    "sha256": "e562f3f974ced7e69dd1db77b820b36bcf8f30377f1aa105723fba449c53c4e6"
+  },
+  {
+    "name": "FP16",
+    "source": "https://raw.githubusercontent.com/Maratyszcza/FP16/782eea126dc5c755827be751a099eb01826175cf/LICENSE",
+    "sha256": "17e4f539024be2749ee729d1e2f01d24cef12ece8c9bf18e91a4349be29c80bf"
+  },
+  {
+    "name": "ICU",
+    "source": "https://chromium.googlesource.com/chromium/deps/icu/+/d578f2e8b7bd5938e21cfb6bf15c079e0aa5b738/LICENSE?format=TEXT",
+    "sha256": "e55522d81edc687a341a4411e0776e54ca654e90147f354a90458aaced4116af",
+    "license": "Unicode-3.0"
+  }
+]

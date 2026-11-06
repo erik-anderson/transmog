@@ -1,0 +1,3136 @@
+--- a/build.rs
++++ b/build.rs
+@@ -1,4 +1,5 @@
+ // Copyright 2018-2019 the Deno authors. All rights reserved. MIT license.
++#![allow(dead_code)] // Retain upstream artifact helpers to keep the fork small.
+ use fslock::LockFile;
+ use miniz_oxide::MZFlush;
+ use miniz_oxide::MZStatus;
+@@ -46,9 +47,58 @@
+ }
+ 
+ fn main() {
+-  println!("cargo:rerun-if-changed=.gn");
+-  println!("cargo:rerun-if-changed=BUILD.gn");
+-  println!("cargo:rerun-if-changed=src/binding.cc");
++  // Keep Rust bindings in this small vendor tree; prepare the verified native
++  // source archive in the repository tool cache before entering upstream GN.
++  let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
++  let repository = manifest.parent().unwrap().parent().unwrap();
++  // Keep native sources and outputs alive through preparation and compilation.
++  // Cleanup also holds Cargo's profile locks while rustc bundles the archive.
++  let cache = repository.join(".tools/rusty-v8");
++  fs::create_dir_all(&cache).unwrap();
++  let mut cache_lock = LockFile::open(&cache.join("cache.fslock")).unwrap();
++  cache_lock
++    .lock_with_pid()
++    .expect("Couldn't lock native V8 cache");
++  let prepare = repository.join("scripts/v8_native.py");
++  println!("cargo:rerun-if-changed={}", prepare.display());
++  println!(
++    "cargo:rerun-if-changed={}",
++    repository.join("scripts/v8_cache.py").display()
++  );
++  println!(
++    "cargo:rerun-if-changed={}",
++    repository.join("scripts/v8_bindgen.py").display()
++  );
++  println!(
++    "cargo:rerun-if-changed={}",
++    repository.join("scripts/icu_data.py").display()
++  );
++  println!("cargo:rerun-if-changed=source.json");
++  println!("cargo:rerun-if-changed=profile.gn");
++  println!("cargo:rerun-if-changed=native.patch");
++  println!("cargo:rerun-if-changed=transmog-snapshot.json");
++  let interpreter = env::var("TRANSMOG_PYTHON")
++    .expect("Run Cargo through python scripts/dev-env.py --run cargo ...");
++  let result = Command::new(&interpreter)
++    .env("PYTHONUTF8", "1")
++    .env("PYTHONIOENCODING", "utf-8")
++    .arg(&prepare)
++    .arg("--lock-held")
++    .output()
++    .unwrap();
++  assert!(
++    result.status.success(),
++    "V8 source preparation failed: {}",
++    String::from_utf8_lossy(&result.stderr)
++  );
++  let source = PathBuf::from(String::from_utf8(result.stdout).unwrap().trim());
++  env::set_current_dir(&source).unwrap();
++  unsafe {
++    env::set_var("PYTHON", &interpreter);
++  }
++  for input in [".gn", "BUILD.gn", "src/binding.cc"] {
++    println!("cargo:rerun-if-changed={}", source.join(input).display());
++  }
+ 
+   // These are all the environment variables that we check. This is
+   // probably more than what is needed, but missing an important
+@@ -63,6 +113,7 @@
+     "GN",
+     "GN_ARGS",
+     "HOST",
++    "INCLUDE",
+     "LIBCLANG_PATH",
+     "NINJA",
+     "OUT_DIR",
+@@ -80,6 +131,7 @@
+     "SCCACHE",
+     "V8_FORCE_DEBUG",
+     "V8_FROM_SOURCE",
++    "TRANSMOG_PYTHON",
+     "PYTHON",
+     "DISABLE_CLANG",
+     "EXTRA_GN_ARGS",
+@@ -125,10 +177,13 @@
+   // Cargo likes to run multiple build scripts at once sometimes.
+   // Nothing that follows is safe to run multiple times at once,
+   // because we store everything in a parent directory of OUT_DIR.
++  // Different native profiles still share host tool downloads. Keep their
++  // installation stable throughout compilation, then lock the target output.
++  let _tools_lock = acquire_tools_lock();
+   let _lockfile = acquire_lock();
+ 
+   // Build from source
+-  if env_bool("V8_FROM_SOURCE") {
++  {
+     if is_asan && env::var_os("OPT_LEVEL").unwrap_or_default() == "0" {
+       panic!(
+         "v8 crate cannot be compiled with OPT_LEVEL=0 and ASAN.\nTry `[profile.dev.package.v8] opt-level = 1`.\nAborting before miscompilations cause issues."
+@@ -145,26 +200,27 @@
+ 
+     return;
+   }
+-
+-  print_prebuilt_src_binding_path();
+-
+-  download_static_lib_binaries();
+ }
+ 
+ fn acquire_lock() -> LockFile {
+-  let root = env::current_dir().unwrap();
+-  let out_dir = env::var_os("OUT_DIR").unwrap();
+-  let lockfilepath = root
+-    .join(out_dir)
+-    .parent()
+-    .unwrap()
+-    .parent()
+-    .unwrap()
+-    .join("v8.fslock");
++  let output = get_dirs().out;
++  fs::create_dir_all(&output).unwrap();
++  let lockfilepath = output.join("v8.fslock");
+   let mut lockfile = LockFile::open(&lockfilepath)
+     .expect("Couldn't open lib download lockfile.");
+   lockfile.lock_with_pid().expect("Couldn't get lock");
+   println!("lockfile: {lockfilepath:?}");
++  lockfile
++}
++
++fn acquire_tools_lock() -> LockFile {
++  let tools = native_tools_dir();
++  fs::create_dir_all(&tools).unwrap();
++  let mut lockfile = LockFile::open(&tools.join("toolchain.fslock"))
++    .expect("Couldn't open native toolchain lockfile.");
++  lockfile
++    .lock_with_pid()
++    .expect("Couldn't lock native tools");
+   lockfile
+ }
+ 
+@@ -180,17 +236,34 @@
+     );
+   }
+ 
++  let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
++  let helper = manifest
++    .parent()
++    .unwrap()
++    .parent()
++    .unwrap()
++    .join("scripts/v8_bindgen.py");
+   let output = Command::new(python())
+-    .arg("./tools/get_bindgen_args.py")
++    .env("PYTHONUTF8", "1")
++    .env("PYTHONIOENCODING", "utf-8")
++    .arg(helper)
+     .arg("--gn-out")
+     .arg(build_dir().join("gn_out"))
++    .arg("--source-root")
++    .arg(env::current_dir().unwrap())
+     .output()
+     .unwrap();
++  assert!(
++    output.status.success(),
++    "Native bindgen arguments failed: {}",
++    String::from_utf8_lossy(&output.stderr)
++  );
+   let args = String::from_utf8(output.stdout).unwrap();
+   let args = args.split('\0').collect::<Vec<_>>();
+ 
+-  // Filter out V8's custom libc++ and module args from GN, we'll add them back
+-  // manually with correct ordering for bindgen
++  // Bindgen cannot use Clang modules. Order custom libc++ headers explicitly
++  // only when that library is also selected for the native adapter.
++  let custom_libcxx = env::var_os("CARGO_FEATURE_USE_CUSTOM_LIBCXX").is_some();
+   let filtered_args: Vec<&str> = args
+     .iter()
+     .filter(|arg| {
+@@ -198,27 +271,32 @@
+         && !arg.starts_with("-fno-implicit-module")
+         && !arg.starts_with("-Xclang")
+         && !arg.contains("DUSE_LIBCXX_MODULES")
+-        && !arg.contains("-nostdinc++")
+-        && !arg.contains("-isystem")
+-        && !arg.contains("libc++")
++        && (!custom_libcxx
++          || (!arg.contains("-nostdinc++")
++            && !arg.contains("-isystem")
++            && !arg.contains("libc++")))
+     })
+     .copied()
+     .collect();
+ 
+-  // Use V8's custom libc++ headers (requires Clang 21.1+ libclang via
+-  // LIBCLANG_PATH)
+-  // IMPORTANT: libc++ headers must come before clang builtins
++  // Custom libc++ headers must come before Clang builtins. Other builds use
++  // the native toolchain's standard library and settings from project.json.
+   let mut clang_args = vec![
+     "-x".to_string(),
+     "c++".to_string(),
+     "-std=c++20".to_string(),
+-    "-nostdinc++".to_string(),
+     "-Iv8/include".to_string(),
+     "-I.".to_string(),
+-    "-isystembuildtools/third_party/libc++".to_string(),
+-    "-isystemthird_party/libc++/src/include".to_string(),
+-    "-isystemthird_party/libc++abi/src/include".to_string(),
+   ];
++  clang_args.push(format!("--target={}", env::var("TARGET").unwrap()));
++  if custom_libcxx {
++    clang_args.extend([
++      "-nostdinc++".to_string(),
++      "-isystembuildtools/third_party/libc++".to_string(),
++      "-isystemthird_party/libc++/src/include".to_string(),
++      "-isystemthird_party/libc++abi/src/include".to_string(),
++    ]);
++  }
+ 
+   let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
+   if target_os == "macos" {
+@@ -330,7 +408,10 @@
+     .generate()
+     .expect("Unable to generate bindings");
+ 
+-  let out_path = build_dir().join("gn_out").join("src_binding.rs");
++  // Rust may read this after the native lock is released. Each Cargo build
++  // owns its bindings so another Rust profile cannot truncate that input.
++  let out_path =
++    PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("src_binding.rs");
+   println!(
+     "cargo:rustc-env=RUSTY_V8_SRC_BINDING_PATH={}",
+     out_path.display()
+@@ -387,7 +468,7 @@
+     download_ninja_gn_binaries();
+   }
+ 
+-  download_rust_toolchain();
++  // Temporal is absent, so the native graph contains no Rust/CXX targets.
+ 
+   // `#[cfg(...)]` attributes don't work as expected from build.rs -- they refer to the configuration
+   // of the host system which the build.rs script will be running on. In short, `cfg!(target_<os/arch>)`
+@@ -402,6 +483,13 @@
+   } else {
+     vec!["is_debug=false".to_string()]
+   };
++  if target_os == "windows" {
++    let crt_static = env::var("CARGO_CFG_TARGET_FEATURE")
++      .unwrap_or_default()
++      .split(',')
++      .any(|feature| feature == "crt-static");
++    gn_args.push(format!("transmog_use_static_crt={crt_static}"));
++  }
+   if is_asan {
+     gn_args.push("is_asan=true".to_string());
+   }
+@@ -480,8 +568,8 @@
+     println!("cargo:warning=Not using sccache or ccache");
+   }
+ 
+-  // Forward caller-provided GN args verbatim.
+-  let gn_args_env = env::var("GN_ARGS").unwrap_or_default();
++  // Apply the reviewed product profile rather than caller-provided GN args.
++  let gn_args_env = include_str!("profile.gn").to_owned();
+   if !gn_args_env.trim().is_empty() {
+     gn_args.push(gn_args_env.clone());
+   }
+@@ -717,7 +805,7 @@
+ }
+ 
+ fn download_ninja_gn_binaries() {
+-  let target_dir = build_dir().join("ninja_gn_binaries");
++  let target_dir = native_tools_dir().join("ninja_gn_binaries");
+ 
+   let gn = target_dir.join("gn").join("gn");
+   let ninja = target_dir.join("ninja").join("ninja");
+@@ -966,24 +1054,7 @@
+ }
+ 
+ fn build_dir() -> PathBuf {
+-  let cwd = env::current_dir().unwrap();
+-
+-  // target/debug//build/rusty_v8-d9e5a424d4f96994/out/
+-  let out_dir = env::var_os("OUT_DIR").expect(
+-    "The 'OUT_DIR' environment is not set (it should be something like \
+-     'target/debug/rusty_v8-{hash}').",
+-  );
+-  let out_dir_abs = cwd.join(out_dir);
+-
+-  // This would be `target/debug` or `target/release`
+-  out_dir_abs
+-    .parent()
+-    .unwrap()
+-    .parent()
+-    .unwrap()
+-    .parent()
+-    .unwrap()
+-    .to_path_buf()
++  get_dirs().out
+ }
+ 
+ fn replace_non_alphanumeric(url: &str) -> String {
+@@ -1114,7 +1185,6 @@
+ 
+ /// One-shot [`Sha256`] over an in-memory slice; only the tests need it, the
+ /// build itself hashes files via [`sha256_hex_of_file`].
+-#[cfg(test)]
+ fn sha256_hex(data: &[u8]) -> String {
+   let mut hasher = Sha256::new();
+   hasher.update(data);
+@@ -1871,7 +1941,7 @@
+ // Download chromium's clang into OUT_DIR because Cargo will not allow us to
+ // modify the source directory.
+ fn clang_download() -> PathBuf {
+-  let clang_base_path = build_dir().join("clang");
++  let clang_base_path = native_tools_dir().join("clang");
+   println!("clang_base_path (downloaded) {}", clang_base_path.display());
+   assert!(
+     Command::new(python())
+@@ -1911,34 +1981,60 @@
+   clang_base_path
+ }
+ 
+-fn cc_wrapper(gn_args: &mut Vec<String>, sccache_path: &Path) {
+-  gn_args.push(format!("cc_wrapper={sccache_path:?}"));
+-}
+-
+-struct Dirs {
+-  pub out: PathBuf,
+-  pub root: PathBuf,
+-}
+-
+-fn get_dirs() -> Dirs {
+-  // The OUT_DIR is going to be a crate-specific directory like
+-  // "target/debug/build/cargo_gn_example-eee5160084460b2c"
+-  // But we want to share the GN build amongst all crates
+-  // and return the path "target/debug". So to find it, we walk up three
+-  // directories.
+-  // TODO(ry) This is quite brittle - if Cargo changes the directory structure
+-  // this could break.
+-  let out = env::var("OUT_DIR").map(PathBuf::from).unwrap();
+-  let out = out
++fn native_tools_dir() -> PathBuf {
++  let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
++  manifest
+     .parent()
+     .unwrap()
+     .parent()
+     .unwrap()
+-    .parent()
+-    .unwrap()
+-    .to_owned();
+-
+-  let root = env::var("CARGO_MANIFEST_DIR").map(PathBuf::from).unwrap();
++    .join(".tools/rusty-v8/tools")
++    .join(env::var("HOST").unwrap())
++}
++
++fn cc_wrapper(gn_args: &mut Vec<String>, sccache_path: &Path) {
++  gn_args.push(format!("cc_wrapper={sccache_path:?}"));
++}
++
++struct Dirs {
++  pub out: PathBuf,
++  pub root: PathBuf,
++}
++
++fn get_dirs() -> Dirs {
++  // Share production native artifacts across Rust profiles, with distinct
++  // outputs for the reviewed source/profile, target, features and Rust ABI.
++  let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
++  let repository = manifest.parent().unwrap().parent().unwrap();
++  let target_root = PathBuf::from(
++    env::var_os("CARGO_TARGET_DIR")
++      .unwrap_or_else(|| repository.join("target").into_os_string()),
++  );
++  let mut identity = concat!(
++    include_str!("profile.gn"),
++    include_str!("source.json"),
++    include_str!("native.patch")
++  )
++  .to_owned();
++  for key in [
++    "CARGO_FEATURE_USE_CUSTOM_LIBCXX",
++    "CARGO_FEATURE_V8_ENABLE_SANDBOX",
++    "CARGO_FEATURE_V8_ENABLE_POINTER_COMPRESSION",
++    "CARGO_FEATURE_V8_ENABLE_V8_CHECKS",
++    "CARGO_ENCODED_RUSTFLAGS",
++    "CARGO_CFG_TARGET_FEATURE",
++  ] {
++    identity.push_str(&env::var(key).unwrap_or_default());
++    identity.push('\n');
++  }
++  let key = sha256_hex(identity.as_bytes());
++  let out = repository
++    .join(target_root)
++    .join("native-v8")
++    .join(env::var("TARGET").unwrap())
++    .join(&key[..16]);
++
++  let root = env::current_dir().unwrap();
+   let mut dirs = Dirs { out, root };
+   maybe_symlink_root_dir(&mut dirs);
+   dirs
+@@ -2009,16 +2105,8 @@
+ }
+ 
+ pub fn is_debug() -> bool {
+-  // Cargo sets PROFILE to either "debug" or "release", which conveniently
+-  // matches the build modes we support.
+-  let m = env::var("PROFILE").unwrap();
+-  if m == "release" {
+-    false
+-  } else if m == "debug" {
+-    true
+-  } else {
+-    panic!("unhandled PROFILE value {m}")
+-  }
++  // Exercise the production native engine in Rust debug/test builds as well.
++  false
+ }
+ 
+ fn gn() -> String {
+@@ -2058,11 +2146,11 @@
+   let dirs = get_dirs();
+   let gn_out_dir = dirs.out.join("gn_out");
+ 
+-  let mut args = gn_args.join(" ");
+-  if let Ok(extra_args) = env::var("EXTRA_GN_ARGS") {
+-    args.push(' ');
+-    args.push_str(&extra_args);
+-  }
++  let args = gn_args.join(" ");
++  assert!(
++    env::var("EXTRA_GN_ARGS").unwrap_or_default().is_empty(),
++    "EXTRA_GN_ARGS cannot override Transmog's native V8 profile"
++  );
+ 
+   let path = env::current_dir().unwrap();
+   println!("The current directory is {}", path.display());
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -1,102 +1,12 @@
+-# THIS FILE IS AUTOMATICALLY GENERATED BY CARGO
+-#
+-# When uploading crates to the registry Cargo will automatically
+-# "normalize" Cargo.toml files for maximal compatibility
+-# with all versions of Cargo and also rewrite `path` dependencies
+-# to registry (e.g., crates.io) dependencies.
+-#
+-# If you are reading this file be aware that the original Cargo.toml
+-# will likely look very different (and much more reasonable).
+-# See Cargo.toml.orig for the original contents.
+-
++# Derived from the pinned registry crate; local changes are recorded in bindings.patch.
+ [package]
+ edition = "2024"
+ name = "v8"
+ version = "152.2.0"
+ authors = ["the Deno authors"]
+ build = "build.rs"
+-exclude = [
+-    "*.css",
+-    "*.gyp",
+-    "*.gypi",
+-    "*.html",
+-    "*.m4",
+-    "*.md",
+-    "*.settings",
+-    "*.txt",
+-    "*OWNERS*",
+-    ".*",
+-    "AUTHORS",
+-    "Doxyfile*",
+-    "LICENSE*",
+-    "Makefile*",
+-    "README*",
+-    "build/android/",
+-    "build/chromeos/",
+-    "build/fuchsia/",
+-    "buildtools/checkdeps/",
+-    "buildtools/clang_format/",
+-    "third_party/dragonbox/src/cmake/",
+-    "third_party/dragonbox/src/other_files/",
+-    "third_party/dragonbox/src/subproject/",
+-    "third_party/libc++/src/benchmarks/",
+-    "third_party/libc++/src/docs/",
+-    "third_party/libc++/src/lib/",
+-    "third_party/libc++/src/test/",
+-    "third_party/libc++/src/utils/",
+-    "third_party/libc++/src/www/",
+-    "third_party/libc++abi/src/test/",
+-    "third_party/llvm-libc/src/benchmarks/",
+-    "third_party/llvm-libc/src/docs/",
+-    "third_party/llvm-libc/src/fuzzing/",
+-    "third_party/llvm-libc/src/test/",
+-    "third_party/llvm-libc/src/utils/docgen",
+-    "third_party/icu/android/",
+-    "third_party/icu/android_small/",
+-    "third_party/icu/cast/",
+-    "third_party/icu/chromeos/",
+-    "third_party/icu/common/icudtl.dat",
+-    "third_party/icu/common/icudtb.dat",
+-    "third_party/icu/flutter/",
+-    "third_party/icu/ios/",
+-    "third_party/icu/patches/",
+-    "third_party/icu/source/config/",
+-    "third_party/icu/source/data/",
+-    "third_party/icu/source/extra/",
+-    "third_party/icu/source/io/",
+-    "third_party/icu/source/python/",
+-    "third_party/icu/source/samples/",
+-    "third_party/icu/source/test/",
+-    "third_party/icu/source/tools/",
+-    "third_party/icu/tzres/",
+-    "third_party/abseil-cpp/*.def",
+-    "third_party/abseil-cpp/absl/time/internal/cctz/testdata",
+-    "third_party/highway/src/hwy/tests",
+-    "third_party/highway/src/docs",
+-    "third_party/highway/src/g3doc",
+-    "third_party/fp16/src/test",
+-    "third_party/fast_float/src/tests",
+-    "tools/clang",
+-    "tools/win",
+-    "v8/ChangeLog",
+-    "v8/benchmarks/",
+-    "v8/docs/",
+-    "v8/samples/",
+-    "v8/test/",
+-    "v8/tools/",
+-    "!.gn",
+-    "!BUILD.gn",
+-    "!build/rust/known-target-triples.txt",
+-    "!tools/clang/scripts/update.py",
+-    "!tools/win/DebugVisualizers",
+-    "!v8/test/torque/test-torque.tq",
+-    "!v8/tools/gen-postmortem-metadata.py",
+-    "!v8/tools/gen-v8-gn.py",
+-    "!v8/tools/js2c.py",
+-    "!v8/tools/run.py",
+-    "!v8/tools/snapshot/asm_to_inline_asm.py",
+-    "!v8/tools/testrunner/utils/dump_build_config.py",
+-]
++publish = false
++
+ autolib = false
+ autobins = false
+ autoexamples = false
+@@ -104,7 +14,7 @@
+ autobenches = false
+ description = "Rust bindings to V8"
+ readme = "README.md"
+-license = "MIT"
++license = "MIT AND BSD-3-Clause AND Unicode-3.0"
+ repository = "https://github.com/denoland/rusty_v8"
+ 
+ [features]
+@@ -119,148 +29,11 @@
+ name = "v8"
+ path = "src/lib.rs"
+ 
+-[[example]]
+-name = "cppgc"
+-path = "examples/cppgc.rs"
+-
+-[[example]]
+-name = "cppgc-object"
+-path = "examples/cppgc-object.rs"
+-
+-[[example]]
+-name = "hello_world"
+-path = "examples/hello_world.rs"
+-
+-[[example]]
+-name = "ios_jitless"
+-path = "examples/ios_jitless.rs"
+-
+-[[example]]
+-name = "process"
+-path = "examples/process.rs"
+-
+-[[example]]
+-name = "shell"
+-path = "examples/shell.rs"
+-
+-[[test]]
+-name = "build"
+-path = "build.rs"
+-
+-[[test]]
+-name = "slots"
+-path = "tests/slots.rs"
+-
+-[[test]]
+-name = "test_api"
+-path = "tests/test_api.rs"
+-
+-[[test]]
+-name = "test_api_entropy_source"
+-path = "tests/test_api_entropy_source.rs"
+-
+-[[test]]
+-name = "test_api_flags"
+-path = "tests/test_api_flags.rs"
+-
+-[[test]]
+-name = "test_concurrent_isolate_creation_and_disposal"
+-path = "tests/test_concurrent_isolate_creation_and_disposal.rs"
+-
+-[[test]]
+-name = "test_cppgc"
+-path = "tests/test_cppgc.rs"
+-
+-[[test]]
+-name = "test_custom_platform"
+-path = "tests/test_custom_platform.rs"
+-
+-[[test]]
+-name = "test_external_deserialize"
+-path = "tests/test_external_deserialize.rs"
+-
+-[[test]]
+-name = "test_platform_atomics_pump_message_loop"
+-path = "tests/test_platform_atomics_pump_message_loop.rs"
+-
+-[[test]]
+-name = "test_shared_isolate_conversion_error_drop"
+-path = "tests/test_shared_isolate_conversion_error_drop.rs"
+-
+-[[test]]
+-name = "test_shared_isolate_leaked_locker"
+-path = "tests/test_shared_isolate_leaked_locker.rs"
+-
+-[[test]]
+-name = "test_simdutf"
+-path = "tests/test_simdutf.rs"
+-
+-[[test]]
+-name = "test_simple_external"
+-path = "tests/test_simple_external.rs"
+-
+-[[test]]
+-name = "test_single_threaded_default_platform"
+-path = "tests/test_single_threaded_default_platform.rs"
+-
+-[[test]]
+-name = "test_ui"
+-path = "tests/test_ui.rs"
+-
+-[[bench]]
+-name = "function"
+-path = "benches/function.rs"
+-harness = false
+-
+-[[bench]]
+-name = "string_encode"
+-path = "benches/string_encode.rs"
+-harness = false
+-
+-[[bench]]
+-name = "string_read"
+-path = "benches/string_read.rs"
+-harness = false
+-
+ [dependencies.bitflags]
+ version = "2.5"
+ 
+ [dependencies.paste]
+ version = "1.0"
+-
+-[dependencies.temporal_capi]
+-version = "0.2.3"
+-features = ["zoneinfo64"]
+-
+-[dev-dependencies.align-data]
+-version = "0.1.0"
+-
+-[dev-dependencies.bindgen]
+-version = "0.72"
+-
+-[dev-dependencies.bytes]
+-version = "1"
+-
+-[dev-dependencies.fslock]
+-version = "0.2"
+-
+-[dev-dependencies.gzip-header]
+-version = "1.0.0"
+-
+-[dev-dependencies.home]
+-version = "0"
+-
+-[dev-dependencies.miniz_oxide]
+-version = "0.8.8"
+-
+-[dev-dependencies.rustversion]
+-version = "1"
+-
+-[dev-dependencies.trybuild]
+-version = "1.0.96"
+-
+-[dev-dependencies.which]
+-version = "6"
+ 
+ [build-dependencies.bindgen]
+ version = "0.72"
+@@ -280,5 +53,3 @@
+ [build-dependencies.which]
+ version = "6"
+ 
+-[profile.dev]
+-opt-level = 1
+--- /dev/null
++++ b/LICENSE
+@@ -0,0 +1,21 @@
++MIT License
++
++Copyright (c) 2018-2019 the Deno authors
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
+--- /dev/null
++++ b/LICENSE-ICU
+@@ -0,0 +1,568 @@
++UNICODE LICENSE V3
++
++COPYRIGHT AND PERMISSION NOTICE
++
++Copyright © 2016-2025 Unicode, Inc.
++
++NOTICE TO USER: Carefully read the following legal agreement. BY
++DOWNLOADING, INSTALLING, COPYING OR OTHERWISE USING DATA FILES, AND/OR
++SOFTWARE, YOU UNEQUIVOCALLY ACCEPT, AND AGREE TO BE BOUND BY, ALL OF THE
++TERMS AND CONDITIONS OF THIS AGREEMENT. IF YOU DO NOT AGREE, DO NOT
++DOWNLOAD, INSTALL, COPY, DISTRIBUTE OR USE THE DATA FILES OR SOFTWARE.
++
++Permission is hereby granted, free of charge, to any person obtaining a
++copy of data files and any associated documentation (the "Data Files") or
++software and any associated documentation (the "Software") to deal in the
++Data Files or Software without restriction, including without limitation
++the rights to use, copy, modify, merge, publish, distribute, and/or sell
++copies of the Data Files or Software, and to permit persons to whom the
++Data Files or Software are furnished to do so, provided that either (a)
++this copyright and permission notice appear with all copies of the Data
++Files or Software, or (b) this copyright and permission notice appear in
++associated Documentation.
++
++THE DATA FILES AND SOFTWARE ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY
++KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF
++THIRD PARTY RIGHTS.
++
++IN NO EVENT SHALL THE COPYRIGHT HOLDER OR HOLDERS INCLUDED IN THIS NOTICE
++BE LIABLE FOR ANY CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL DAMAGES,
++OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS,
++WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION,
++ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THE DATA
++FILES OR SOFTWARE.
++
++Except as contained in this notice, the name of a copyright holder shall
++not be used in advertising or otherwise to promote the sale, use or other
++dealings in these Data Files or Software without prior written
++authorization of the copyright holder.
++
++SPDX-License-Identifier: Unicode-3.0
++
++----------------------------------------------------------------------
++
++Third-Party Software Licenses
++
++This section contains third-party software notices and/or additional
++terms for licensed third-party software components included within ICU
++libraries.
++
++----------------------------------------------------------------------
++
++ICU License - ICU 1.8.1 to ICU 57.1
++
++COPYRIGHT AND PERMISSION NOTICE
++
++Copyright (c) 1995-2016 International Business Machines Corporation and others
++All rights reserved.
++
++Permission is hereby granted, free of charge, to any person obtaining
++a copy of this software and associated documentation files (the
++"Software"), to deal in the Software without restriction, including
++without limitation the rights to use, copy, modify, merge, publish,
++distribute, and/or sell copies of the Software, and to permit persons
++to whom the Software is furnished to do so, provided that the above
++copyright notice(s) and this permission notice appear in all copies of
++the Software and that both the above copyright notice(s) and this
++permission notice appear in supporting documentation.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
++EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT
++OF THIRD PARTY RIGHTS. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
++HOLDERS INCLUDED IN THIS NOTICE BE LIABLE FOR ANY CLAIM, OR ANY
++SPECIAL INDIRECT OR CONSEQUENTIAL DAMAGES, OR ANY DAMAGES WHATSOEVER
++RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF
++CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN
++CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
++
++Except as contained in this notice, the name of a copyright holder
++shall not be used in advertising or otherwise to promote the sale, use
++or other dealings in this Software without prior written authorization
++of the copyright holder.
++
++All trademarks and registered trademarks mentioned herein are the
++property of their respective owners.
++
++----------------------------------------------------------------------
++
++Chinese/Japanese Word Break Dictionary Data (cjdict.txt)
++
++ #     The Google Chrome software developed by Google is licensed under
++ # the BSD license. Other software included in this distribution is
++ # provided under other licenses, as set forth below.
++ #
++ #  The BSD License
++ #  http://opensource.org/licenses/bsd-license.php
++ #  Copyright (C) 2006-2008, Google Inc.
++ #
++ #  All rights reserved.
++ #
++ #  Redistribution and use in source and binary forms, with or without
++ # modification, are permitted provided that the following conditions are met:
++ #
++ #  Redistributions of source code must retain the above copyright notice,
++ # this list of conditions and the following disclaimer.
++ #  Redistributions in binary form must reproduce the above
++ # copyright notice, this list of conditions and the following
++ # disclaimer in the documentation and/or other materials provided with
++ # the distribution.
++ #  Neither the name of  Google Inc. nor the names of its
++ # contributors may be used to endorse or promote products derived from
++ # this software without specific prior written permission.
++ #
++ #
++ #  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
++ # CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES,
++ # INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
++ # MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
++ # DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
++ # LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ # CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ # SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
++ # BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++ # LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++ # NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++ # SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++ #
++ #
++ #  The word list in cjdict.txt are generated by combining three word lists
++ # listed below with further processing for compound word breaking. The
++ # frequency is generated with an iterative training against Google web
++ # corpora.
++ #
++ #  * Libtabe (Chinese)
++ #    - https://sourceforge.net/project/?group_id=1519
++ #    - Its license terms and conditions are shown below.
++ #
++ #  * IPADIC (Japanese)
++ #    - http://chasen.aist-nara.ac.jp/chasen/distribution.html
++ #    - Its license terms and conditions are shown below.
++ #
++ #  ---------COPYING.libtabe ---- BEGIN--------------------
++ #
++ #  /*
++ #   * Copyright (c) 1999 TaBE Project.
++ #   * Copyright (c) 1999 Pai-Hsiang Hsiao.
++ #   * All rights reserved.
++ #   *
++ #   * Redistribution and use in source and binary forms, with or without
++ #   * modification, are permitted provided that the following conditions
++ #   * are met:
++ #   *
++ #   * . Redistributions of source code must retain the above copyright
++ #   *   notice, this list of conditions and the following disclaimer.
++ #   * . Redistributions in binary form must reproduce the above copyright
++ #   *   notice, this list of conditions and the following disclaimer in
++ #   *   the documentation and/or other materials provided with the
++ #   *   distribution.
++ #   * . Neither the name of the TaBE Project nor the names of its
++ #   *   contributors may be used to endorse or promote products derived
++ #   *   from this software without specific prior written permission.
++ #   *
++ #   * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ #   * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ #   * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
++ #   * FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
++ #   * REGENTS OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
++ #   * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
++ #   * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
++ #   * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
++ #   * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
++ #   * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ #   * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
++ #   * OF THE POSSIBILITY OF SUCH DAMAGE.
++ #   */
++ #
++ #  /*
++ #   * Copyright (c) 1999 Computer Systems and Communication Lab,
++ #   *                    Institute of Information Science, Academia
++ #       *                    Sinica. All rights reserved.
++ #   *
++ #   * Redistribution and use in source and binary forms, with or without
++ #   * modification, are permitted provided that the following conditions
++ #   * are met:
++ #   *
++ #   * . Redistributions of source code must retain the above copyright
++ #   *   notice, this list of conditions and the following disclaimer.
++ #   * . Redistributions in binary form must reproduce the above copyright
++ #   *   notice, this list of conditions and the following disclaimer in
++ #   *   the documentation and/or other materials provided with the
++ #   *   distribution.
++ #   * . Neither the name of the Computer Systems and Communication Lab
++ #   *   nor the names of its contributors may be used to endorse or
++ #   *   promote products derived from this software without specific
++ #   *   prior written permission.
++ #   *
++ #   * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ #   * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ #   * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
++ #   * FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
++ #   * REGENTS OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
++ #   * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
++ #   * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
++ #   * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
++ #   * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
++ #   * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ #   * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
++ #   * OF THE POSSIBILITY OF SUCH DAMAGE.
++ #   */
++ #
++ #  Copyright 1996 Chih-Hao Tsai @ Beckman Institute,
++ #      University of Illinois
++ #  c-tsai4@uiuc.edu  http://casper.beckman.uiuc.edu/~c-tsai4
++ #
++ #  ---------------COPYING.libtabe-----END--------------------------------
++ #
++ #
++ #  ---------------COPYING.ipadic-----BEGIN-------------------------------
++ #
++ #  Copyright 2000, 2001, 2002, 2003 Nara Institute of Science
++ #  and Technology.  All Rights Reserved.
++ #
++ #  Use, reproduction, and distribution of this software is permitted.
++ #  Any copy of this software, whether in its original form or modified,
++ #  must include both the above copyright notice and the following
++ #  paragraphs.
++ #
++ #  Nara Institute of Science and Technology (NAIST),
++ #  the copyright holders, disclaims all warranties with regard to this
++ #  software, including all implied warranties of merchantability and
++ #  fitness, in no event shall NAIST be liable for
++ #  any special, indirect or consequential damages or any damages
++ #  whatsoever resulting from loss of use, data or profits, whether in an
++ #  action of contract, negligence or other tortuous action, arising out
++ #  of or in connection with the use or performance of this software.
++ #
++ #  A large portion of the dictionary entries
++ #  originate from ICOT Free Software.  The following conditions for ICOT
++ #  Free Software applies to the current dictionary as well.
++ #
++ #  Each User may also freely distribute the Program, whether in its
++ #  original form or modified, to any third party or parties, PROVIDED
++ #  that the provisions of Section 3 ("NO WARRANTY") will ALWAYS appear
++ #  on, or be attached to, the Program, which is distributed substantially
++ #  in the same form as set out herein and that such intended
++ #  distribution, if actually made, will neither violate or otherwise
++ #  contravene any of the laws and regulations of the countries having
++ #  jurisdiction over the User or the intended distribution itself.
++ #
++ #  NO WARRANTY
++ #
++ #  The program was produced on an experimental basis in the course of the
++ #  research and development conducted during the project and is provided
++ #  to users as so produced on an experimental basis.  Accordingly, the
++ #  program is provided without any warranty whatsoever, whether express,
++ #  implied, statutory or otherwise.  The term "warranty" used herein
++ #  includes, but is not limited to, any warranty of the quality,
++ #  performance, merchantability and fitness for a particular purpose of
++ #  the program and the nonexistence of any infringement or violation of
++ #  any right of any third party.
++ #
++ #  Each user of the program will agree and understand, and be deemed to
++ #  have agreed and understood, that there is no warranty whatsoever for
++ #  the program and, accordingly, the entire risk arising from or
++ #  otherwise connected with the program is assumed by the user.
++ #
++ #  Therefore, neither ICOT, the copyright holder, or any other
++ #  organization that participated in or was otherwise related to the
++ #  development of the program and their respective officials, directors,
++ #  officers and other employees shall be held liable for any and all
++ #  damages, including, without limitation, general, special, incidental
++ #  and consequential damages, arising out of or otherwise in connection
++ #  with the use or inability to use the program or any product, material
++ #  or result produced or otherwise obtained by using the program,
++ #  regardless of whether they have been advised of, or otherwise had
++ #  knowledge of, the possibility of such damages at any time during the
++ #  project or thereafter.  Each user will be deemed to have agreed to the
++ #  foregoing by his or her commencement of use of the program.  The term
++ #  "use" as used herein includes, but is not limited to, the use,
++ #  modification, copying and distribution of the program and the
++ #  production of secondary products from the program.
++ #
++ #  In the case where the program, whether in its original form or
++ #  modified, was distributed or delivered to or received by a user from
++ #  any person, organization or entity other than ICOT, unless it makes or
++ #  grants independently of ICOT any specific warranty to the user in
++ #  writing, such person, organization or entity, will also be exempted
++ #  from and not be held liable to the user for any such damages as noted
++ #  above as far as the program is concerned.
++ #
++ #  ---------------COPYING.ipadic-----END----------------------------------
++
++----------------------------------------------------------------------
++
++Lao Word Break Dictionary Data (laodict.txt)
++
++ # Copyright (C) 2016 and later: Unicode, Inc. and others.
++ # License & terms of use: http://www.unicode.org/copyright.html
++ # Copyright (c) 2015 International Business Machines Corporation
++ # and others. All Rights Reserved.
++ #
++ # Project: https://github.com/rober42539/lao-dictionary
++ # Dictionary: https://github.com/rober42539/lao-dictionary/laodict.txt
++ # License: https://github.com/rober42539/lao-dictionary/LICENSE.txt
++ #          (copied below)
++ #
++ #	This file is derived from the above dictionary version of Nov 22, 2020
++ #  ----------------------------------------------------------------------
++ #  Copyright (C) 2013 Brian Eugene Wilson, Robert Martin Campbell.
++ #  All rights reserved.
++ #
++ #  Redistribution and use in source and binary forms, with or without
++ #  modification, are permitted provided that the following conditions are met:
++ #
++ #  Redistributions of source code must retain the above copyright notice, this
++ #  list of conditions and the following disclaimer. Redistributions in binary
++ #  form must reproduce the above copyright notice, this list of conditions and
++ #  the following disclaimer in the documentation and/or other materials
++ #  provided with the distribution.
++ #
++ # THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ # "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ # LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
++ # FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
++ # COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT,
++ # INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
++ # (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
++ # SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
++ # HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
++ # STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
++ # OF THE POSSIBILITY OF SUCH DAMAGE.
++ #  --------------------------------------------------------------------------
++
++----------------------------------------------------------------------
++
++Burmese Word Break Dictionary Data (burmesedict.txt)
++
++ #  Copyright (c) 2014 International Business Machines Corporation
++ #  and others. All Rights Reserved.
++ #
++ #  This list is part of a project hosted at:
++ #    github.com/kanyawtech/myanmar-karen-word-lists
++ #
++ #  --------------------------------------------------------------------------
++ #  Copyright (c) 2013, LeRoy Benjamin Sharon
++ #  All rights reserved.
++ #
++ #  Redistribution and use in source and binary forms, with or without
++ #  modification, are permitted provided that the following conditions
++ #  are met: Redistributions of source code must retain the above
++ #  copyright notice, this list of conditions and the following
++ #  disclaimer.  Redistributions in binary form must reproduce the
++ #  above copyright notice, this list of conditions and the following
++ #  disclaimer in the documentation and/or other materials provided
++ #  with the distribution.
++ #
++ #    Neither the name Myanmar Karen Word Lists, nor the names of its
++ #    contributors may be used to endorse or promote products derived
++ #    from this software without specific prior written permission.
++ #
++ #  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
++ #  CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES,
++ #  INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
++ #  MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
++ #  DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS
++ #  BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
++ #  EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++ #  TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ #  DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
++ #  ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR
++ #  TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF
++ #  THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
++ #  SUCH DAMAGE.
++ #  --------------------------------------------------------------------------
++
++----------------------------------------------------------------------
++
++Time Zone Database
++
++  ICU uses the public domain data and code derived from Time Zone
++Database for its time zone support. The ownership of the TZ database
++is explained in BCP 175: Procedure for Maintaining the Time Zone
++Database section 7.
++
++ # 7.  Database Ownership
++ #
++ #    The TZ database itself is not an IETF Contribution or an IETF
++ #    document.  Rather it is a pre-existing and regularly updated work
++ #    that is in the public domain, and is intended to remain in the
++ #    public domain.  Therefore, BCPs 78 [RFC5378] and 79 [RFC3979] do
++ #    not apply to the TZ Database or contributions that individuals make
++ #    to it.  Should any claims be made and substantiated against the TZ
++ #    Database, the organization that is providing the IANA
++ #    Considerations defined in this RFC, under the memorandum of
++ #    understanding with the IETF, currently ICANN, may act in accordance
++ #    with all competent court orders.  No ownership claims will be made
++ #    by ICANN or the IETF Trust on the database or the code.  Any person
++ #    making a contribution to the database or code waives all rights to
++ #    future claims in that contribution or in the TZ Database.
++
++----------------------------------------------------------------------
++
++Google double-conversion
++
++Copyright 2006-2011, the V8 project authors. All rights reserved.
++Redistribution and use in source and binary forms, with or without
++modification, are permitted provided that the following conditions are
++met:
++
++    * Redistributions of source code must retain the above copyright
++      notice, this list of conditions and the following disclaimer.
++    * Redistributions in binary form must reproduce the above
++      copyright notice, this list of conditions and the following
++      disclaimer in the documentation and/or other materials provided
++      with the distribution.
++    * Neither the name of Google Inc. nor the names of its
++      contributors may be used to endorse or promote products derived
++      from this software without specific prior written permission.
++
++THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++----------------------------------------------------------------------
++
++JSON parsing library (nlohmann/json)
++
++File: vendor/json/upstream/single_include/nlohmann/json.hpp (only for ICU4C)
++
++MIT License
++
++Copyright (c) 2013-2022 Niels Lohmann
++
++Permission is hereby granted, free of charge, to any person obtaining a copy
++of this software and associated documentation files (the "Software"), to deal
++in the Software without restriction, including without limitation the rights
++to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
++copies of the Software, and to permit persons to whom the Software is
++furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
++
++----------------------------------------------------------------------
++
++File: aclocal.m4 (only for ICU4C)
++Section: pkg.m4 - Macros to locate and utilise pkg-config.
++
++
++Copyright © 2004 Scott James Remnant <scott@netsplit.com>.
++Copyright © 2012-2015 Dan Nicholson <dbn.lists@gmail.com>
++
++This program is free software; you can redistribute it and/or modify
++it under the terms of the GNU General Public License as published by
++the Free Software Foundation; either version 2 of the License, or
++(at your option) any later version.
++
++This program is distributed in the hope that it will be useful, but
++WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
++General Public License for more details.
++
++You should have received a copy of the GNU General Public License
++along with this program; if not, write to the Free Software
++Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA
++02111-1307, USA.
++
++As a special exception to the GNU General Public License, if you
++distribute this file as part of a program that contains a
++configuration script generated by Autoconf, you may include it under
++the same distribution terms that you use for the rest of that
++program.
++
++
++(The condition for the exception is fulfilled because
++ICU4C includes a configuration script generated by Autoconf,
++namely the `configure` script.)
++
++----------------------------------------------------------------------
++
++File: config.guess (only for ICU4C)
++
++
++This file is free software; you can redistribute it and/or modify it
++under the terms of the GNU General Public License as published by
++the Free Software Foundation, either version 3 of the License, or
++(at your option) any later version.
++
++This program is distributed in the hope that it will be useful, but
++WITHOUT ANY WARRANTY; without even the implied warranty of
++MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++General Public License for more details.
++
++You should have received a copy of the GNU General Public License
++along with this program; if not, see <https://www.gnu.org/licenses/>.
++
++As a special exception to the GNU General Public License, if you
++distribute this file as part of a program that contains a
++configuration script generated by Autoconf, you may include it under
++the same distribution terms that you use for the rest of that
++program.  This Exception is an additional permission under section 7
++of the GNU General Public License, version 3 ("GPLv3").
++
++
++(The condition for the exception is fulfilled because
++ICU4C includes a configuration script generated by Autoconf,
++namely the `configure` script.)
++
++----------------------------------------------------------------------
++
++File: install-sh (only for ICU4C)
++
++
++Copyright 1991 by the Massachusetts Institute of Technology
++
++Permission to use, copy, modify, distribute, and sell this software and its
++documentation for any purpose is hereby granted without fee, provided that
++the above copyright notice appear in all copies and that both that
++copyright notice and this permission notice appear in supporting
++documentation, and that the name of M.I.T. not be used in advertising or
++publicity pertaining to distribution of the software without specific,
++written prior permission.  M.I.T. makes no representations about the
++suitability of this software for any purpose.  It is provided "as is"
++without express or implied warranty.
++
++----------------------------------------------------------------------
++
++File: sorttable.js (only for ICU4J)
++
++The MIT Licence, for code from kryogenix.org
++
++Code downloaded from the Browser Experiments section of kryogenix.org is
++licenced under the so-called MIT licence. The licence is below.
++
++Copyright (c) 1997-date Stuart Langridge
++
++Permission is hereby granted, free of charge, to any person obtaining a
++copy of this software and associated documentation files (the "Software"),
++to deal in the Software without restriction, including without limitation
++the rights to use, copy, modify, merge, publish, distribute, sublicense,
++and/or sell copies of the Software, and to permit persons to whom the
++Software is furnished to do so, subject to the following conditions:
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++SOFTWARE.
+--- /dev/null
++++ b/LICENSE-THIRD-PARTY
+@@ -0,0 +1,944 @@
++## Strongtalk assembler
++Source: https://raw.githubusercontent.com/denoland/v8/c4ca1eccb90c5464d826b7713dc27178a53b0cfe/LICENSE.strongtalk
++
++Copyright (c) 1994-2006 Sun Microsystems Inc.
++All Rights Reserved.
++
++Redistribution and use in source and binary forms, with or without
++modification, are permitted provided that the following conditions are
++met:
++
++- Redistributions of source code must retain the above copyright notice,
++this list of conditions and the following disclaimer.
++
++- Redistribution in binary form must reproduce the above copyright
++notice, this list of conditions and the following disclaimer in the
++documentation and/or other materials provided with the distribution.
++
++- Neither the name of Sun Microsystems or the names of contributors may
++be used to endorse or promote products derived from this software without
++specific prior written permission.
++
++THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
++IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
++THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
++PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
++CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
++EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
++PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++## fdlibm
++Source: https://raw.githubusercontent.com/denoland/v8/c4ca1eccb90c5464d826b7713dc27178a53b0cfe/LICENSE.fdlibm
++
++Copyright (C) 1993-2004 by Sun Microsystems, Inc. All rights reserved.
++
++Developed at SunSoft, a Sun Microsystems, Inc. business.
++Permission to use, copy, modify, and distribute this
++software is freely granted, provided that this notice
++is preserved.
++
++## Inspector protocol
++Source: https://raw.githubusercontent.com/denoland/v8/c4ca1eccb90c5464d826b7713dc27178a53b0cfe/third_party/inspector_protocol/LICENSE
++
++// Copyright 2016 The Chromium Authors
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are
++// met:
++//
++//    * Redistributions of source code must retain the above copyright
++// notice, this list of conditions and the following disclaimer.
++//    * Redistributions in binary form must reproduce the above
++// copyright notice, this list of conditions and the following disclaimer
++// in the documentation and/or other materials provided with the
++// distribution.
++//    * Neither the name of Google Inc. nor the names of its
++// contributors may be used to endorse or promote products derived from
++// this software without specific prior written permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++## Abseil
++Source: https://chromium.googlesource.com/chromium/src/third_party/abseil-cpp/+/d16e32215c3ab90ba57c2e904a5344d85c7353e4/LICENSE?format=TEXT
++
++
++                                 Apache License
++                           Version 2.0, January 2004
++                        https://www.apache.org/licenses/
++
++   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
++
++   1. Definitions.
++
++      "License" shall mean the terms and conditions for use, reproduction,
++      and distribution as defined by Sections 1 through 9 of this document.
++
++      "Licensor" shall mean the copyright owner or entity authorized by
++      the copyright owner that is granting the License.
++
++      "Legal Entity" shall mean the union of the acting entity and all
++      other entities that control, are controlled by, or are under common
++      control with that entity. For the purposes of this definition,
++      "control" means (i) the power, direct or indirect, to cause the
++      direction or management of such entity, whether by contract or
++      otherwise, or (ii) ownership of fifty percent (50%) or more of the
++      outstanding shares, or (iii) beneficial ownership of such entity.
++
++      "You" (or "Your") shall mean an individual or Legal Entity
++      exercising permissions granted by this License.
++
++      "Source" form shall mean the preferred form for making modifications,
++      including but not limited to software source code, documentation
++      source, and configuration files.
++
++      "Object" form shall mean any form resulting from mechanical
++      transformation or translation of a Source form, including but
++      not limited to compiled object code, generated documentation,
++      and conversions to other media types.
++
++      "Work" shall mean the work of authorship, whether in Source or
++      Object form, made available under the License, as indicated by a
++      copyright notice that is included in or attached to the work
++      (an example is provided in the Appendix below).
++
++      "Derivative Works" shall mean any work, whether in Source or Object
++      form, that is based on (or derived from) the Work and for which the
++      editorial revisions, annotations, elaborations, or other modifications
++      represent, as a whole, an original work of authorship. For the purposes
++      of this License, Derivative Works shall not include works that remain
++      separable from, or merely link (or bind by name) to the interfaces of,
++      the Work and Derivative Works thereof.
++
++      "Contribution" shall mean any work of authorship, including
++      the original version of the Work and any modifications or additions
++      to that Work or Derivative Works thereof, that is intentionally
++      submitted to Licensor for inclusion in the Work by the copyright owner
++      or by an individual or Legal Entity authorized to submit on behalf of
++      the copyright owner. For the purposes of this definition, "submitted"
++      means any form of electronic, verbal, or written communication sent
++      to the Licensor or its representatives, including but not limited to
++      communication on electronic mailing lists, source code control systems,
++      and issue tracking systems that are managed by, or on behalf of, the
++      Licensor for the purpose of discussing and improving the Work, but
++      excluding communication that is conspicuously marked or otherwise
++      designated in writing by the copyright owner as "Not a Contribution."
++
++      "Contributor" shall mean Licensor and any individual or Legal Entity
++      on behalf of whom a Contribution has been received by Licensor and
++      subsequently incorporated within the Work.
++
++   2. Grant of Copyright License. Subject to the terms and conditions of
++      this License, each Contributor hereby grants to You a perpetual,
++      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++      copyright license to reproduce, prepare Derivative Works of,
++      publicly display, publicly perform, sublicense, and distribute the
++      Work and such Derivative Works in Source or Object form.
++
++   3. Grant of Patent License. Subject to the terms and conditions of
++      this License, each Contributor hereby grants to You a perpetual,
++      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++      (except as stated in this section) patent license to make, have made,
++      use, offer to sell, sell, import, and otherwise transfer the Work,
++      where such license applies only to those patent claims licensable
++      by such Contributor that are necessarily infringed by their
++      Contribution(s) alone or by combination of their Contribution(s)
++      with the Work to which such Contribution(s) was submitted. If You
++      institute patent litigation against any entity (including a
++      cross-claim or counterclaim in a lawsuit) alleging that the Work
++      or a Contribution incorporated within the Work constitutes direct
++      or contributory patent infringement, then any patent licenses
++      granted to You under this License for that Work shall terminate
++      as of the date such litigation is filed.
++
++   4. Redistribution. You may reproduce and distribute copies of the
++      Work or Derivative Works thereof in any medium, with or without
++      modifications, and in Source or Object form, provided that You
++      meet the following conditions:
++
++      (a) You must give any other recipients of the Work or
++          Derivative Works a copy of this License; and
++
++      (b) You must cause any modified files to carry prominent notices
++          stating that You changed the files; and
++
++      (c) You must retain, in the Source form of any Derivative Works
++          that You distribute, all copyright, patent, trademark, and
++          attribution notices from the Source form of the Work,
++          excluding those notices that do not pertain to any part of
++          the Derivative Works; and
++
++      (d) If the Work includes a "NOTICE" text file as part of its
++          distribution, then any Derivative Works that You distribute must
++          include a readable copy of the attribution notices contained
++          within such NOTICE file, excluding those notices that do not
++          pertain to any part of the Derivative Works, in at least one
++          of the following places: within a NOTICE text file distributed
++          as part of the Derivative Works; within the Source form or
++          documentation, if provided along with the Derivative Works; or,
++          within a display generated by the Derivative Works, if and
++          wherever such third-party notices normally appear. The contents
++          of the NOTICE file are for informational purposes only and
++          do not modify the License. You may add Your own attribution
++          notices within Derivative Works that You distribute, alongside
++          or as an addendum to the NOTICE text from the Work, provided
++          that such additional attribution notices cannot be construed
++          as modifying the License.
++
++      You may add Your own copyright statement to Your modifications and
++      may provide additional or different license terms and conditions
++      for use, reproduction, or distribution of Your modifications, or
++      for any such Derivative Works as a whole, provided Your use,
++      reproduction, and distribution of the Work otherwise complies with
++      the conditions stated in this License.
++
++   5. Submission of Contributions. Unless You explicitly state otherwise,
++      any Contribution intentionally submitted for inclusion in the Work
++      by You to the Licensor shall be under the terms and conditions of
++      this License, without any additional terms or conditions.
++      Notwithstanding the above, nothing herein shall supersede or modify
++      the terms of any separate license agreement you may have executed
++      with Licensor regarding such Contributions.
++
++   6. Trademarks. This License does not grant permission to use the trade
++      names, trademarks, service marks, or product names of the Licensor,
++      except as required for reasonable and customary use in describing the
++      origin of the Work and reproducing the content of the NOTICE file.
++
++   7. Disclaimer of Warranty. Unless required by applicable law or
++      agreed to in writing, Licensor provides the Work (and each
++      Contributor provides its Contributions) on an "AS IS" BASIS,
++      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
++      implied, including, without limitation, any warranties or conditions
++      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
++      PARTICULAR PURPOSE. You are solely responsible for determining the
++      appropriateness of using or redistributing the Work and assume any
++      risks associated with Your exercise of permissions under this License.
++
++   8. Limitation of Liability. In no event and under no legal theory,
++      whether in tort (including negligence), contract, or otherwise,
++      unless required by applicable law (such as deliberate and grossly
++      negligent acts) or agreed to in writing, shall any Contributor be
++      liable to You for damages, including any direct, indirect, special,
++      incidental, or consequential damages of any character arising as a
++      result of this License or out of the use or inability to use the
++      Work (including but not limited to damages for loss of goodwill,
++      work stoppage, computer failure or malfunction, or any and all
++      other commercial damages or losses), even if such Contributor
++      has been advised of the possibility of such damages.
++
++   9. Accepting Warranty or Additional Liability. While redistributing
++      the Work or Derivative Works thereof, You may choose to offer,
++      and charge a fee for, acceptance of support, warranty, indemnity,
++      or other liability obligations and/or rights consistent with this
++      License. However, in accepting such obligations, You may act only
++      on Your own behalf and on Your sole responsibility, not on behalf
++      of any other Contributor, and only if You agree to indemnify,
++      defend, and hold each Contributor harmless for any liability
++      incurred by, or claims asserted against, such Contributor by reason
++      of your accepting any such warranty or additional liability.
++
++   END OF TERMS AND CONDITIONS
++
++   APPENDIX: How to apply the Apache License to your work.
++
++      To apply the Apache License to your work, attach the following
++      boilerplate notice, with the fields enclosed by brackets "[]"
++      replaced with your own identifying information. (Don't include
++      the brackets!)  The text should be enclosed in the appropriate
++      comment syntax for the file format. We also recommend that a
++      file or class name and description of purpose be included on the
++      same "printed page" as the copyright notice for easier
++      identification within third-party archives.
++
++   Copyright [yyyy] [name of copyright owner]
++
++   Licensed under the Apache License, Version 2.0 (the "License");
++   you may not use this file except in compliance with the License.
++   You may obtain a copy of the License at
++
++       https://www.apache.org/licenses/LICENSE-2.0
++
++   Unless required by applicable law or agreed to in writing, software
++   distributed under the License is distributed on an "AS IS" BASIS,
++   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++   See the License for the specific language governing permissions and
++   limitations under the License.
++
++## Highway
++Source: https://raw.githubusercontent.com/google/highway/2607d3b5b0113992fe84d3848859eae13b3b52c1/LICENSE
++
++This project is primarily dual-licensed under your choice of either the Apache
++License 2.0 or the BSD 3-Clause License.
++
++The following files are licensed under different terms:
++*   hwy/contrib/random/random-inl.h: CC0 1.0 Universal
++
++The full texts of all applicable licenses are included below, separated by
++'---'.
++
++--------------------------------------------------------------------------------
++Apache License 2.0
++--------------------------------------------------------------------------------
++
++                                 Apache License
++                           Version 2.0, January 2004
++                        http://www.apache.org/licenses/
++
++   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
++
++   1. Definitions.
++
++      "License" shall mean the terms and conditions for use, reproduction,
++      and distribution as defined by Sections 1 through 9 of this document.
++
++      "Licensor" shall mean the copyright owner or entity authorized by
++      the copyright owner that is granting the License.
++
++      "Legal Entity" shall mean the union of the acting entity and all
++      other entities that control, are controlled by, or are under common
++      control with that entity. For the purposes of this definition,
++      "control" means (i) the power, direct or indirect, to cause the
++      direction or management of such entity, whether by contract or
++      otherwise, or (ii) ownership of fifty percent (50%) or more of the
++      outstanding shares, or (iii) beneficial ownership of such entity.
++
++      "You" (or "Your") shall mean an individual or Legal Entity
++      exercising permissions granted by this License.
++
++      "Source" form shall mean the preferred form for making modifications,
++      including but not limited to software source code, documentation
++      source, and configuration files.
++
++      "Object" form shall mean any form resulting from mechanical
++      transformation or translation of a Source form, including but
++      not limited to compiled object code, generated documentation,
++      and conversions to other media types.
++
++      "Work" shall mean the work of authorship, whether in Source or
++      Object form, made available under the License, as indicated by a
++      copyright notice that is included in or attached to the work
++      (an example is provided in the Appendix below).
++
++      "Derivative Works" shall mean any work, whether in Source or Object
++      form, that is based on (or derived from) the Work and for which the
++      editorial revisions, annotations, elaborations, or other modifications
++      represent, as a whole, an original work of authorship. For the purposes
++      of this License, Derivative Works shall not include works that remain
++      separable from, or merely link (or bind by name) to the interfaces of,
++      the Work and Derivative Works thereof.
++
++      "Contribution" shall mean any work of authorship, including
++      the original version of the Work and any modifications or additions
++      to that Work or Derivative Works thereof, that is intentionally
++      submitted to Licensor for inclusion in the Work by the copyright owner
++      or by an individual or Legal Entity authorized to submit on behalf of
++      the copyright owner. For the purposes of this definition, "submitted"
++      means any form of electronic, verbal, or written communication sent
++      to the Licensor or its representatives, including but not limited to
++      communication on electronic mailing lists, source code control systems,
++      and issue tracking systems that are managed by, or on behalf of, the
++      Licensor for the purpose of discussing and improving the Work, but
++      excluding communication that is conspicuously marked or otherwise
++      designated in writing by the copyright owner as "Not a Contribution."
++
++      "Contributor" shall mean Licensor and any individual or Legal Entity
++      on behalf of whom a Contribution has been received by Licensor and
++      subsequently incorporated within the Work.
++
++   2. Grant of Copyright License. Subject to the terms and conditions of
++      this License, each Contributor hereby grants to You a perpetual,
++      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++      copyright license to reproduce, prepare Derivative Works of,
++      publicly display, publicly perform, sublicense, and distribute the
++      Work and such Derivative Works in Source or Object form.
++
++   3. Grant of Patent License. Subject to the terms and conditions of
++      this License, each Contributor hereby grants to You a perpetual,
++      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++      (except as stated in this section) patent license to make, have made,
++      use, offer to sell, sell, import, and otherwise transfer the Work,
++      where such license applies only to those patent claims licensable
++      by such Contributor that are necessarily infringed by their
++      Contribution(s) alone or by combination of their Contribution(s)
++      with the Work to which such Contribution(s) was submitted. If You
++      institute patent litigation against any entity (including a
++      cross-claim or counterclaim in a lawsuit) alleging that the Work
++      or a Contribution incorporated within the Work constitutes direct
++      or contributory patent infringement, then any patent licenses
++      granted to You under this License for that Work shall terminate
++      as of the date such litigation is filed.
++
++   4. Redistribution. You may reproduce and distribute copies of the
++      Work or Derivative Works thereof in any medium, with or without
++      modifications, and in Source or Object form, provided that You
++      meet the following conditions:
++
++      (a) You must give any other recipients of the Work or
++          Derivative Works a copy of this License; and
++
++      (b) You must cause any modified files to carry prominent notices
++          stating that You changed the files; and
++
++      (c) You must retain, in the Source form of any Derivative Works
++          that You distribute, all copyright, patent, trademark, and
++          attribution notices from the Source form of the Work,
++          excluding those notices that do not pertain to any part of
++          the Derivative Works; and
++
++      (d) If the Work includes a "NOTICE" text file as part of its
++          distribution, then any Derivative Works that You distribute must
++          include a readable copy of the attribution notices contained
++          within such NOTICE file, excluding those notices that do not
++          pertain to any part of the Derivative Works, in at least one
++          of the following places: within a NOTICE text file distributed
++          as part of the Derivative Works; within the Source form or
++          documentation, if provided along with the Derivative Works; or,
++          within a display generated by the Derivative Works, if and
++          wherever such third-party notices normally appear. The contents
++          of the NOTICE file are for informational purposes only and
++          do not modify the License. You may add Your own attribution
++          notices within Derivative Works that You distribute, alongside
++          or as an addendum to the NOTICE text from the Work, provided
++          that such additional attribution notices cannot be construed
++          as modifying the License.
++
++      You may add Your own copyright statement to Your modifications and
++      may provide additional or different license terms and conditions
++      for use, reproduction, or distribution of Your modifications, or
++      for any such Derivative Works as a whole, provided Your use,
++      reproduction, and distribution of the Work otherwise complies with
++      the conditions stated in this License.
++
++   5. Submission of Contributions. Unless You explicitly state otherwise,
++      any Contribution intentionally submitted for inclusion in the Work
++      by You to the Licensor shall be under the terms and conditions of
++      this License, without any additional terms or conditions.
++      Notwithstanding the above, nothing herein shall supersede or modify
++      the terms of any separate license agreement you may have executed
++      with Licensor regarding such Contributions.
++
++   6. Trademarks. This License does not grant permission to use the trade
++      names, trademarks, service marks, or product names of the Licensor,
++      except as required for reasonable and customary use in describing the
++      origin of the Work and reproducing the content of the NOTICE file.
++
++   7. Disclaimer of Warranty. Unless required by applicable law or
++      agreed to in writing, Licensor provides the Work (and each
++      Contributor provides its Contributions) on an "AS IS" BASIS,
++      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
++      implied, including, without limitation, any warranties or conditions
++      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
++      PARTICULAR PURPOSE. You are solely responsible for determining the
++      appropriateness of using or redistributing the Work and assume any
++      risks associated with Your exercise of permissions under this License.
++
++   8. Limitation of Liability. In no event and under no legal theory,
++      whether in tort (including negligence), contract, or otherwise,
++      unless required by applicable law (such as deliberate and grossly
++      negligent acts) or agreed to in writing, shall any Contributor be
++      liable to You for damages, including any direct, indirect, special,
++      incidental, or consequential damages of any character arising as a
++      result of this License or out of the use or inability to use the
++      Work (including but not limited to damages for loss of goodwill,
++      work stoppage, computer failure or malfunction, or any and all
++      other commercial damages or losses), even if such Contributor
++      has been advised of the possibility of such damages.
++
++   9. Accepting Warranty or Additional Liability. While redistributing
++      the Work or Derivative Works thereof, You may choose to offer,
++      and charge a fee for, acceptance of support, warranty, indemnity,
++      or other liability obligations and/or rights consistent with this
++      License. However, in accepting such obligations, You may act only
++      on Your own behalf and on Your sole responsibility, not on behalf
++      of any other Contributor, and only if You agree to indemnify,
++      defend, and hold each Contributor harmless for any liability
++      incurred by, or claims asserted against, such Contributor by reason
++      of your accepting any such warranty or additional liability.
++
++   END OF TERMS AND CONDITIONS
++
++   APPENDIX: How to apply the Apache License to your work.
++
++      To apply the Apache License to your work, attach the following
++      boilerplate notice, with the fields enclosed by brackets "[]"
++      replaced with your own identifying information. (Don't include
++      the brackets!)  The text should be enclosed in the appropriate
++      comment syntax for the file format. We also recommend that a
++      file or class name and description of purpose be included on the
++      same "printed page" as the copyright notice for easier
++      identification within third-party archives.
++
++   Copyright [yyyy] [name of copyright owner]
++
++   Licensed under the Apache License, Version 2.0 (the "License");
++   you may not use this file except in compliance with the License.
++   You may obtain a copy of the License at
++
++       http://www.apache.org/licenses/LICENSE-2.0
++
++   Unless required by applicable law or agreed to in writing, software
++   distributed under the License is distributed on an "AS IS" BASIS,
++   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++   See the License for the specific language governing permissions and
++   limitations under the License.
++
++--------------------------------------------------------------------------------
++BSD 3-Clause License
++--------------------------------------------------------------------------------
++
++Copyright (c) The Highway Project Authors. All rights reserved.
++
++Redistribution and use in source and binary forms, with or without modification,
++are permitted provided that the following conditions are met:
++
++1.  Redistributions of source code must retain the above copyright notice, this
++    list of conditions and the following disclaimer.
++
++2.  Redistributions in binary form must reproduce the above copyright notice,
++    this list of conditions and the following disclaimer in the documentation
++    and/or other materials provided with the distribution.
++
++3.  Neither the name of the copyright holder nor the names of its
++    contributors may be used to endorse or promote products derived from
++    this software without specific prior written permission.
++
++THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
++AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
++DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
++FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
++DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
++SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
++CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
++OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++--------------------------------------------------------------------------------
++CC0 1.0 Universal
++--------------------------------------------------------------------------------
++
++Creative Commons Legal Code
++
++CC0 1.0 Universal
++
++    CREATIVE COMMONS CORPORATION IS NOT A LAW FIRM AND DOES NOT PROVIDE
++    LEGAL SERVICES. DISTRIBUTION OF THIS DOCUMENT DOES NOT CREATE AN
++    ATTORNEY-CLIENT RELATIONSHIP. CREATIVE COMMONS PROVIDES THIS
++    INFORMATION ON AN "AS-IS" BASIS. CREATIVE COMMONS MAKES NO WARRANTIES
++    REGARDING THE USE OF THIS DOCUMENT OR THE INFORMATION OR WORKS
++    PROVIDED HEREUNDER, AND DISCLAIMS LIABILITY FOR DAMAGES RESULTING FROM
++    THE USE OF THIS DOCUMENT OR THE INFORMATION OR WORKS PROVIDED
++    HEREUNDER.
++
++Statement of Purpose
++
++The laws of most jurisdictions throughout the world automatically confer
++exclusive Copyright and Related Rights (defined below) upon the creator
++and subsequent owner(s) (each and all, an "owner") of an original work of
++authorship and/or a database (each, a "Work").
++
++Certain owners wish to permanently relinquish those rights to a Work for
++the purpose of contributing to a commons of creative, cultural and
++scientific works ("Commons") that the public can reliably and without fear
++of later claims of infringement build upon, modify, incorporate in other
++works, reuse and redistribute as freely as possible in any form whatsoever
++and for any purposes, including without limitation commercial purposes.
++These owners may contribute to the Commons to promote the ideal of a free
++culture and the further production of creative, cultural and scientific
++works, or to gain reputation or greater distribution for their Work in
++part through the use and efforts of others.
++
++For these and/or other purposes and motivations, and without any
++expectation of additional consideration or compensation, the person
++associating CC0 with a Work (the "Affirmer"), to the extent that he or she
++is an owner of Copyright and Related Rights in the Work, voluntarily
++elects to apply CC0 to the Work and publicly distribute the Work under its
++terms, with knowledge of his or her Copyright and Related Rights in the
++Work and the meaning and intended legal effect of CC0 on those rights.
++
++1. Copyright and Related Rights. A Work made available under CC0 may be
++protected by copyright and related or neighboring rights ("Copyright and
++Related Rights"). Copyright and Related Rights include, but are not
++limited to, the following:
++
++  i. the right to reproduce, adapt, distribute, perform, display,
++     communicate, and translate a Work;
++ ii. moral rights retained by the original author(s) and/or performer(s);
++iii. publicity and privacy rights pertaining to a person's image or
++     likeness depicted in a Work;
++ iv. rights protecting against unfair competition in regards to a Work,
++     subject to the limitations in paragraph 4(a), below;
++  v. rights protecting the extraction, dissemination, use and reuse of data
++     in a Work;
++ vi. database rights (such as those arising under Directive 96/9/EC of the
++     European Parliament and of the Council of 11 March 1996 on the legal
++     protection of databases, and under any national implementation
++     thereof, including any amended or successor version of such
++     directive); and
++vii. other similar, equivalent or corresponding rights throughout the
++     world based on applicable law or treaty, and any national
++     implementations thereof.
++
++2. Waiver. To the greatest extent permitted by, but not in contravention
++of, applicable law, Affirmer hereby overtly, fully, permanently,
++irrevocably and unconditionally waives, abandons, and surrenders all of
++Affirmer's Copyright and Related Rights and associated claims and causes
++of action, whether now known or unknown (including existing as well as
++future claims and causes of action), in the Work (i) in all territories
++worldwide, (ii) for the maximum duration provided by applicable law or
++treaty (including future time extensions), (iii) in any current or future
++medium and for any number of copies, and (iv) for any purpose whatsoever,
++including without limitation commercial, advertising or promotional
++purposes (the "Waiver"). Affirmer makes the Waiver for the benefit of each
++member of the public at large and to the detriment of Affirmer's heirs and
++successors, fully intending that such Waiver shall not be subject to
++revocation, rescission, cancellation, termination, or any other legal or
++equitable action to disrupt the quiet enjoyment of the Work by the public
++as contemplated by Affirmer's express Statement of Purpose.
++
++3. Public License Fallback. Should any part of the Waiver for any reason
++be judged legally invalid or ineffective under applicable law, then the
++Waiver shall be preserved to the maximum extent permitted taking into
++account Affirmer's express Statement of Purpose. In addition, to the
++extent the Waiver is so judged Affirmer hereby grants to each affected
++person a royalty-free, non transferable, non sublicensable, non exclusive,
++irrevocable and unconditional license to exercise Affirmer's Copyright and
++Related Rights in the Work (i) in all territories worldwide, (ii) for the
++maximum duration provided by applicable law or treaty (including future
++time extensions), (iii) in any current or future medium and for any number
++of copies, and (iv) for any purpose whatsoever, including without
++limitation commercial, advertising or promotional purposes (the
++"License"). The License shall be deemed effective as of the date CC0 was
++applied by Affirmer to the Work. Should any part of the License for any
++reason be judged legally invalid or ineffective under applicable law, such
++partial invalidity or ineffectiveness shall not invalidate the remainder
++of the License, and in such case Affirmer hereby affirms that he or she
++will not (i) exercise any of his or her remaining Copyright and Related
++Rights in the Work or (ii) assert any associated claims and causes of
++action with respect to the Work, in either case contrary to Affirmer's
++express Statement of Purpose.
++
++4. Limitations and Disclaimers.
++
++ a. No trademark or patent rights held by Affirmer are waived, abandoned,
++    surrendered, licensed or otherwise affected by this document.
++ b. Affirmer offers the Work as-is and makes no representations or
++    warranties of any kind concerning the Work, express, implied,
++    statutory or otherwise, including without limitation warranties of
++    title, merchantability, fitness for a particular purpose, non
++    infringement, or the absence of latent or other defects, accuracy, or
++    the present or absence of errors, whether or not discoverable, all to
++    the greatest extent permissible under applicable law.
++ c. Affirmer disclaims responsibility for clearing rights of other persons
++    that may apply to the Work or any use thereof, including without
++    limitation any person's Copyright and Related Rights in the Work.
++    Further, Affirmer disclaims responsibility for obtaining any necessary
++    consents, permissions or other rights required for any use of the
++    Work.
++ d. Affirmer understands and acknowledges that Creative Commons is not a
++    party to this document and has no duty or obligation with respect to
++    this CC0 or use of the Work.
++
++## simdutf
++Source: https://chromium.googlesource.com/chromium/src/third_party/simdutf/+/f7356eed293f8208c40b3c1b344a50bd70971983/LICENSE?format=TEXT
++
++Copyright 2021 The simdutf authors
++
++Permission is hereby granted, free of charge, to any person obtaining a copy of
++this software and associated documentation files (the "Software"), to deal in
++the Software without restriction, including without limitation the rights to
++use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
++the Software, and to permit persons to whom the Software is furnished to do so,
++subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all
++copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
++FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
++COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
++IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
++CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
++
++## Dragonbox
++Source: https://raw.githubusercontent.com/jk-jeon/dragonbox/beeeef91cf6fef89a4d4ba5e95d47ca64ccb3a44/LICENSE-Apache2-LLVM
++
++                                 Apache License
++                           Version 2.0, January 2004
++                        http://www.apache.org/licenses/
++
++    TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
++
++    1. Definitions.
++
++      "License" shall mean the terms and conditions for use, reproduction,
++      and distribution as defined by Sections 1 through 9 of this document.
++
++      "Licensor" shall mean the copyright owner or entity authorized by
++      the copyright owner that is granting the License.
++
++      "Legal Entity" shall mean the union of the acting entity and all
++      other entities that control, are controlled by, or are under common
++      control with that entity. For the purposes of this definition,
++      "control" means (i) the power, direct or indirect, to cause the
++      direction or management of such entity, whether by contract or
++      otherwise, or (ii) ownership of fifty percent (50%) or more of the
++      outstanding shares, or (iii) beneficial ownership of such entity.
++
++      "You" (or "Your") shall mean an individual or Legal Entity
++      exercising permissions granted by this License.
++
++      "Source" form shall mean the preferred form for making modifications,
++      including but not limited to software source code, documentation
++      source, and configuration files.
++
++      "Object" form shall mean any form resulting from mechanical
++      transformation or translation of a Source form, including but
++      not limited to compiled object code, generated documentation,
++      and conversions to other media types.
++
++      "Work" shall mean the work of authorship, whether in Source or
++      Object form, made available under the License, as indicated by a
++      copyright notice that is included in or attached to the work
++      (an example is provided in the Appendix below).
++
++      "Derivative Works" shall mean any work, whether in Source or Object
++      form, that is based on (or derived from) the Work and for which the
++      editorial revisions, annotations, elaborations, or other modifications
++      represent, as a whole, an original work of authorship. For the purposes
++      of this License, Derivative Works shall not include works that remain
++      separable from, or merely link (or bind by name) to the interfaces of,
++      the Work and Derivative Works thereof.
++
++      "Contribution" shall mean any work of authorship, including
++      the original version of the Work and any modifications or additions
++      to that Work or Derivative Works thereof, that is intentionally
++      submitted to Licensor for inclusion in the Work by the copyright owner
++      or by an individual or Legal Entity authorized to submit on behalf of
++      the copyright owner. For the purposes of this definition, "submitted"
++      means any form of electronic, verbal, or written communication sent
++      to the Licensor or its representatives, including but not limited to
++      communication on electronic mailing lists, source code control systems,
++      and issue tracking systems that are managed by, or on behalf of, the
++      Licensor for the purpose of discussing and improving the Work, but
++      excluding communication that is conspicuously marked or otherwise
++      designated in writing by the copyright owner as "Not a Contribution."
++
++      "Contributor" shall mean Licensor and any individual or Legal Entity
++      on behalf of whom a Contribution has been received by Licensor and
++      subsequently incorporated within the Work.
++
++    2. Grant of Copyright License. Subject to the terms and conditions of
++      this License, each Contributor hereby grants to You a perpetual,
++      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++      copyright license to reproduce, prepare Derivative Works of,
++      publicly display, publicly perform, sublicense, and distribute the
++      Work and such Derivative Works in Source or Object form.
++
++    3. Grant of Patent License. Subject to the terms and conditions of
++      this License, each Contributor hereby grants to You a perpetual,
++      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++      (except as stated in this section) patent license to make, have made,
++      use, offer to sell, sell, import, and otherwise transfer the Work,
++      where such license applies only to those patent claims licensable
++      by such Contributor that are necessarily infringed by their
++      Contribution(s) alone or by combination of their Contribution(s)
++      with the Work to which such Contribution(s) was submitted. If You
++      institute patent litigation against any entity (including a
++      cross-claim or counterclaim in a lawsuit) alleging that the Work
++      or a Contribution incorporated within the Work constitutes direct
++      or contributory patent infringement, then any patent licenses
++      granted to You under this License for that Work shall terminate
++      as of the date such litigation is filed.
++
++    4. Redistribution. You may reproduce and distribute copies of the
++      Work or Derivative Works thereof in any medium, with or without
++      modifications, and in Source or Object form, provided that You
++      meet the following conditions:
++
++      (a) You must give any other recipients of the Work or
++          Derivative Works a copy of this License; and
++
++      (b) You must cause any modified files to carry prominent notices
++          stating that You changed the files; and
++
++      (c) You must retain, in the Source form of any Derivative Works
++          that You distribute, all copyright, patent, trademark, and
++          attribution notices from the Source form of the Work,
++          excluding those notices that do not pertain to any part of
++          the Derivative Works; and
++
++      (d) If the Work includes a "NOTICE" text file as part of its
++          distribution, then any Derivative Works that You distribute must
++          include a readable copy of the attribution notices contained
++          within such NOTICE file, excluding those notices that do not
++          pertain to any part of the Derivative Works, in at least one
++          of the following places: within a NOTICE text file distributed
++          as part of the Derivative Works; within the Source form or
++          documentation, if provided along with the Derivative Works; or,
++          within a display generated by the Derivative Works, if and
++          wherever such third-party notices normally appear. The contents
++          of the NOTICE file are for informational purposes only and
++          do not modify the License. You may add Your own attribution
++          notices within Derivative Works that You distribute, alongside
++          or as an addendum to the NOTICE text from the Work, provided
++          that such additional attribution notices cannot be construed
++          as modifying the License.
++
++      You may add Your own copyright statement to Your modifications and
++      may provide additional or different license terms and conditions
++      for use, reproduction, or distribution of Your modifications, or
++      for any such Derivative Works as a whole, provided Your use,
++      reproduction, and distribution of the Work otherwise complies with
++      the conditions stated in this License.
++
++    5. Submission of Contributions. Unless You explicitly state otherwise,
++      any Contribution intentionally submitted for inclusion in the Work
++      by You to the Licensor shall be under the terms and conditions of
++      this License, without any additional terms or conditions.
++      Notwithstanding the above, nothing herein shall supersede or modify
++      the terms of any separate license agreement you may have executed
++      with Licensor regarding such Contributions.
++
++    6. Trademarks. This License does not grant permission to use the trade
++      names, trademarks, service marks, or product names of the Licensor,
++      except as required for reasonable and customary use in describing the
++      origin of the Work and reproducing the content of the NOTICE file.
++
++    7. Disclaimer of Warranty. Unless required by applicable law or
++      agreed to in writing, Licensor provides the Work (and each
++      Contributor provides its Contributions) on an "AS IS" BASIS,
++      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
++      implied, including, without limitation, any warranties or conditions
++      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
++      PARTICULAR PURPOSE. You are solely responsible for determining the
++      appropriateness of using or redistributing the Work and assume any
++      risks associated with Your exercise of permissions under this License.
++
++    8. Limitation of Liability. In no event and under no legal theory,
++      whether in tort (including negligence), contract, or otherwise,
++      unless required by applicable law (such as deliberate and grossly
++      negligent acts) or agreed to in writing, shall any Contributor be
++      liable to You for damages, including any direct, indirect, special,
++      incidental, or consequential damages of any character arising as a
++      result of this License or out of the use or inability to use the
++      Work (including but not limited to damages for loss of goodwill,
++      work stoppage, computer failure or malfunction, or any and all
++      other commercial damages or losses), even if such Contributor
++      has been advised of the possibility of such damages.
++
++    9. Accepting Warranty or Additional Liability. While redistributing
++      the Work or Derivative Works thereof, You may choose to offer,
++      and charge a fee for, acceptance of support, warranty, indemnity,
++      or other liability obligations and/or rights consistent with this
++      License. However, in accepting such obligations, You may act only
++      on Your own behalf and on Your sole responsibility, not on behalf
++      of any other Contributor, and only if You agree to indemnify,
++      defend, and hold each Contributor harmless for any liability
++      incurred by, or claims asserted against, such Contributor by reason
++      of your accepting any such warranty or additional liability.
++
++    END OF TERMS AND CONDITIONS
++
++    APPENDIX: How to apply the Apache License to your work.
++
++      To apply the Apache License to your work, attach the following
++      boilerplate notice, with the fields enclosed by brackets "[]"
++      replaced with your own identifying information. (Don't include
++      the brackets!)  The text should be enclosed in the appropriate
++      comment syntax for the file format. We also recommend that a
++      file or class name and description of purpose be included on the
++      same "printed page" as the copyright notice for easier
++      identification within third-party archives.
++
++    Copyright [yyyy] [name of copyright owner]
++
++    Licensed under the Apache License, Version 2.0 (the "License");
++    you may not use this file except in compliance with the License.
++    You may obtain a copy of the License at
++
++       http://www.apache.org/licenses/LICENSE-2.0
++
++    Unless required by applicable law or agreed to in writing, software
++    distributed under the License is distributed on an "AS IS" BASIS,
++    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++    See the License for the specific language governing permissions and
++    limitations under the License.
++
++
++--- LLVM Exceptions to the Apache 2.0 License ----
++
++As an exception, if, as a result of your compiling your source code, portions
++of this Software are embedded into an Object form of such source code, you
++may redistribute such embedded portions in such Object form without complying
++with the conditions of Sections 4(a), 4(b) and 4(d) of the License.
++
++In addition, if you combine or link compiled forms of this Software with
++software that is licensed under the GPLv2 ("Combined Software") and if a
++court of competent jurisdiction determines that the patent provision (Section
++3), the indemnity provision (Section 9) or other Section of the License
++conflicts with the conditions of the GPLv2, you may retroactively and
++prospectively choose to deem waived or otherwise exclude such Section(s) of
++the License, but only in their entirety and only with respect to the Combined
++Software.
++
++## fast_float
++Source: https://raw.githubusercontent.com/fastfloat/fast_float/34164f547b7df3f5d794ff67e9f885c36819ebfc/LICENSE-MIT
++
++MIT License
++
++Copyright (c) 2021 The fast_float authors
++
++Permission is hereby granted, free of charge, to any
++person obtaining a copy of this software and associated
++documentation files (the "Software"), to deal in the
++Software without restriction, including without
++limitation the rights to use, copy, modify, merge,
++publish, distribute, sublicense, and/or sell copies of
++the Software, and to permit persons to whom the Software
++is furnished to do so, subject to the following
++conditions:
++
++The above copyright notice and this permission notice
++shall be included in all copies or substantial portions
++of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
++ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
++TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
++PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
++SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
++CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
++OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
++IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++DEALINGS IN THE SOFTWARE.
++
++## FP16
++Source: https://raw.githubusercontent.com/Maratyszcza/FP16/782eea126dc5c755827be751a099eb01826175cf/LICENSE
++
++The MIT License (MIT)
++
++Copyright (c) 2017 Facebook Inc.
++Copyright (c) 2017 Georgia Institute of Technology
++Copyright 2019 Google LLC
++
++Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
++
++The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
++
++THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+--- /dev/null
++++ b/LICENSE-V8
+@@ -0,0 +1,61 @@
++This license applies to all parts of V8 that are not externally
++maintained libraries.  The externally maintained libraries used by V8
++are:
++
++  - PCRE test suite, located in
++    test/mjsunit/third_party/regexp-pcre/regexp-pcre.js.  This is based on the
++    test suite from PCRE-7.3, which is copyrighted by the University
++    of Cambridge and Google, Inc.  The copyright notice and license
++    are embedded in regexp-pcre.js.
++
++  - Layout tests, located in test/mjsunit/third_party/object-keys.  These are
++    based on layout tests from webkit.org which are copyrighted by
++    Apple Computer, Inc. and released under a 3-clause BSD license.
++
++  - Strongtalk assembler, the basis of the files assembler-arm-inl.h,
++    assembler-arm.cc, assembler-arm.h, assembler-ia32-inl.h,
++    assembler-ia32.cc, assembler-ia32.h, assembler-x64-inl.h,
++    assembler-x64.cc, assembler-x64.h, assembler.cc and assembler.h.
++    This code is copyrighted by Sun Microsystems Inc. and released
++    under a 3-clause BSD license.
++
++  - Valgrind client API header, located at third_party/valgrind/valgrind.h
++    This is released under the BSD license.
++
++  - The Wasm C/C++ API headers, located at third_party/wasm-api/wasm.{h,hh}
++    This is released under the Apache license. The API's upstream prototype
++    implementation also formed the basis of V8's implementation in
++    src/wasm/c-api.cc.
++
++These libraries have their own licenses; we recommend you read them,
++as their terms may differ from the terms below.
++
++Further license information can be found in LICENSE files located in
++sub-directories.
++
++Copyright 2014, the V8 project authors. All rights reserved.
++Redistribution and use in source and binary forms, with or without
++modification, are permitted provided that the following conditions are
++met:
++
++    * Redistributions of source code must retain the above copyright
++      notice, this list of conditions and the following disclaimer.
++    * Redistributions in binary form must reproduce the above
++      copyright notice, this list of conditions and the following
++      disclaimer in the documentation and/or other materials provided
++      with the distribution.
++    * Neither the name of Google Inc. nor the names of its
++      contributors may be used to endorse or promote products derived
++      from this software without specific prior written permission.
++
++THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+--- /dev/null
++++ b/native-licenses.json
+@@ -0,0 +1,53 @@
++[
++  {
++    "name": "Strongtalk assembler",
++    "source": "https://raw.githubusercontent.com/denoland/v8/c4ca1eccb90c5464d826b7713dc27178a53b0cfe/LICENSE.strongtalk",
++    "sha256": "6a585a9f466654abc8fc0829d56b1bc987e3a073d31faa03bba37d33640a23cd"
++  },
++  {
++    "name": "fdlibm",
++    "source": "https://raw.githubusercontent.com/denoland/v8/c4ca1eccb90c5464d826b7713dc27178a53b0cfe/LICENSE.fdlibm",
++    "sha256": "e7115e18444dae09d17f361ddc365fb1d342640fe500796209c63f7c80dfae10"
++  },
++  {
++    "name": "Inspector protocol",
++    "source": "https://raw.githubusercontent.com/denoland/v8/c4ca1eccb90c5464d826b7713dc27178a53b0cfe/third_party/inspector_protocol/LICENSE",
++    "sha256": "450ebb9e9e50c2809d9ca581931fc8946d8d5aa0c8c35aae9ac471342fe4a88e"
++  },
++  {
++    "name": "Abseil",
++    "source": "https://chromium.googlesource.com/chromium/src/third_party/abseil-cpp/+/d16e32215c3ab90ba57c2e904a5344d85c7353e4/LICENSE?format=TEXT",
++    "sha256": "c79a7fea0e3cac04cd43f20e7b648e5a0ff8fa5344e644b0ee09ca1162b62747"
++  },
++  {
++    "name": "Highway",
++    "source": "https://raw.githubusercontent.com/google/highway/2607d3b5b0113992fe84d3848859eae13b3b52c1/LICENSE",
++    "sha256": "e340270d4f64384569a91d546acb5b094d69ce47f0c015db77abb74dc6f815af"
++  },
++  {
++    "name": "simdutf",
++    "source": "https://chromium.googlesource.com/chromium/src/third_party/simdutf/+/f7356eed293f8208c40b3c1b344a50bd70971983/LICENSE?format=TEXT",
++    "sha256": "fc8dbc04e03ad4efc08a647ffe7f995b811a95bc04c0e85a56d5277c6593fa5f"
++  },
++  {
++    "name": "Dragonbox",
++    "source": "https://raw.githubusercontent.com/jk-jeon/dragonbox/beeeef91cf6fef89a4d4ba5e95d47ca64ccb3a44/LICENSE-Apache2-LLVM",
++    "sha256": "9e45e856bedccee9f67254082ca11851d954de2fed7448c4bed19ad9aab99a91"
++  },
++  {
++    "name": "fast_float",
++    "source": "https://raw.githubusercontent.com/fastfloat/fast_float/34164f547b7df3f5d794ff67e9f885c36819ebfc/LICENSE-MIT",
++    "sha256": "e562f3f974ced7e69dd1db77b820b36bcf8f30377f1aa105723fba449c53c4e6"
++  },
++  {
++    "name": "FP16",
++    "source": "https://raw.githubusercontent.com/Maratyszcza/FP16/782eea126dc5c755827be751a099eb01826175cf/LICENSE",
++    "sha256": "17e4f539024be2749ee729d1e2f01d24cef12ece8c9bf18e91a4349be29c80bf"
++  },
++  {
++    "name": "ICU",
++    "source": "https://chromium.googlesource.com/chromium/deps/icu/+/d578f2e8b7bd5938e21cfb6bf15c079e0aa5b738/LICENSE?format=TEXT",
++    "sha256": "e55522d81edc687a341a4411e0776e54ca654e90147f354a90458aaced4116af",
++    "license": "Unicode-3.0"
++  }
++]
+--- /dev/null
++++ b/native.patch
+@@ -0,0 +1,168 @@
++--- a/src/binding.cc
+++++ b/src/binding.cc
++@@ -15,9 +15,11 @@
++ #include "cppgc/platform.h"
++ #include "libplatform/libplatform.h"
++ #include "support.h"
+++#ifdef V8_INTL_SUPPORT
++ #include "unicode/locid.h"
++ #include "unicode/timezone.h"
++ #include "unicode/unistr.h"
+++#endif
++ #include "v8-callbacks.h"
++ #include "v8-cppgc.h"
++ #include "v8-fast-api-calls.h"
++@@ -4002,6 +4004,7 @@
++   return local_to_ptr(self.GetImportAttributes());
++ }
++ 
+++#ifdef V8_ENABLE_WEBASSEMBLY
++ struct WasmStreamingSharedPtr {
++   std::shared_ptr<v8::WasmStreaming> inner;
++ };
++@@ -4063,6 +4066,7 @@
++   return local_to_ptr(ptr_to_local(&self)->Buffer());
++ }
++ 
+++#endif
++ using HeapSnapshotCallback = bool (*)(void*, const char*, size_t);
++ 
++ void v8__HeapProfiler__TakeHeapSnapshot(v8::Isolate* isolate,
++@@ -4388,6 +4392,7 @@
++ }
++ }  // extern "C"
++ 
+++#ifdef V8_ENABLE_WEBASSEMBLY
++ // v8::WasmModuleCompilation
++ 
++ extern "C" {
++@@ -4500,8 +4505,10 @@
++ void v8__CompiledWasmModule__DELETE(v8::CompiledWasmModule* self) {
++   delete self;
++ }
++ }  // extern "C"
+++#endif
++ 
+++#ifdef V8_INTL_SUPPORT
++ // icu
++ 
++ extern "C" {
++@@ -4556,6 +4563,7 @@
++ 
++ }  // extern "C"
++ 
+++#endif
++ // v8::PropertyDescriptor
++ 
++ extern "C" {
++--- a/build/vs_toolchain.py
+++++ b/build/vs_toolchain.py
++@@ -430,7 +430,7 @@
++   _CopyRuntime(target_dir, runtime_dir, target_cpu, debug=False)
++   if configuration == 'Debug':
++     _CopyRuntime(target_dir, runtime_dir, target_cpu, debug=True)
++-  _CopyDebugger(target_dir, target_cpu)
+++  # Static V8 build: SDK debugger DLL deployment is unnecessary.
++   if target_cpu == 'arm64':
++     target_dir = os.path.join(target_dir, 'win_clang_x64')
++     target_cpu = 'x64'
++@@ -439,7 +439,7 @@
++     _CopyRuntime(target_dir, runtime_dir, target_cpu, debug=False)
++     if configuration == 'Debug':
++       _CopyRuntime(target_dir, runtime_dir, target_cpu, debug=True)
++-    _CopyDebugger(target_dir, target_cpu)
+++    # Static V8 build: SDK debugger DLL deployment is unnecessary.
++ 
++ 
++ def _CopyDebugger(target_dir, target_cpu):
++--- a/v8/src/objects/js-interceptor-map.h
+++++ b/v8/src/objects/js-interceptor-map.h
++@@ -40,8 +40,6 @@
++   inline void init_flags_and_clear_extended_padding();
++ 
++  public:
++-  uint8_t flags_;
++-  uint8_t extended_padding_[kTaggedSize - 2];
++   TaggedMember<InterceptorInfo> named_interceptor_;
++   TaggedMember<InterceptorInfo> indexed_interceptor_;
++   TaggedMember<Cell> fast_case_validity_cell_;
++--- a/v8/src/objects/js-interceptor-map.tq
+++++ b/v8/src/objects/js-interceptor-map.tq
++@@ -8,9 +8,6 @@
++ @hasSameInstanceTypeAsParent
++ @doNotGenerateCast
++ extern class JSInterceptorMap extends ExtendedMap {
++-  flags: uint8;
++-  @ifnot(TAGGED_SIZE_8_BYTES) extended_padding[2]: uint8;
++-  @if(TAGGED_SIZE_8_BYTES) extended_padding[6]: uint8;
++   named_interceptor: InterceptorInfo;
++   indexed_interceptor: InterceptorInfo;
++   // This prototype validity cell guards modifications of the interceptor's
++--- a/v8/src/objects/map.h
+++++ b/v8/src/objects/map.h
++@@ -1288,7 +1288,9 @@
++   static const int kStartOfStrongExtendedFieldsOffset;
++ 
++   std::atomic<uint8_t> bit_field_ex_;
++-  // Leaves kTaggedSize-1 unused bytes, they will be used by subclasses.
+++  // Complete this tagged slot before deriving further map layouts.
+++  uint8_t flags_;
+++  uint8_t extended_padding_[kTaggedSize - 2];
++ } V8_OBJECT_END;
++ 
++ constexpr int ExtendedMapSizeForKind(ExtendedMapKind kind);
++--- a/v8/src/objects/map.tq
+++++ b/v8/src/objects/map.tq
++@@ -116,7 +116,10 @@
++ @doNotGenerateCast
++ extern class ExtendedMap extends Map {
++   bit_field_ex: ExtendedMapBitFields;
++-  // Leaves kTaggedSize-1 unused bytes, they will be used by subclasses.
+++  // Complete this tagged slot before deriving further map layouts.
+++  flags: uint8;
+++  @ifnot(TAGGED_SIZE_8_BYTES) extended_padding[2]: uint8;
+++  @if(TAGGED_SIZE_8_BYTES) extended_padding[6]: uint8;
++ }
++ 
++ @export
++--- a/v8/src/objects/backing-store.cc
+++++ b/v8/src/objects/backing-store.cc
++@@ -323,7 +323,7 @@
++   // For accounting purposes, whether a GC was necessary.
++   bool did_retry = false;
++ 
++-  auto gc_retry = [&](const std::function<bool()>& fn) {
+++  auto gc_retry = [&](const auto& fn) {
++     if (fn()) return true;
++     // Collect garbage and retry.
++     did_retry = true;
++--- a/build/config/win/BUILD.gn
+++++ b/build/config/win/BUILD.gn
++@@ -17,6 +17,9 @@
++ assert(is_win)
++ 
++ declare_args() {
+++  # Match the embedding Rust host, independently of component/shared builds.
+++  transmog_use_static_crt = true
+++
++   # Turn this on to have the linker output extra timing information.
++   win_linker_timing = false
++ 
++@@ -517,7 +520,7 @@
++ # See https://msdn.microsoft.com/en-us/library/2kzt1wy3.aspx for a reference of
++ # what each value does.
++ config("default_crt") {
++-  if (is_component_build) {
+++  if (is_component_build || !transmog_use_static_crt) {
++     # Component mode: dynamic CRT. Since the library is shared, it requires
++     # exceptions or will give errors about things not matching, so keep
++     # exceptions on.
++@@ -540,7 +543,7 @@
++ # when the debug CRT is part of the bottleneck. This also avoids *implicitly*
++ # defining _DEBUG.
++ config("release_crt") {
++-  if (is_component_build) {
+++  if (is_component_build || !transmog_use_static_crt) {
++     cflags = [ "/MD" ]
++ 
++     # /MD specifies msvcrt.lib as the CRT library, which is the dynamic+release
+--- /dev/null
++++ b/profile.gn
+@@ -0,0 +1,10 @@
++v8_enable_sparkplug = true
++v8_enable_turbofan = false
++v8_enable_maglev = false
++v8_enable_webassembly = false
++v8_enable_i18n_support = true
++v8_enable_temporal_support = false
++enable_rust = false
++enable_rust_cxx = false
++# Chromium's warning policy also covers the host's MSVC standard library.
++treat_warnings_as_errors = false
+--- a/README.md
++++ b/README.md
+@@ -1,401 +1,57 @@
+-# Rusty V8 Binding
++# Transmog V8 profile
+ 
+-V8 Version: 15.2.124.1
++This private binding fork uses rusty_v8 152.2.0's Rust interface and a native
++source build from the checksum-pinned registry archive in `source.json`.
++Only the binding sources are vendored here; `scripts/v8_native.py` verifies and
++stages the full native source under `.tools/rusty-v8/sources`. Each archive,
++native patch and ICU data combination has an immutable source directory.
++Preparation validates a complete private staging tree before publishing it;
++concurrent builds never patch an active source tree in place.
+ 
+-[![ci](https://github.com/denoland/rusty_v8/actions/workflows/ci.yml/badge.svg)](https://github.com/denoland/rusty_v8/actions)
+-[![crates](https://img.shields.io/crates/v/v8.svg)](https://crates.io/crates/v8)
+-[![docs](https://docs.rs/v8/badge.svg)](https://docs.rs/v8)
++`profile.gn` selects Sparkplug, omitting TurboFan, Maglev, WebAssembly and
++Temporal. Inspector, Intl, Unicode normalization, Unicode property expressions,
++locale-sensitive casing/collation, and segmentation remain available.
+ 
+-## Goals
++`source.json` pins the ICU data omitted from the registry source archive.
++`scripts/icu_data.py` removes only legacy charset-converter tables (`*.cnv`),
++which V8 does not expose, and `nfkc_scf.nrm`, the unused NFKC Simple Casefold
++mode [also removed upstream](https://chromium.googlesource.com/chromium/deps/icu/+/8cc91d9b6ab9991802fd208ee03a69714fd0251c).
++Every other resource retains its original bytes, including all upstream locale,
++collation, timezone, dictionary, property and normalization resources. The bundle
++shrinks from 10,876,560 to 9,889,328 bytes; no additional locale restrictions apply.
++Rust URL/IDNA handling is independent. See the
++[runtime contract](../../docs/scripting.md#javascript-runtime).
+ 
+-1. Provide high quality Rust bindings to
+-   [V8's C++ API](https://cs.chromium.org/chromium/src/v8/include/v8.h). The API
+-   should match the original API as closely as possible.
++`native.patch` keeps ICU/Wasm binding entry points conditional on native features,
++omits Chromium's SDK debugger-DLL deployment step for this static archive, and
++adapts the [Windows ExtendedMap layout fix used by workerd](https://github.com/cloudflare/workerd/blob/main/patches/v8/0035-Fix-ExtendedMap-layout-on-Windows.patch)
++to the pinned V8 source. C++/Torque layout assertions remain enabled. The fix
++places the interceptor flag/padding bytes in the base class's tagged slot.
++The allocation-retry callback also uses the generic callback signature from newer
++V8 sources, allowing Chromium Clang to build against the installed MSVC library.
++The Windows CRT configuration follows Rust's `crt-static` target feature, keeping
++V8 and the host on the same C/C++ runtime.
+ 
+-2. Do not introduce additional call overhead. (For example, previous attempts at
+-   Rust V8 bindings forced the use of Persistent handles.)
++The build always compiles the native archive and generates matching Rust layout
++bindings using the native adapter's defines, headers, standard library and ABI
++settings. Upstream stock-archive overrides do not select another engine profile.
++Native release artifacts are shared between Rust build profiles under
++`target/native-v8` (or `CARGO_TARGET_DIR/native-v8`) with a process lock and a
++source/profile/target/ABI key. GN, Ninja and Chromium Clang are pinned by the
++reviewed upstream source and cached under `.tools/rusty-v8/tools`.
++Their installation is locked across builds that share the host tools.
++Generated Rust bindings stay in each Cargo build's own output directory.
++Native preparation and compilation hold a cache lease shared with
++`scripts/clean-disk.py --include-release`, which can reclaim older native
++variants and prepared sources while preserving the current source and tools.
+ 
+-3. Do not rely on a binary `libv8.a` built outside of cargo. V8 is a very large
+-   project (over 600,000 lines of C++) which often takes 30 minutes to compile.
+-   Furthermore, V8 relies on Chromium's bespoke build system (gn + ninja) which
+-   is not easy to use outside of Chromium. For this reason many attempts to bind
+-   to V8 rely on pre-built binaries that are built separately from the binding
+-   itself. While this is simple, it makes upgrading V8 difficult, it makes CI
+-   difficult, it makes producing builds with different configurations difficult,
+-   and it is a security concern since binary blobs can hide malicious code. For
+-   this reason we believe it is imperative to build V8 from source code during
+-   "cargo build".
++Use the portable environment wrapper for Cargo. `python scripts/cache-v8.py`
++can prepare the native engine before other builds. The first build needs network
++access to the pinned source/build tools; later builds reuse the verified sources
++and native outputs. Full PDB retention and sandbox restrictions remain unchanged.
+ 
+-4. Publish the crate on crates.io and allow docs.rs to generate documentation.
+-   Due to the complexity and size of V8's build, this is nontrivial. For example
+-   the crate size must be kept under 10 MiB in order to publish.
+-
+-## Versioning
+-
+-Rusty V8's major version aligns with Chrome's major version, which corresponds
+-to a specific V8 release. For example, Rusty V8 `129.0.0` maps to Chrome
+-`129.x.y.z`, which uses V8 `12.9.a.b`. While the minor and patch numbers between
+-Chrome and V8 may differ, Rusty V8 will follow Chrome's release schedule, with a
+-new major version every 4 weeks.
+-
+-As a Rust crate, Rusty V8 follows semantic versioning (semver) and will not
+-introduce breaking changes within a major version. However, major version bumps
+-will occur regularly to stay in sync with Chrome's release cycle.
+-
+-## Binary Build
+-
+-V8 is very large and takes a long time to compile. Many users will prefer to use
+-a prebuilt version of V8. We publish static libs for every version of rusty v8
+-on [Github](https://github.com/denoland/rusty_v8/releases).
+-
+-Binary builds are the default: `cargo build` will initiate a download from
+-github to get the static lib. To build V8 from source instead, set the
+-`V8_FROM_SOURCE` environment variable to `1` (`true` and `yes` also work). Any
+-other value, or leaving it unset, uses the prebuilt lib.
+-
+-When making changes to rusty_v8 itself, it should be tested by build from
+-source. The CI always builds from source.
+-
+-## The `V8_FORCE_DEBUG` environment variable
+-
+-By default `rusty_v8` will link against release builds of `v8`, if you want to
+-use a debug build of `v8` set `V8_FORCE_DEBUG=true`.
+-
+-We default to release builds of `v8` due to performance & CI reasons in `deno`.
+-
+-## The `RUSTY_V8_MIRROR` environment variable
+-
+-Tells the build script where to get binary builds from. Understands `http://`
+-and `https://` URLs, and file paths. The default is
+-https://github.com/denoland/rusty_v8/releases.
+-
+-For every artifact (the static lib and the generated `src_binding` file), the
+-build script tries an ordered list of locations and uses the first one that
+-works:
+-
+-1. `RUSTY_V8_ARCHIVE` (static lib) or `RUSTY_V8_SRC_BINDING_URL` (binding
+-   file), if set; either short-circuits everything else for its artifact.
+-2. The mirror, if `RUSTY_V8_MIRROR` is set. A plain base is expanded to
+-   `<base>/<tag>/<file>`; a value containing `{` placeholders is treated as a
+-   full URL template (see below).
+-3. For plain filesystem mirrors only: the flat layout `<base>/<file>`, so a
+-   directory of downloaded artifacts works without tag subdirectories.
+-4. The upstream GitHub release,
+-   `https://github.com/denoland/rusty_v8/releases/download/<tag>/<file>`.
+-   With a mirror configured this is only tried when
+-   `RUSTY_V8_MIRROR_FALLBACK=1` is set: a mirror fails closed by default and
+-   never silently reaches the network.
+-
+-If every candidate fails, the build script panics with the full list of URLs
+-it tried.
+-
+-`<tag>` defaults to `v<version>` (the crate version). Set
+-`RUSTY_V8_MIRROR_TAG` to override it; the value is used verbatim (no `v` is
+-prepended), so `RUSTY_V8_MIRROR_TAG=v152.0.0 cargo build` fetches the
+-artifacts of the last published release when building a checkout whose
+-`Cargo.toml` version is unpublished.
+-
+-If the `RUSTY_V8_MIRROR` value contains a `{` placeholder, the whole value is
+-used as a URL template instead of a base. Supported placeholders: `{tag}`,
+-`{version}` (no `v` prefix), `{target}`, `{profile}` (`release`/`debug`),
+-`{features}` (e.g. `_ptrcomp`), and `{file}` (the full artifact filename).
+-For example:
+-
+-    export RUSTY_V8_MIRROR=https://example.com/rusty_v8/{version}/{file}
+-
+-Set `RUSTY_V8_MIRROR_FALLBACK=1` to fall back to the upstream GitHub release
+-when the mirror is missing an artifact, e.g. for partially populated caches.
+-
+-File-based mirrors are good for using cached downloads. First, point the
+-environment variable to a suitable location:
+-
+-    # you might want to add this to your .bashrc
+-    $ export RUSTY_V8_MIRROR=$HOME/.cache/rusty_v8
+-
+-Then populate the cache:
+-
+-```bash
+-#!/bin/bash
+-
+-# see https://github.com/denoland/rusty_v8/releases
+-
+-for REL in v152.1.0 v152.0.0; do
+-  mkdir -p $RUSTY_V8_MIRROR/$REL
+-  for FILE in \
+-    librusty_v8_release_x86_64-unknown-linux-gnu.a.gz \
+-    src_binding_release_x86_64-unknown-linux-gnu.rs \
+-  ; do
+-    if [ ! -f $RUSTY_V8_MIRROR/$REL/$FILE ]; then
+-      wget -O $RUSTY_V8_MIRROR/$REL/$FILE \
+-        https://github.com/denoland/rusty_v8/releases/download/$REL/$FILE
+-    fi
+-  done
+-done
+-```
+-
+-## The `~/.cargo/.rusty_v8` download cache
+-
+-Before downloading an artifact, the build script looks for a copy in the
+-`.rusty_v8` directory inside your Cargo home (usually `~/.cargo/.rusty_v8`).
+-Entries are keyed on the release tag plus the artifact filename, with every
+-non-alphanumeric character replaced by `_` — for example
+-`v152.1.0/librusty_v8_release_x86_64-unknown-linux-gnu.a.gz` becomes
+-`v152_1_0_librusty_v8_release_x86_64_unknown_linux_gnu_a_gz`. The escaped
+-full source URL, the key used by older versions of the build script, is
+-still checked as a fallback, so existing caches keep working.
+-
+-Because the key does not include the source, a cache entry populated for one
+-mirror also satisfies a build configured for a different mirror (or for the
+-upstream release) under the same tag. If you need the archive bytes
+-themselves verified, pin them with `RUSTY_V8_ARCHIVE_SHA256` (below).
+-
+-## The `RUSTY_V8_ARCHIVE` environment variable
+-
+-Tell the build script to use a specific v8 library. This can be an URL or a
+-path. This is useful when you have a prebuilt archive somewhere:
+-
+-```bash
+-export RUSTY_V8_ARCHIVE=/path/to/custom_archive.a
+-cargo build
+-```
+-
+-The value may also name a directory, in which case the expected artifact
+-filename (e.g. `librusty_v8_release_x86_64-unknown-linux-gnu.a.gz`, gzipped
+-or plain) is looked up inside it. A directory is also the authoritative
+-source for the generated `src_binding` file: it is never fetched from the
+-mirror or the upstream release, so an offline setup that configured only the
+-directory never reaches the network. If the directory lacks the binding, a
+-usable binding left on disk by a previous build is reused with a warning;
+-otherwise the build fails:
+-
+-```bash
+-export RUSTY_V8_ARCHIVE=/path/to/downloaded/artifacts
+-cargo build
+-```
+-
+-Set `RUSTY_V8_ARCHIVE_SHA256` to the SHA-256 of the archive to pin its
+-content. A cached or previously downloaded archive that does not match is
+-re-fetched, and the build fails if the fresh download does not match either.
+-The pin covers the archive bytes as fetched, i.e. what `sha256sum` reports
+-on the `.gz` release asset (or on the plain file when the archive is not
+-gzipped). Independently of the pin, the build script records the SHA-256 of
+-every downloaded artifact and re-fetches it if the file on disk no longer
+-matches.
+-
+-## The `RUSTY_V8_SRC_BINDING_PATH` and `RUSTY_V8_SRC_BINDING_URL` environment variables
+-
+-The build also needs a generated `src_binding_..._<target>.rs` file, published
+-alongside the static library. `RUSTY_V8_SRC_BINDING_PATH` points the build at
+-a local binding file that is used directly, with no download at all.
+-`RUSTY_V8_SRC_BINDING_URL` instead gives a URL or path to fetch the binding
+-from, mirroring what `RUSTY_V8_ARCHIVE` does for the static library. If both
+-are set, `RUSTY_V8_SRC_BINDING_PATH` wins.
+-
+-## The `RUSTY_V8_SKIP_DOWNLOAD` environment variable
+-
+-Set `RUSTY_V8_SKIP_DOWNLOAD=1` to skip downloading the prebuilt static
+-library. The small generated binding file is still fetched, so `cargo check`
+-and rust-analyzer work without the (large) prebuilt artifact. Producing a
+-binary still requires the static library: `cargo build` fails at link time
+-until the crate is built again with the variable unset.
+-
+-This variable takes precedence over `RUSTY_V8_ARCHIVE` and `RUSTY_V8_MIRROR`
+-(the static library is not fetched from anywhere, not even from a local
+-archive), and it has no effect on `V8_FROM_SOURCE=1` builds. If the binding
+-file cannot be fetched (for example, the configured mirror does not carry it)
+-but a previously downloaded binding exists on disk, that file is reused with
+-a warning instead of failing the build.
+-
+-## Build V8 from Source
+-
+-Use `V8_FROM_SOURCE=1 cargo build -vv` to build the crate completely from
+-source.
+-
+-The build scripts require Python 3 to be available as `python3` in your `PATH`.
+-If you want to specify the exact binary of Python to use, you should use the
+-`PYTHON` environment variable.
+-
+-The build also requires `curl` to be installed on your system.
+-
+-For linux builds: glib-2.0 development files need to be installed such that
+-pkg-config can find them. On Ubuntu, run `sudo apt install libglib2.0-dev` to
+-install them.
+-
+-Additionally, building from source requires libclang 21.1+ for bindgen:
+-
+-```bash
+-sudo apt install libclang-21-dev
+-export LIBCLANG_PATH=/usr/lib/llvm-21/lib
+-```
+-
+-Linux cross-builds normally discover Clang's builtin headers and the target
+-libc headers from the host toolchain. For hermetic toolchains where those files
+-are not installed in host search paths, set the explicit bindgen inputs:
+-
+-```bash
+-export LIBCLANG_PATH=/path/to/libclang/lib
+-export RUSTY_V8_BINDGEN_RESOURCE_DIR=/path/to/lib/clang/21
+-export RUSTY_V8_GLIBC_PREFIX=/path/to/aarch64-linux-gnu
+-V8_FROM_SOURCE=1 cargo build -vv --target aarch64-unknown-linux-gnu
+-```
+-
+-`RUSTY_V8_BINDGEN_RESOURCE_DIR` takes the directory printed by
+-`clang -print-resource-dir`. `RUSTY_V8_GLIBC_PREFIX` takes a GNU target prefix
+-whose `include` child contains the target libc headers. Musl cross-builds use
+-`RUSTY_V8_MUSL_SYSROOT` instead; it is passed to Clang with `--sysroot`.
+-
+-For Windows builds: the 64-bit toolchain needs to be used. 32-bit targets are
+-not supported. The default source build downloads Chromium's pinned libclang
+-automatically. If `$CLANG_BASE_PATH` is set to a custom LLVM installation,
+-`$LIBCLANG_PATH` must point to the directory containing `libclang.dll`.
+-The `tools/win` submodule is skipped because its standalone mirror is
+-unreliable, so source builds must populate its pinned debugger visualizers:
+-
+-```bash
+-mkdir -p tools/win
+-curl -fL https://chromium.googlesource.com/chromium/src/tools/win/+archive/faefd1b6fa9eeb033ad6fe60368ccb9bf908cbd0.tar.gz |
+-  tar -xz -C tools/win
+-```
+-
+-For Mac builds: You'll need Xcode and Xcode CLT installed. Recent macOS versions
+-will also require you to pass PYTHON=python3 because macOS no longer ships with
+-`python` simlinked to Python 3.
+-
+-For Android builds: You'll need to cross compile from a x86_64 host to the
+-aarch64 or x64 android. You can use the following commands:
+-
+-```bash
+-rustup target add aarch64-linux-android  # or x86_64-linux-android
+-V8_FROM_SOURCE=1 cargo build -vv --target aarch64-linux-android
+-# or with cross
+-docker build --build-arg CROSS_BASE_IMAGE=ghcr.io/cross-rs/aarch64-linux-android:0.2.5 -t cross-rusty_v8:aarch64-linux-android .
+-V8_FROM_SOURCE=1 cross build -vv --target aarch64-linux-android
+-```
+-
+-For iOS builds: cross compile from an arm64 macOS host. The simulator target
+-keeps the JIT; the device target (`aarch64-apple-ios`) is built jitless, since
+-iOS denies the JIT entitlement to non-WebKit apps (WebAssembly is also disabled
+-in this configuration). `build.rs` selects these settings automatically per
+-target — no extra GN args required:
+-
+-```bash
+-rustup target add aarch64-apple-ios-sim  # simulator
+-rustup target add aarch64-apple-ios      # device (jitless)
+-V8_FROM_SOURCE=1 cargo build -vv --target aarch64-apple-ios-sim
+-```
+-
+-The build depends on several binary tools: `gn`, `ninja` and `clang`. The tools
+-will automatically be downloaded, if they are not detected in the environment.
+-
+-Specifying the `$GN` and `$NINJA` environmental variables can be used to skip
+-the download of gn and ninja. The clang download can be skipped by setting
+-`$CLANG_BASE_PATH` to the directory containing a `llvm`/`clang` installation. V8
+-is known to rely on bleeding edge features, so LLVM v8.0+ or Apple clang 11.0+
+-is recommended.
+-
+-Arguments can be passed to `gn` by setting the `$GN_ARGS` environmental
+-variable.
+-
+-For Linux targets, `rusty_v8` now defaults to defining
+-`V8_TLS_USED_IN_LIBRARY` via GN args when building from source so the produced
+-static archive can be linked into downstream `cdylib`/shared-library targets.
+-The default injected argument is:
+-
+-```bash
+-GN_ARGS='extra_cflags=["-DV8_TLS_USED_IN_LIBRARY"]'
+-```
+-
+-Linux prebuilt release archives published by this repository are built with
+-this shared-library-compatible TLS mode.
+-
+-Env vars used in when building from source: `SCCACHE`, `CCACHE`, `GN`, `NINJA`,
+-`CLANG_BASE_PATH`, `GN_ARGS`
+-
+-## FAQ
+-
+-**Building V8 takes over 30 minutes, this is too slow for me to use this crate.
+-What should I do?**
+-
+-Install [sccache](https://github.com/mozilla/sccache) or
+-[ccache](https://ccache.dev/). Our build scripts will detect and use them. Set
+-the `$SCCACHE` or `$CCACHE` environmental variable if it's not in your path.
+-
+-**What are all these random directories for like `build` and `buildtools` are
+-these really necessary?**
+-
+-In order to build V8 from source code, we must provide a certain directory
+-structure with some git submodules from Chromium. We welcome any simplifications
+-to the code base, but this is a structure we have found after many failed
+-attempts that carefully balances the requirements of cargo crates and GN/Ninja.
+-
+-**V8 has a very large API with hundreds of methods. Why don't you automate the
+-generation of this binding code?**
+-
+-We have actually started down this route several times, however due to many
+-eccentric features of the V8 API, this has not proven successful. Therefore we
+-are proceeding in a brute-force fashion for now, focusing on solving our stated
+-goals first. We hope to auto-generate bindings in the future.
+-
+-**Why are you building this?**
+-
+-This is to support [the Deno project](https://deno.land/). We previously have
+-gotten away with a simpler high-level Rust binding to V8 called
+-[libdeno](https://github.com/denoland/deno/tree/32937251315493ef2c3b42dd29340e8a34501aa4/core/libdeno).
+-But as Deno has matured we've found ourselves continually needing access to an
+-increasing amount of V8's API in Rust.
+-
+-**When building I get unknown argument: '-gno-inline-line-tables'**
+-
+-Use `export GN_ARGS="no_inline_line_tables=false"` during build.
+-
+-**My program crashes when initializing on non-main thread**
+-
+-Initializing V8 on a non-main thread with the CPUs PKU feature enabled might
+-lead to crashes. You can work around this problem by using
+-`v8::new_unprotected_default_platform`.
+-
+-See https://github.com/denoland/rusty_v8/issues/1381
+-
+-## Download cache
+-
+-The v8 archives used for linking in prebuilt mode can be cached to avoid
+-re-downloading archives when switching between branches that otherwise change
+-the current rusty_v8 version.
+-
+-To populate the cache by hand, you'll need to place the files in the appropriate
+-location in your `.cargo` folder. Running `cargo build -v -v` will print two
+-lines that you can use to determine the correct file and cache location:
+-
+-```
+-[v8 0.87.0] static lib URL: https://github.com/denoland/rusty_v8/releases/download/v0.87.0/librusty_v8_release_aarch64-apple-darwin.a.gz
+-[v8 0.87.0] Looking for download in '"/Users/<name>/.cargo/.rusty_v8/https___github_com_denoland_rusty_v8_releases_download_v0_87_0_librusty_v8_release_aarch64_apple_darwin_a_gz"'
+-```
+-
+-Given the above log output, use `curl` to download the file like so:
+-
+-```
+-curl -L https://github.com/denoland/rusty_v8/releases/download/v0.87.0/librusty_v8_release_aarch64-apple-darwin.a.gz >
+-  /Users/<name>/.cargo/.rusty_v8/https___github_com_denoland_rusty_v8_releases_download_v0_87_0_librusty_v8_release_aarch64_apple_darwin_a_gz
+-```
+-
+-## For maintainers
+-
+-**Cut a release**
+-
+-Create a PR to bump the release version (e.g.
+-https://github.com/denoland/rusty_v8/pull/1415).
+-
+-Create a new release/tag after the bump PR is landed. CI will publish the crate
+-and upload release binaries. You will need to manually upload binary archives
+-for M1 build.
+-
+-```
+-$ V8_FROM_SOURCE=1 cargo build
+-$ V8_FROM_SOURCE=1 cargo build --release
+-```
+-
+-## Experimental Features
+-
+-rusty_v8 includes experimental support for certain feature(s) that may be useful in security focused contexts but are not as well tested and do not undergo any sort of CI related testing or prebuilt archives. Due to their experimental status, these features require either ``V8_FROM_SOURCE=1`` to be set or the use of a custom-built archive of v8. 
+-
+-- ``v8_enable_sandbox``: Enables v8 sandbox mode. The v8 sandbox enables improved safety while executing potentially malicious JavaScript code through the use of memory cages. Note that the v8 sandbox will allocate ~1TB of virtual memory (although this should not be an issue as many operating systems allow 128-256TB of virtual memory per process). Creating isolates with the sandbox enabled comes with API limitations and may have increased overhead. Note that enabling the V8 sandbox also implies pointer compression to be enabled as well.
++`bindings.patch` records the local binding/build/profile delta against the registry
++archive; `transmog-snapshot.json` inventories this fork for build preflight and
++supply-chain notices. Preserve the MIT binding license and BSD V8 license.
++`LICENSE-THIRD-PARTY` retains the native component notices omitted from the
++registry archive; their exact upstream URLs and hashes are in `native-licenses.json`.
+--- /dev/null
++++ b/source-receipt.sha256
+@@ -0,0 +1 @@
++06c1c84e94df77936b9f21f0120d93de6510ca322921af7bc9ad16b2d7e7c20f
+--- /dev/null
++++ b/source.json
+@@ -0,0 +1,25 @@
++{
++  "name": "v8",
++  "version": "152.2.0",
++  "archive_sha256": "a10fe1a92da5c32c7c7f838ce36c0ccfcfd5edf0865b58bdde820aa64cea9888",
++  "archive_url": "https://static.crates.io/crates/v8/v8-152.2.0.crate",
++  "upstream_revision": "2768994f664e8a6e3aba27503606c58339136e2a",
++  "icuData": {
++    "revision": "d578f2e8b7bd5938e21cfb6bf15c079e0aa5b738",
++    "url": "https://chromium.googlesource.com/chromium/deps/icu/+/d578f2e8b7bd5938e21cfb6bf15c079e0aa5b738/common/icudtl.dat?format=TEXT",
++    "sha256": "9f48c7f9c7c94d516a14870707e910ab94d75ae640ff6842c4af53276cd26ebe",
++    "bytes": 10876560,
++    "licenseUrl": "https://chromium.googlesource.com/chromium/deps/icu/+/d578f2e8b7bd5938e21cfb6bf15c079e0aa5b738/LICENSE?format=TEXT",
++    "licenseSha256": "e55522d81edc687a341a4411e0776e54ca654e90147f354a90458aaced4116af",
++    "filter": {
++      "excludedSuffixes": [
++        ".cnv"
++      ],
++      "excludedFiles": [
++        "nfkc_scf.nrm"
++      ]
++    },
++    "filteredSha256": "2de2f8a8f20b5544736d0c5877bb36ea5fca8cba1ed3c591c2d65f4d20165898",
++    "filteredBytes": 9889328
++  }
++}
+--- a/src/binding.cc
++++ b/src/binding.cc
+@@ -15,9 +15,11 @@
+ #include "cppgc/platform.h"
+ #include "libplatform/libplatform.h"
+ #include "support.h"
++#ifdef V8_INTL_SUPPORT
+ #include "unicode/locid.h"
+ #include "unicode/timezone.h"
+ #include "unicode/unistr.h"
++#endif
+ #include "v8-callbacks.h"
+ #include "v8-cppgc.h"
+ #include "v8-fast-api-calls.h"
+@@ -4002,6 +4004,7 @@
+   return local_to_ptr(self.GetImportAttributes());
+ }
+ 
++#ifdef V8_ENABLE_WEBASSEMBLY
+ struct WasmStreamingSharedPtr {
+   std::shared_ptr<v8::WasmStreaming> inner;
+ };
+@@ -4063,6 +4066,7 @@
+   return local_to_ptr(ptr_to_local(&self)->Buffer());
+ }
+ 
++#endif
+ using HeapSnapshotCallback = bool (*)(void*, const char*, size_t);
+ 
+ void v8__HeapProfiler__TakeHeapSnapshot(v8::Isolate* isolate,
+@@ -4388,6 +4392,7 @@
+ }
+ }  // extern "C"
+ 
++#ifdef V8_ENABLE_WEBASSEMBLY
+ // v8::WasmModuleCompilation
+ 
+ extern "C" {
+@@ -4501,7 +4506,9 @@
+   delete self;
+ }
+ }  // extern "C"
+-
++#endif
++
++#ifdef V8_INTL_SUPPORT
+ // icu
+ 
+ extern "C" {
+@@ -4556,6 +4563,7 @@
+ 
+ }  // extern "C"
+ 
++#endif
+ // v8::PropertyDescriptor
+ 
+ extern "C" {
+--- a/src/isolate.rs
++++ b/src/isolate.rs
+@@ -2314,7 +2314,7 @@
+     // from another TLS destructor, where panicking would abort the process.
+     // A relaxed global counter is sufficient because IDs are only compared.
+     let id = NEXT_THREAD_ID
+-      .fetch_update(
++      .try_update(
+         std::sync::atomic::Ordering::Relaxed,
+         std::sync::atomic::Ordering::Relaxed,
+         |next| next.checked_add(1),
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -27,7 +27,6 @@
+ 
+ #[macro_use]
+ extern crate bitflags;
+-extern crate temporal_capi;
+ 
+ mod array_buffer;
+ mod array_buffer_view;
+@@ -44,10 +43,10 @@
+ pub mod fast_api;
+ mod fixed_array;
+ mod function;
++pub mod icu;
+ mod gc;
+ mod get_property_names_args_builder;
+ mod handle;
+-pub mod icu;
+ mod isolate;
+ mod isolate_create_params;
+ mod locker;

@@ -40,6 +40,7 @@ export async function cargoCredits(repository, metadata) {
   for (const pkg of metadata.packages) {
     const source = sources.get(pkg.name);
     const parser = pkg.name === "swc_ecma_parser";
+    const v8 = pkg.name === "v8";
     if (source) {
       const manifest = await realpath(
         resolve(repository, "third_party/rust-transport/vendor", pkg.name, "Cargo.toml"),
@@ -61,7 +62,17 @@ export async function cargoCredits(repository, metadata) {
       )
         throw new Error("Unreviewed SWC parser dependency");
     }
-    if (source || parser || pkg.source) packages.push(pkg);
+    if (v8) {
+      const directory = resolve(repository, "third_party/rusty-v8");
+      const pin = JSON.parse(await readFile(join(directory, "source.json"), "utf8"));
+      if (
+        pkg.source !== null ||
+        pkg.version !== pin.version ||
+        (await realpath(pkg.manifest_path)) !== (await realpath(join(directory, "Cargo.toml")))
+      )
+        throw new Error("Unreviewed V8 dependency");
+    }
+    if (source || parser || v8 || pkg.source) packages.push(pkg);
   }
   const entries = [];
   const byRepository = new Map();

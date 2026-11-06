@@ -4,6 +4,7 @@ import shutil
 
 from build_cache import maintain, registered_targets, related_profiles
 from test_run_cache import maintain_outputs
+from v8_cache import maintain_v8
 
 
 def clean_disk(root: Path, *, apply=False, deep=True, include_release=False) -> dict:
@@ -29,7 +30,8 @@ def clean_disk(root: Path, *, apply=False, deep=True, include_release=False) -> 
         root, apply=apply, include_legacy=True,
         keep_success=0 if deep else 2, keep_failures=0 if deep else 3,
         max_age_days=0 if deep else 14, max_gib=0 if deep else 20)
-    for item in [*report["profiles"], report["testOutputs"]]:
+    report["v8Caches"] = maintain_v8(root, apply=apply, deep=deep, include_release=include_release)
+    for item in [*report["profiles"], report["testOutputs"], report["v8Caches"]]:
         report["errors"].extend(item["errors"])
         for field in ("logicalBytes", "reclaimableBytesEstimate", "removedLogicalBytes"):
             report[field] += item[field]

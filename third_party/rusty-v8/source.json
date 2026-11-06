@@ -1,0 +1,25 @@
+{
+  "name": "v8",
+  "version": "152.2.0",
+  "archive_sha256": "a10fe1a92da5c32c7c7f838ce36c0ccfcfd5edf0865b58bdde820aa64cea9888",
+  "archive_url": "https://static.crates.io/crates/v8/v8-152.2.0.crate",
+  "upstream_revision": "2768994f664e8a6e3aba27503606c58339136e2a",
+  "icuData": {
+    "revision": "d578f2e8b7bd5938e21cfb6bf15c079e0aa5b738",
+    "url": "https://chromium.googlesource.com/chromium/deps/icu/+/d578f2e8b7bd5938e21cfb6bf15c079e0aa5b738/common/icudtl.dat?format=TEXT",
+    "sha256": "9f48c7f9c7c94d516a14870707e910ab94d75ae640ff6842c4af53276cd26ebe",
+    "bytes": 10876560,
+    "licenseUrl": "https://chromium.googlesource.com/chromium/deps/icu/+/d578f2e8b7bd5938e21cfb6bf15c079e0aa5b738/LICENSE?format=TEXT",
+    "licenseSha256": "e55522d81edc687a341a4411e0776e54ca654e90147f354a90458aaced4116af",
+    "filter": {
+      "excludedSuffixes": [
+        ".cnv"
+      ],
+      "excludedFiles": [
+        "nfkc_scf.nrm"
+      ]
+    },
+    "filteredSha256": "2de2f8a8f20b5544736d0c5877bb36ea5fca8cba1ed3c591c2d65f4d20165898",
+    "filteredBytes": 9889328
+  }
+}

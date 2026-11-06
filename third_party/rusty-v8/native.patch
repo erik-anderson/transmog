@@ -1,0 +1,168 @@
+--- a/src/binding.cc
++++ b/src/binding.cc
+@@ -15,9 +15,11 @@
+ #include "cppgc/platform.h"
+ #include "libplatform/libplatform.h"
+ #include "support.h"
++#ifdef V8_INTL_SUPPORT
+ #include "unicode/locid.h"
+ #include "unicode/timezone.h"
+ #include "unicode/unistr.h"
++#endif
+ #include "v8-callbacks.h"
+ #include "v8-cppgc.h"
+ #include "v8-fast-api-calls.h"
+@@ -4002,6 +4004,7 @@
+   return local_to_ptr(self.GetImportAttributes());
+ }
+ 
++#ifdef V8_ENABLE_WEBASSEMBLY
+ struct WasmStreamingSharedPtr {
+   std::shared_ptr<v8::WasmStreaming> inner;
+ };
+@@ -4063,6 +4066,7 @@
+   return local_to_ptr(ptr_to_local(&self)->Buffer());
+ }
+ 
++#endif
+ using HeapSnapshotCallback = bool (*)(void*, const char*, size_t);
+ 
+ void v8__HeapProfiler__TakeHeapSnapshot(v8::Isolate* isolate,
+@@ -4388,6 +4392,7 @@
+ }
+ }  // extern "C"
+ 
++#ifdef V8_ENABLE_WEBASSEMBLY
+ // v8::WasmModuleCompilation
+ 
+ extern "C" {
+@@ -4500,8 +4505,10 @@
+ void v8__CompiledWasmModule__DELETE(v8::CompiledWasmModule* self) {
+   delete self;
+ }
+ }  // extern "C"
++#endif
+ 
++#ifdef V8_INTL_SUPPORT
+ // icu
+ 
+ extern "C" {
+@@ -4556,6 +4563,7 @@
+ 
+ }  // extern "C"
+ 
++#endif
+ // v8::PropertyDescriptor
+ 
+ extern "C" {
+--- a/build/vs_toolchain.py
++++ b/build/vs_toolchain.py
+@@ -430,7 +430,7 @@
+   _CopyRuntime(target_dir, runtime_dir, target_cpu, debug=False)
+   if configuration == 'Debug':
+     _CopyRuntime(target_dir, runtime_dir, target_cpu, debug=True)
+-  _CopyDebugger(target_dir, target_cpu)
++  # Static V8 build: SDK debugger DLL deployment is unnecessary.
+   if target_cpu == 'arm64':
+     target_dir = os.path.join(target_dir, 'win_clang_x64')
+     target_cpu = 'x64'
+@@ -439,7 +439,7 @@
+     _CopyRuntime(target_dir, runtime_dir, target_cpu, debug=False)
+     if configuration == 'Debug':
+       _CopyRuntime(target_dir, runtime_dir, target_cpu, debug=True)
+-    _CopyDebugger(target_dir, target_cpu)
++    # Static V8 build: SDK debugger DLL deployment is unnecessary.
+ 
+ 
+ def _CopyDebugger(target_dir, target_cpu):
+--- a/v8/src/objects/js-interceptor-map.h
++++ b/v8/src/objects/js-interceptor-map.h
+@@ -40,8 +40,6 @@
+   inline void init_flags_and_clear_extended_padding();
+ 
+  public:
+-  uint8_t flags_;
+-  uint8_t extended_padding_[kTaggedSize - 2];
+   TaggedMember<InterceptorInfo> named_interceptor_;
+   TaggedMember<InterceptorInfo> indexed_interceptor_;
+   TaggedMember<Cell> fast_case_validity_cell_;
+--- a/v8/src/objects/js-interceptor-map.tq
++++ b/v8/src/objects/js-interceptor-map.tq
+@@ -8,9 +8,6 @@
+ @hasSameInstanceTypeAsParent
+ @doNotGenerateCast
+ extern class JSInterceptorMap extends ExtendedMap {
+-  flags: uint8;
+-  @ifnot(TAGGED_SIZE_8_BYTES) extended_padding[2]: uint8;
+-  @if(TAGGED_SIZE_8_BYTES) extended_padding[6]: uint8;
+   named_interceptor: InterceptorInfo;
+   indexed_interceptor: InterceptorInfo;
+   // This prototype validity cell guards modifications of the interceptor's
+--- a/v8/src/objects/map.h
++++ b/v8/src/objects/map.h
+@@ -1288,7 +1288,9 @@
+   static const int kStartOfStrongExtendedFieldsOffset;
+ 
+   std::atomic<uint8_t> bit_field_ex_;
+-  // Leaves kTaggedSize-1 unused bytes, they will be used by subclasses.
++  // Complete this tagged slot before deriving further map layouts.
++  uint8_t flags_;
++  uint8_t extended_padding_[kTaggedSize - 2];
+ } V8_OBJECT_END;
+ 
+ constexpr int ExtendedMapSizeForKind(ExtendedMapKind kind);
+--- a/v8/src/objects/map.tq
++++ b/v8/src/objects/map.tq
+@@ -116,7 +116,10 @@
+ @doNotGenerateCast
+ extern class ExtendedMap extends Map {
+   bit_field_ex: ExtendedMapBitFields;
+-  // Leaves kTaggedSize-1 unused bytes, they will be used by subclasses.
++  // Complete this tagged slot before deriving further map layouts.
++  flags: uint8;
++  @ifnot(TAGGED_SIZE_8_BYTES) extended_padding[2]: uint8;
++  @if(TAGGED_SIZE_8_BYTES) extended_padding[6]: uint8;
+ }
+ 
+ @export
+--- a/v8/src/objects/backing-store.cc
++++ b/v8/src/objects/backing-store.cc
+@@ -323,7 +323,7 @@
+   // For accounting purposes, whether a GC was necessary.
+   bool did_retry = false;
+ 
+-  auto gc_retry = [&](const std::function<bool()>& fn) {
++  auto gc_retry = [&](const auto& fn) {
+     if (fn()) return true;
+     // Collect garbage and retry.
+     did_retry = true;
+--- a/build/config/win/BUILD.gn
++++ b/build/config/win/BUILD.gn
+@@ -17,6 +17,9 @@
+ assert(is_win)
+ 
+ declare_args() {
++  # Match the embedding Rust host, independently of component/shared builds.
++  transmog_use_static_crt = true
++
+   # Turn this on to have the linker output extra timing information.
+   win_linker_timing = false
+ 
+@@ -517,7 +520,7 @@
+ # See https://msdn.microsoft.com/en-us/library/2kzt1wy3.aspx for a reference of
+ # what each value does.
+ config("default_crt") {
+-  if (is_component_build) {
++  if (is_component_build || !transmog_use_static_crt) {
+     # Component mode: dynamic CRT. Since the library is shared, it requires
+     # exceptions or will give errors about things not matching, so keep
+     # exceptions on.
+@@ -540,7 +543,7 @@
+ # when the debug CRT is part of the bottleneck. This also avoids *implicitly*
+ # defining _DEBUG.
+ config("release_crt") {
+-  if (is_component_build) {
++  if (is_component_build || !transmog_use_static_crt) {
+     cflags = [ "/MD" ]
+ 
+     # /MD specifies msvcrt.lib as the CRT library, which is the dynamic+release

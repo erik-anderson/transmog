@@ -10,6 +10,7 @@ from urllib.parse import quote, urlsplit
 from repo_tools import ROOT, command, main_guard, write_json
 from transport_dependencies import resolved_provenance
 from swc_dependencies import resolved_provenance as swc_provenance
+from v8_dependencies import resolved_provenance as v8_provenance
 
 
 def package_key(package):
@@ -50,7 +51,7 @@ def license_choices(expression):
 
 def artifacts(metadata, npm, version, *, native=None):
     packages = sorted(metadata["packages"], key=package_key)
-    transports = {**resolved_provenance(metadata, ROOT), **swc_provenance(metadata, ROOT)}
+    transports = {**resolved_provenance(metadata, ROOT), **swc_provenance(metadata, ROOT), **v8_provenance(metadata, ROOT)}
     third_party = [p for p in packages if p.get("source") is not None or p["id"] in transports]
     lines = ["# Third-party notices", "",
              "Transmog includes the following third-party software.",
@@ -70,6 +71,12 @@ def artifacts(metadata, npm, version, *, native=None):
     lines += [f"| {p['name']} | {p['version']} | {p['license']} | {p['source']} |" for p in npm]
     lines += ["", "## Bundled native code", "",
               "`boring-sys` and `quiche` compile bundled BoringSSL/quiche source. Their upstream license files and notices remain part of the Cargo source distribution and must be retained in binary distribution materials."]
+    if any(p["name"] == "v8" for p in packages):
+        lines += ["", "## V8 native runtime", "",
+                  "The local rusty_v8 fork builds its pinned native source with Sparkplug, Inspector and ICU-backed Intl/Unicode support, omitting optimizing JIT tiers, WebAssembly and Temporal. ICU data filtering removes only legacy charset converters and unused NFKC Simple Casefold data; all other upstream resources retain their original bytes. Source, profile and patches are recorded in `third_party/rusty-v8` and the SBOM.", "",
+                  (ROOT / "third_party/rusty-v8/LICENSE-V8").read_text(encoding="utf-8").rstrip(), "",
+                  (ROOT / "third_party/rusty-v8/LICENSE-THIRD-PARTY").read_text(encoding="utf-8").rstrip(), "",
+                  (ROOT / "third_party/rusty-v8/LICENSE-ICU").read_text(encoding="utf-8").rstrip()]
     pki = json.loads((ROOT / "third_party/boringssl-pki/manifest.json").read_text(encoding="utf-8"))
     psl = json.loads((ROOT / "third_party/chromium-suffix-list/snapshot.json").read_text(encoding="utf-8"))
     lines += ["", "## BoringSSL PKI", "",
@@ -123,6 +130,16 @@ def artifacts(metadata, npm, version, *, native=None):
             component.setdefault("externalReferences", []).append({"type": "distribution", "url": transport["archiveUrl"]})
             component["properties"] = [{"name": transport.get("propertyPrefix", "transmog:transport:") + key, "value": transport[key]}
                                        for key in ("archiveSha256", "patchPath", "patchSha256", "snapshotSha256")]
+            if package["name"] == "v8":
+                directory = ROOT / "third_party/rusty-v8"
+                receipt = json.loads((directory / "transmog-snapshot.json").read_text(encoding="utf-8"))
+                component["properties"] += [
+                    {"name": "transmog:v8:nativeRevision", "value": receipt["nativeRevision"]},
+                    {"name": "transmog:v8:gnProfile", "value": (directory / "profile.gn").read_text(encoding="utf-8")},
+                    {"name": "transmog:v8:nativePatchSha256", "value": hashlib.sha256((directory / "native.patch").read_bytes()).hexdigest()},
+                    {"name": "transmog:v8:nativeLicenseSources", "value": (directory / "native-licenses.json").read_text(encoding="utf-8")},
+                    {"name": "transmog:v8:icuData", "value": json.dumps(receipt["source"]["icuData"], sort_keys=True)},
+                ]
         components.append(component)
     for package in npm:
         components.append({"type": "library", "bom-ref": f"npm:{package['name']}@{package['version']}",

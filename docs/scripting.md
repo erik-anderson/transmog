@@ -16,6 +16,14 @@ Export synchronous handlers and import helpers and types from transmog:api. Brow
 
 If the applied script becomes unavailable, matching requests can fail. Choose Retry applied script, apply a fix, or Pause script.
 
+## JavaScript runtime
+
+Traffic scripts and protocol visualizers provide modules, promises, Date, Intl, Unicode strings, and the Transmog API. Temporal, WebAssembly, browser APIs, and Node APIs are unavailable in the isolated runtime.
+
+Unicode normalization, Unicode property escapes in regular expressions, locale-sensitive casing and comparison, international number/date formatting, and text segmentation are supported. Supply explicit locales and time zones when transformations must produce consistent results across computers.
+
+These restrictions apply to isolated scripts and visualizers. The desktop browser has its own JavaScript capabilities. Native script debugging remains available.
+
 ## Callbacks, decisions and permissions
 
 Every callback receives the request, parameters, state, and context. The table shows its additional inputs and allowed decisions. These inputs are read-only.

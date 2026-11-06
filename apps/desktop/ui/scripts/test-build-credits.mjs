@@ -93,6 +93,32 @@ test("credits reject transports with a different source, version, or manifest", 
   }
 });
 
+test("credits retain the native V8 fork and reject substituted engine sources", async () => {
+  const directory = resolve(repository, "third_party/rusty-v8");
+  const pin = JSON.parse(await readFile(join(directory, "source.json"), "utf8"));
+  const engine = {
+    id: "v8",
+    name: "v8",
+    version: pin.version,
+    source: null,
+    license: "MIT",
+    manifest_path: join(directory, "Cargo.toml"),
+  };
+  const entries = await cargoCredits(repository, { packages: [engine] });
+  assert.equal(entries.length, 1);
+  for (const license of ["LICENSE", "LICENSE-V8"])
+    assert.ok(entries[0].text.includes(await readFile(join(directory, license), "utf8")));
+  for (const change of [
+    { source: "registry+https://github.com/rust-lang/crates.io-index" },
+    { version: "0.0.0" },
+    { manifest_path: resolve(repository, "Cargo.toml") },
+  ])
+    await assert.rejects(
+      cargoCredits(repository, { packages: [{ ...engine, ...change }] }),
+      /Unreviewed V8 dependency/,
+    );
+});
+
 test("credits accept a checkout reached through a directory alias", async () => {
   const temporary = await mkdtemp(join(tmpdir(), "transmog-credits-"));
   try {
