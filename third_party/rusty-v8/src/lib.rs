@@ -81,7 +81,9 @@ mod unbound_script;
 mod value;
 mod value_deserializer;
 mod value_serializer;
-mod wasm;
+// Transmog's fixed native profile omits WebAssembly. Do not compile the
+// corresponding Rust wrappers: even unused destructors can require native
+// symbols when linking an unoptimized Rust build.
 
 pub mod crdtp;
 pub mod inspector;
@@ -198,10 +200,6 @@ pub use value_deserializer::ValueDeserializerImpl;
 pub use value_serializer::ValueSerializer;
 pub use value_serializer::ValueSerializerHelper;
 pub use value_serializer::ValueSerializerImpl;
-pub use wasm::CompiledWasmModule;
-pub use wasm::ModuleCachingInterface;
-pub use wasm::WasmModuleCompilation;
-pub use wasm::WasmStreaming;
 
 /// https://v8.dev/docs/version-numbers
 pub const MAJOR_VERSION: u32 = binding::v8__MAJOR_VERSION;

@@ -2560,7 +2560,7 @@
 +treat_warnings_as_errors = false
 --- a/README.md
 +++ b/README.md
-@@ -1,401 +1,57 @@
+@@ -1,401 +1,59 @@
 -# Rusty V8 Binding
 +# Transmog V8 profile
  
@@ -2579,6 +2579,8 @@
 +`profile.gn` selects Sparkplug, omitting TurboFan, Maglev, WebAssembly and
 +Temporal. Inspector, Intl, Unicode normalization, Unicode property expressions,
 +locale-sensitive casing/collation, and segmentation remain available.
++The Rust interface also omits WebAssembly compilation and streaming wrappers so
++Debug builds cannot reference native entry points excluded by this profile.
  
 -## Goals
 +`source.json` pins the ICU data omitted from the registry source archive.
@@ -3103,7 +3105,67 @@
  extern "C" {
 --- a/src/isolate.rs
 +++ b/src/isolate.rs
-@@ -2314,7 +2314,7 @@
+@@ -25,7 +25,6 @@
+ pub use crate::binding::v8__ModuleImportPhase as ModuleImportPhase;
+ use crate::cppgc::Heap;
+ use crate::external_references::ExternalReference;
+-use crate::function::FunctionCallbackInfo;
+ use crate::gc::GCCallbackFlags;
+ use crate::gc::GCType;
+ use crate::handle::FinalizerCallback;
+@@ -42,8 +41,6 @@
+ use crate::support::char;
+ use crate::support::int;
+ use crate::support::size_t;
+-use crate::wasm::WasmStreaming;
+-use crate::wasm::trampoline;
+ use std::cell::UnsafeCell;
+ use std::ffi::CStr;
+ 
+@@ -840,10 +837,6 @@
+     function: *const Function,
+   );
+   fn v8__Isolate__SetAllowAtomicsWait(isolate: *mut RealIsolate, allow: bool);
+-  fn v8__Isolate__SetWasmStreamingCallback(
+-    isolate: *mut RealIsolate,
+-    callback: unsafe extern "C" fn(*const FunctionCallbackInfo),
+-  );
+   fn v8__Isolate__DateTimeConfigurationChangeNotification(
+     isolate: *mut RealIsolate,
+     time_zone_detection: TimeZoneDetection,
+@@ -1985,31 +1978,6 @@
+     unsafe { v8__Isolate__SetAllowAtomicsWait(self.as_real_ptr(), allow) }
+   }
+ 
+-  /// Embedder injection point for `WebAssembly.compileStreaming(source)`.
+-  /// The expectation is that the embedder sets it at most once.
+-  ///
+-  /// The callback receives the source argument (string, Promise, etc.)
+-  /// and an instance of [WasmStreaming]. The [WasmStreaming] instance
+-  /// can outlive the callback and is used to feed data chunks to V8
+-  /// asynchronously.
+-  #[inline(always)]
+-  pub fn set_wasm_streaming_callback<F>(&mut self, _: F)
+-  where
+-    F: UnitType
+-      + for<'a, 'b, 'c> Fn(
+-        &'c mut PinScope<'a, 'b>,
+-        Local<'a, Value>,
+-        WasmStreaming<false>,
+-      ),
+-  {
+-    unsafe {
+-      v8__Isolate__SetWasmStreamingCallback(
+-        self.as_real_ptr(),
+-        trampoline::<F>(),
+-      )
+-    }
+-  }
+-
+   /// Notification that the embedder has changed the time zone, daylight savings
+   /// time or other date / time configuration parameters. V8 keeps a cache of
+   /// various values used for date / time computation. This notification will
+@@ -2314,7 +2282,7 @@
      // from another TLS destructor, where panicking would abort the process.
      // A relaxed global counter is sufficient because IDs are only compared.
      let id = NEXT_THREAD_ID
@@ -3134,3 +3196,25 @@
  mod isolate;
  mod isolate_create_params;
  mod locker;
+@@ -82,7 +81,9 @@
+ mod value;
+ mod value_deserializer;
+ mod value_serializer;
+-mod wasm;
++// Transmog's fixed native profile omits WebAssembly. Do not compile the
++// corresponding Rust wrappers: even unused destructors can require native
++// symbols when linking an unoptimized Rust build.
+ 
+ pub mod crdtp;
+ pub mod inspector;
+@@ -199,10 +200,6 @@
+ pub use value_serializer::ValueSerializer;
+ pub use value_serializer::ValueSerializerHelper;
+ pub use value_serializer::ValueSerializerImpl;
+-pub use wasm::CompiledWasmModule;
+-pub use wasm::ModuleCachingInterface;
+-pub use wasm::WasmModuleCompilation;
+-pub use wasm::WasmStreaming;
+ 
+ /// https://v8.dev/docs/version-numbers
+ pub const MAJOR_VERSION: u32 = binding::v8__MAJOR_VERSION;

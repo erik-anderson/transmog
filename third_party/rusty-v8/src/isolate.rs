@@ -25,7 +25,6 @@ use crate::binding::v8__Isolate__UseCounterFeature;
 pub use crate::binding::v8__ModuleImportPhase as ModuleImportPhase;
 use crate::cppgc::Heap;
 use crate::external_references::ExternalReference;
-use crate::function::FunctionCallbackInfo;
 use crate::gc::GCCallbackFlags;
 use crate::gc::GCType;
 use crate::handle::FinalizerCallback;
@@ -42,8 +41,6 @@ use crate::support::UnitType;
 use crate::support::char;
 use crate::support::int;
 use crate::support::size_t;
-use crate::wasm::WasmStreaming;
-use crate::wasm::trampoline;
 use std::cell::UnsafeCell;
 use std::ffi::CStr;
 
@@ -840,10 +837,6 @@ unsafe extern "C" {
     function: *const Function,
   );
   fn v8__Isolate__SetAllowAtomicsWait(isolate: *mut RealIsolate, allow: bool);
-  fn v8__Isolate__SetWasmStreamingCallback(
-    isolate: *mut RealIsolate,
-    callback: unsafe extern "C" fn(*const FunctionCallbackInfo),
-  );
   fn v8__Isolate__DateTimeConfigurationChangeNotification(
     isolate: *mut RealIsolate,
     time_zone_detection: TimeZoneDetection,
@@ -1983,31 +1976,6 @@ impl Isolate {
   #[inline(always)]
   pub fn set_allow_atomics_wait(&mut self, allow: bool) {
     unsafe { v8__Isolate__SetAllowAtomicsWait(self.as_real_ptr(), allow) }
-  }
-
-  /// Embedder injection point for `WebAssembly.compileStreaming(source)`.
-  /// The expectation is that the embedder sets it at most once.
-  ///
-  /// The callback receives the source argument (string, Promise, etc.)
-  /// and an instance of [WasmStreaming]. The [WasmStreaming] instance
-  /// can outlive the callback and is used to feed data chunks to V8
-  /// asynchronously.
-  #[inline(always)]
-  pub fn set_wasm_streaming_callback<F>(&mut self, _: F)
-  where
-    F: UnitType
-      + for<'a, 'b, 'c> Fn(
-        &'c mut PinScope<'a, 'b>,
-        Local<'a, Value>,
-        WasmStreaming<false>,
-      ),
-  {
-    unsafe {
-      v8__Isolate__SetWasmStreamingCallback(
-        self.as_real_ptr(),
-        trampoline::<F>(),
-      )
-    }
   }
 
   /// Notification that the embedder has changed the time zone, daylight savings

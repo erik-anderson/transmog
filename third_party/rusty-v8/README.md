@@ -11,6 +11,8 @@ concurrent builds never patch an active source tree in place.
 `profile.gn` selects Sparkplug, omitting TurboFan, Maglev, WebAssembly and
 Temporal. Inspector, Intl, Unicode normalization, Unicode property expressions,
 locale-sensitive casing/collation, and segmentation remain available.
+The Rust interface also omits WebAssembly compilation and streaming wrappers so
+Debug builds cannot reference native entry points excluded by this profile.
 
 `source.json` pins the ICU data omitted from the registry source archive.
 `scripts/icu_data.py` removes only legacy charset-converter tables (`*.cnv`),
