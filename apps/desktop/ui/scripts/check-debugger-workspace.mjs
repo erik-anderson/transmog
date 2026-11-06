@@ -3,6 +3,7 @@ import { checkDebuggerConsole } from "./check-debugger-console.mjs";
 import { checkDebuggerProperties } from "./check-debugger-properties.mjs";
 import { resolve } from "node:path";
 import { checkDebuggerNavigation } from "./check-debugger-navigation.mjs";
+import { checkDebuggerDocking } from "./check-debugger-docking.mjs";
 import { checkDebuggerInspection } from "./check-debugger-inspection.mjs";
 import { checkDebuggerControls } from "./check-debugger-controls.mjs";
 import { checkDebuggerAuthoring } from "./check-debugger-authoring.mjs";
@@ -27,6 +28,7 @@ export async function checkDebuggerWorkspace(page, root) {
   await workspace.locator(".monaco-editor").waitFor();
   await shortcut.waitFor();
   await checkDebuggerNavigation(page, workspace, root);
+  await checkDebuggerDocking(page, workspace, root);
   await workspace.evaluate((element) => element.editor.focus());
   await page.keyboard.press("F12");
   await workspace.waitFor({ state: "detached" });

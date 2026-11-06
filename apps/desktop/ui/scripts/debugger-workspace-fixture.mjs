@@ -269,7 +269,7 @@ export function installDebuggerWorkspaceFixture() {
           closed: debug.closed,
           exceptions: debug.policy,
           cursor: debug.events.length,
-          omitted: false,
+          omitted: args.after < (debug.eventFloor ?? 0),
           inventory:
             args.after === 0
               ? {
@@ -277,7 +277,9 @@ export function installDebuggerWorkspaceFixture() {
                   breakpoints: debug.points.filter((point) => point.enabled).map(binding),
                 }
               : undefined,
-          events: debug.events.slice(args.after).filter((item) => item.session === args.session),
+          events: debug.events
+            .slice(Math.max(args.after, debug.eventFloor ?? 0))
+            .filter((item) => item.session === args.session),
           logs: debug.logs ?? [],
           sessionRemainingMs: 0,
           pauseRemainingMs: null,
@@ -303,6 +305,10 @@ export function installDebuggerWorkspaceFixture() {
           { kind: "control", skipPauses: debug.skipPauses, pauseNext: debug.pauseNext },
           request,
         );
+        if (debug.omitPauseReply) {
+          debug.omitPauseReply = false;
+          debug.eventFloor = debug.events.length;
+        }
       }
       if (action.kind === "continue-to") {
         debug.paused = null;

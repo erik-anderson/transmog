@@ -7,6 +7,7 @@ export class PaneDivider extends WebUIElement {
   @attr initial = "45";
   private pointer: number | null = null;
   private previous = 45;
+  private origin = 0;
 
   startResize(event: PointerEvent): void {
     if (event.button !== 0) {
@@ -15,6 +16,7 @@ export class PaneDivider extends WebUIElement {
     event.preventDefault();
     this.pointer = event.pointerId;
     this.previous = Number(this.value);
+    this.origin = this.orientation === "horizontal" ? event.clientY : event.clientX;
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
   }
   resize(event: PointerEvent): void {
@@ -22,11 +24,11 @@ export class PaneDivider extends WebUIElement {
       return;
     }
     const bounds = this.parentElement.getBoundingClientRect();
-    const position =
+    const delta =
       this.orientation === "horizontal"
-        ? (event.clientY - bounds.top) / bounds.height
-        : (event.clientX - bounds.left) / bounds.width;
-    this.change(position * 100, false);
+        ? (event.clientY - this.origin) / bounds.height
+        : (event.clientX - this.origin) / bounds.width;
+    this.change(this.previous + delta * 100, false);
   }
   finishResize(event: PointerEvent): void {
     if (this.pointer !== event.pointerId) {

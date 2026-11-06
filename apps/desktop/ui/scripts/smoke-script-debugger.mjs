@@ -104,7 +104,8 @@ function proxyGet(listener, url) {
         );
       },
     );
-    request.setTimeout(15000, () => request.destroy(new Error("Loopback client timed out")));
+    // Inspection can keep a healthy worker paused longer than an ordinary request.
+    request.setTimeout(120000, () => request.destroy(new Error("Loopback client timed out")));
     request.on("error", fail);
     request.end();
   });
@@ -339,6 +340,16 @@ try {
     JSON.stringify(evidence, null, 2) + "\n",
   );
 } catch (error) {
+  const runtime = await invoke("script_runtime_status").catch(String);
+  const exchangeIds = Array.isArray(runtime)
+    ? [...new Set(runtime.flatMap((script) => script.logs.map((run) => run.context.exchangeId)))]
+    : [];
+  const exchanges = await Promise.all(
+    exchangeIds.map(async (id) => {
+      const detail = await invoke("session_detail", { id }).catch(String);
+      return { id, terminal: detail.terminal, diagnostics: detail.diagnostics };
+    }),
+  );
   await page.screenshot({
     path: resolve(argument("--output"), "script-debugger-native-failure.png"),
   });
@@ -348,6 +359,8 @@ try {
       {
         message: error.message,
         evidence,
+        runtime,
+        exchanges,
         editor: await page.locator("script-editor").evaluate((element) => ({
           status: element.scriptText,
           authoring: element.authoringStatus,
@@ -373,34 +386,48 @@ try {
                 .catch(String),
               panels: await surface
                 .locator("debugger-workspace")
-                .evaluateAll((elements) =>
-                  elements.map((element) => ({
-                    error: element.debuggerError,
-                    transition: element.debuggerTransition,
-                    editor: !!element.editor,
-                    scopes: element.debuggerScopeValues.map((value) => ({
-                      label: value.label,
-                      expired: value.expired,
-                      expanded: value.expanded,
-                      loading: value.loading,
-                      issue: value.issue,
-                      handle: value.value.handle,
-                      rows: value.rows.slice(0, 12).map((row) => ({
-                        name: row.name,
-                        value: row.value,
-                        preview: row.preview,
-                        expanded: row.expanded,
+                .evaluateAll(async (elements) =>
+                  Promise.all(
+                    elements.map(async (element) => ({
+                      error: element.debuggerError,
+                      transition: element.debuggerTransition,
+                      editor: !!element.editor,
+                      target: element.debuggerTarget,
+                      paused: element.debuggerPaused,
+                      pauseNext: element.debuggerPauseNext,
+                      closed: element.debuggerClosed,
+                      session: element.debuggerTarget
+                        ? await window.__TAURI_INTERNALS__
+                            .invoke("workspace_debug_session", {
+                              session: element.debuggerTarget,
+                              after: 0,
+                            })
+                            .catch(String)
+                        : null,
+                      scopes: element.debuggerScopeValues.map((value) => ({
+                        label: value.label,
+                        expired: value.expired,
+                        expanded: value.expanded,
+                        loading: value.loading,
+                        issue: value.issue,
+                        handle: value.value.handle,
+                        rows: value.rows.slice(0, 12).map((row) => ({
+                          name: row.name,
+                          value: row.value,
+                          preview: row.preview,
+                          expanded: row.expanded,
+                        })),
                       })),
+                      events: [...element.views.values()].flatMap((view) =>
+                        view.stream.events.slice(-8).map((item) => ({
+                          request: item.request,
+                          kind: item.event.kind,
+                          value: item.event.value,
+                          message: item.event.message,
+                        })),
+                      ),
                     })),
-                    events: [...element.views.values()].flatMap((view) =>
-                      view.stream.events.slice(-8).map((item) => ({
-                        request: item.request,
-                        kind: item.event.kind,
-                        value: item.event.value,
-                        message: item.event.message,
-                      })),
-                    ),
-                  })),
+                  ),
                 )
                 .catch(String),
             })),

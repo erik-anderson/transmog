@@ -1,6 +1,104 @@
 use super::*;
 
 #[test]
+fn pause_next_can_be_rearmed_after_inspecting_and_resuming_callbacks() {
+    let (commands, input) = mpsc::sync_channel(MAX_DEBUG_COMMANDS);
+    let (output, events) = mpsc::sync_channel(64);
+    let (start, starts) = mpsc::sync_channel(1);
+    let (finished, completions) = mpsc::sync_channel(1);
+    let engine = std::thread::spawn(move || {
+        let mut runtime = Runtime::new(1024 * 1024, 32 * 1024 * 1024).unwrap();
+        runtime.execute_script("transmog:script-bootstrap", "globalThis.invoke=()=>{const input=Array.from({length:200},(_,i)=>({i}));for(const item of input)Object.freeze(item);return run();};").unwrap();
+        let entry = url::Url::parse(SOURCE).unwrap();
+        runtime.evaluate_modules(&entry, BTreeMap::from([(entry.clone(), "export function run(){\n const value=7;\n return value;\n}\nglobalThis.run=run;".into())])).unwrap();
+        runtime
+            .enable_debugger(
+                options(vec![]),
+                DebugTransport::new(input, move |event| output.try_send(event).is_ok()),
+            )
+            .unwrap();
+        for invocation in 1..=3 {
+            while starts.try_recv().is_err() {
+                runtime.poll_debugger();
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            runtime.begin_debug_operation(invocation);
+            assert_eq!(
+                runtime
+                    .execute_string("transmog:invoke", "String(invoke())", 32)
+                    .unwrap(),
+                "7"
+            );
+            finished.send(()).unwrap();
+        }
+    });
+    event(&events, |event| {
+        matches!(event.event, DebugEventKind::Attached)
+    });
+    for invocation in 1..=3 {
+        let request = invocation * 10;
+        command(&commands, request, DebugAction::PauseNext { enabled: true });
+        assert!(matches!(
+            reply(&events, request).event,
+            DebugEventKind::Control {
+                pause_next: true,
+                ..
+            }
+        ));
+        start.send(()).unwrap();
+        let paused = event(&events, |event| {
+            matches!(event.event, DebugEventKind::Paused { .. })
+        });
+        assert_eq!(paused.invocation, invocation);
+        let DebugEventKind::Paused {
+            pause,
+            reason,
+            frames,
+            ..
+        } = paused.event
+        else {
+            unreachable!()
+        };
+        assert_eq!(reason, "next callback");
+        assert_eq!(frames[0].location.as_ref().unwrap().source, SOURCE);
+        command(
+            &commands,
+            request + 1,
+            DebugAction::Inspect {
+                expression: "1+1".into(),
+                pause,
+                frame: Some(0),
+            },
+        );
+        let inspected = event(&events, |event| {
+            event.request == request + 1
+                && matches!(
+                    event.event,
+                    DebugEventKind::Evaluated { .. } | DebugEventKind::Rejected { .. }
+                )
+        });
+        assert!(
+            matches!(
+                inspected.event,
+                DebugEventKind::Evaluated { thrown: false, .. }
+            ),
+            "{inspected:?}"
+        );
+        command(
+            &commands,
+            request + 2,
+            DebugAction::Resume {
+                pause,
+                action: ResumeAction::Continue,
+            },
+        );
+        reply(&events, request + 2);
+        completions.recv_timeout(Duration::from_secs(2)).unwrap();
+    }
+    engine.join().unwrap();
+}
+
+#[test]
 fn live_attachment_can_add_a_logpoint_after_paused_inspection_and_skip_changes() {
     let (commands, input) = mpsc::sync_channel(MAX_DEBUG_COMMANDS);
     let (output, events) = mpsc::sync_channel(32);

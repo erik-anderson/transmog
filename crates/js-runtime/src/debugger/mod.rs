@@ -274,6 +274,13 @@ impl Debugger {
             .dispatch("Debugger.enable", json!({}))
             .and_then(|_| connection.client.dispatch("Runtime.enable", json!({})))
             .and_then(|_| {
+                // Reach authored callbacks without stepping through request preparation.
+                connection.client.dispatch(
+                    "Debugger.setBlackboxPatterns",
+                    json!({"patterns":["^transmog:"]}),
+                )
+            })
+            .and_then(|_| {
                 connection.client.dispatch(
                     "Debugger.setSkipAllPauses",
                     json!({"skip":connection.client.options.borrow().skip_pauses}),

@@ -413,4 +413,4 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
 .app-body[data-debugger="right"][data-collapsed] {grid-template-columns:3.4rem minmax(10rem,attr(data-debugger-share type(<percentage>),40%)) .4rem minmax(19rem,1fr);}
 .app-body[data-debugger="right"] .debugger-divider {grid-column:3;}
 .app-body[data-debugger="right"] .debugger-dock {grid-column:4;}
-@media(max-width:52rem) {.app-body[data-debugger="right"] {grid-template-columns:3.4rem minmax(8rem,1fr) .4rem minmax(19rem,1fr);}}
+@media(max-width:52rem) {.app-body[data-debugger="right"] {grid-template-columns:3.4rem minmax(8rem,attr(data-debugger-share type(<percentage>),40%)) .4rem minmax(19rem,1fr);}}

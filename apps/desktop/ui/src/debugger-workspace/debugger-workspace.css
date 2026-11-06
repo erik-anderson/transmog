@@ -260,6 +260,21 @@ summary {
   width: 100%;
   text-align: left;
 }
+.dock-trigger { anchor-name: --debugger-dock; }
+.view-trigger { anchor-name: --debugger-view; }
+#debugger-placement { position-anchor: --debugger-dock; }
+#debugger-view { position-anchor: --debugger-view; }
+@supports (position-area: block-end) {
+  .placement {
+    inset: auto;
+    position-area: block-end span-inline-start;
+    position-try-fallbacks: flip-block, flip-inline;
+    margin: .25rem 0;
+    max-width: calc(100vw - 2rem);
+    max-height: calc(100dvh - 2rem);
+    overflow: auto;
+  }
+}
 dialog {
   width: min(32rem, calc(100vw - 2rem));
   border: 1px solid var(--line);

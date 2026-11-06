@@ -61,6 +61,41 @@ export async function checkNativeDebuggerWorkspace({
     "attached editor",
   );
   await assert.rejects(() => invoke("debugger_workspace"));
+  for (let callback = 0; callback < 2; callback++) {
+    await surface.getByRole("button", { name: "Pause next callback (F8)", exact: true }).click();
+    await wait(
+      () =>
+        surface.evaluate(
+          (element) => element.debuggerPauseNext && !element.debuggerControlSubmitting,
+        ),
+      "scheduled callback pause",
+    );
+    const response = proxyGet(listener, `${base}/scheduled-${callback}`);
+    let outcome = "pending";
+    void response.then(
+      (result) => {
+        outcome = result;
+      },
+      (error) => {
+        outcome = String(error);
+      },
+    );
+    try {
+      await wait(
+        () => surface.evaluate((element) => element.debuggerPaused),
+        `scheduled callback ${callback + 1} hit`,
+      );
+    } catch (error) {
+      throw new Error(`${error.message}: ${JSON.stringify(outcome)}`);
+    }
+    await surface.locator(".status").getByText("next callback", { exact: true }).waitFor();
+    await surface.getByRole("button", { name: "Continue (F8)", exact: true }).click();
+    assert.equal((await response).status, 200);
+    await wait(
+      () => surface.evaluate((element) => !element.debuggerPaused && !element.debuggerPauseNext),
+      "one-shot pause consumed",
+    );
+  }
   const paused = proxyGet(listener, `${base}/workspace`);
   await wait(() => surface.evaluate((element) => element.debuggerPaused), "normal traffic pause");
   await surface.locator(".status").getByText("Paused in onRequestHead", { exact: true }).waitFor();
@@ -217,7 +252,11 @@ export async function checkNativeDebuggerWorkspace({
     "temporary continue to location",
   );
   await surface.locator(".command").getByText("workspace local: 7", { exact: true }).waitFor();
-  await surface.locator(".command").getByText("workspace callback", { exact: true }).waitFor();
+  await surface
+    .locator(".command")
+    .getByText("workspace callback", { exact: true })
+    .first()
+    .waitFor();
   await surface.getByRole("button", { name: "Clear", exact: true }).click();
   await prompt.fill("Array.from({length:150},(_,i)=>({i}))");
   await surface.getByRole("button", { name: "Run", exact: true }).click();
@@ -286,6 +325,23 @@ export async function checkNativeDebuggerWorkspace({
     await dock.getByRole("textbox", { name: "Immediate expression" }).inputValue(),
     "Array.from({length:150},(_,i)=>({i}))",
   );
+  const dockButton = dock.getByRole("button", { name: "Dock", exact: true });
+  await dockButton.click();
+  const dockMenu = dock.locator("#debugger-placement");
+  const triggerBox = await dockButton.boundingBox();
+  const menuBox = await dockMenu.boundingBox();
+  assert.ok(
+    Math.min(
+      Math.abs(menuBox.y - triggerBox.y - triggerBox.height),
+      Math.abs(triggerBox.y - menuBox.y - menuBox.height),
+    ) <= 12,
+  );
+  assert.ok(
+    menuBox.x < triggerBox.x + triggerBox.width && menuBox.x + menuBox.width > triggerBox.x,
+  );
+  await page.screenshot({ path: resolve(output, "debugger-dock-menu-native.png") });
+  await dockButton.press("Escape");
+  await dockMenu.waitFor({ state: "hidden" });
   await dock.getByRole("textbox", { name: "Immediate expression" }).press("ArrowDown");
   assert.equal(
     await dock.getByRole("textbox", { name: "Immediate expression" }).inputValue(),
@@ -366,7 +422,7 @@ export async function checkNativeDebuggerWorkspace({
     .getByRole("textbox", { name: "Immediate expression" })
     .fill("Reflect.get(globalThis, 'workspaceCount')");
   await dock.getByRole("button", { name: "Run", exact: true }).click();
-  await dock.locator(".command > pre").filter({ hasText: "3" }).waitFor();
+  await dock.locator(".command > pre").filter({ hasText: "5" }).waitFor();
   await dock.getByRole("combobox", { name: "Pause on exceptions" }).selectOption("all");
   const previousWorker = await dock.evaluate((element) => element.debuggerTarget);
   await dock.getByRole("button", { name: "Restart", exact: true }).click();
@@ -448,6 +504,23 @@ export async function checkNativeDebuggerWorkspace({
   assert.equal(await dock.evaluate((element) => element.debuggerSourcesSplit), "20");
   await dock.getByRole("button", { name: "Dock", exact: true }).click();
   await dock.getByRole("button", { name: "Dock to right", exact: true }).click();
+  const outerDivider = page.getByRole("separator", { name: "Resize debugger", exact: true });
+  assert.equal(await outerDivider.getAttribute("aria-orientation"), "vertical");
+  assert.equal(
+    await outerDivider.evaluate((element) => getComputedStyle(element).cursor),
+    "col-resize",
+  );
+  const beforeDrag = await dock.boundingBox();
+  const handle = await outerDivider.boundingBox();
+  const x = handle.x + handle.width / 2,
+    y = handle.y + handle.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x - 40, y, { steps: 5 });
+  await page.mouse.up();
+  const growth = (await dock.boundingBox()).width - beforeDrag.width;
+  assert.ok(growth >= 20 && growth <= 60, `Right dock follows horizontal dragging, grew ${growth}`);
+  await outerDivider.press("Home");
   await dock.getByRole("button", { name: "Hide console (Escape)", exact: true }).click();
   await wait(
     async () => (await invoke("debugger_layout")).consoleVisible === false,
@@ -470,6 +543,9 @@ export async function checkNativeDebuggerWorkspace({
   await dock.evaluate((element) => element.toggleConsole());
   await dock.getByRole("button", { name: "Close debugger and continue execution" }).click();
   return {
+    dockingPointerAxes: true,
+    anchoredMenus: true,
+    pauseNextRearmed: true,
     sourceLocations: true,
     closeDuringHandoff: true,
     layoutRestored: true,

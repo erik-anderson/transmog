@@ -79,7 +79,7 @@
         <if condition="!viewerMode"><response-set-intake w-ref="{responseSetIntake}"></response-set-intake></if>
         <captured-preview w-ref="{capturedPreviewSurface}" :controller="{{capturedPreviewController}}"></captured-preview>
       </main>
-      <if condition="debuggerDocked"><pane-divider class="debugger-divider" orientation="{{debuggerPlacement == 'right' ? 'vertical' : 'horizontal'}}" label="Resize debugger" value="{{debuggerSplit}}" initial="40" @pane-resize="{resizeDebugger(e)}"></pane-divider><debugger-workspace w-ref="{debuggerDock}" class="debugger-dock"></debugger-workspace></if>
+      <if condition="debuggerDocked"><if condition="debuggerPlacement == 'right'"><pane-divider class="debugger-divider" orientation="vertical" label="Resize debugger" value="{{debuggerSplit}}" initial="40" @pane-resize="{resizeDebugger(e)}"></pane-divider></if><if condition="debuggerPlacement == 'bottom'"><pane-divider class="debugger-divider" orientation="horizontal" label="Resize debugger" value="{{debuggerSplit}}" initial="40" @pane-resize="{resizeDebugger(e)}"></pane-divider></if><debugger-workspace w-ref="{debuggerDock}" class="debugger-dock"></debugger-workspace></if>
     </div>
 
     <footer class="app-footer" ?hidden="{{!diagnosticText}}">

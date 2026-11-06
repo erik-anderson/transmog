@@ -170,6 +170,7 @@ export async function checkDebuggerControls(page, workspace, root) {
   );
   await page.evaluate(() => globalThis.__workspaceFixture.workspaceDebug.pause());
   await workspace.locator(".status").getByText("next callback", { exact: true }).waitFor();
+  await checkPauseRearming(page, workspace);
   await workspace
     .locator(".status")
     .getByText("Paused in onRequestHead", { exact: true })
@@ -251,4 +252,44 @@ export async function checkDebuggerControls(page, workspace, root) {
     () => globalThis.__workspaceFixture.workspaceDebug.points.length === 1,
   );
   await page.evaluate(() => globalThis.__workspaceFixture.workspaceDebug.restorePointInvoke());
+}
+
+async function checkPauseRearming(page, workspace) {
+  for (const omitReply of [false, true]) {
+    await workspace.getByRole("button", { name: "Continue (F8)", exact: true }).click();
+    await workspace
+      .getByRole("button", { name: "Pause next callback (F8)", exact: true })
+      .waitFor();
+    await page.evaluate((omit) => {
+      globalThis.__workspaceFixture.workspaceDebug.omitPauseReply = omit;
+    }, omitReply);
+    await workspace.getByRole("button", { name: "Pause next callback (F8)", exact: true }).click();
+    await page.waitForFunction(() => {
+      const element = document
+        .querySelector("app-shell")
+        .shadowRoot.querySelector("debugger-workspace");
+      return (
+        !element.busy &&
+        !element.debuggerControlSubmitting &&
+        element.views.get(element.debuggerTarget)?.stream.pauseNext
+      );
+    });
+    await workspace
+      .getByRole("button", { name: "Cancel callback pause (F8)", exact: true })
+      .waitFor();
+    await page.evaluate(() => globalThis.__workspaceFixture.workspaceDebug.pause());
+    await workspace.getByRole("button", { name: "Continue (F8)", exact: true }).click();
+    await page.waitForFunction(
+      () =>
+        !document.querySelector("app-shell").shadowRoot.querySelector("debugger-workspace")
+          .debuggerPaused,
+    );
+    await workspace
+      .getByRole("button", { name: "Pause next callback (F8)", exact: true })
+      .waitFor();
+    await workspace.getByRole("button", { name: "Pause next callback (F8)", exact: true }).click();
+    await page.waitForFunction(() => globalThis.__workspaceFixture.workspaceDebug.pauseNext);
+    await page.evaluate(() => globalThis.__workspaceFixture.workspaceDebug.pause());
+    await workspace.getByRole("button", { name: "Continue (F8)", exact: true }).waitFor();
+  }
 }

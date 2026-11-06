@@ -199,7 +199,7 @@ export class DebuggerWorkspace extends WebUIElement {
   private logKeys = new Map<string, number>();
   private logpointRows: ConsoleRow[] = [];
   private eventCursors = new Map<string, number>();
-  private pauseControl: { session: string; request: number } | null = null;
+  private pauseControl: { session: string; request: number; enabled: boolean } | null = null;
   private continueContext: Monaco.editor.IContextKey<boolean> | null = null;
   private pendingValueLeases: ValueLease[] = [];
   private pendingConsoleValues: ConsoleRow[] = [];
@@ -1357,6 +1357,18 @@ export class DebuggerWorkspace extends WebUIElement {
         this.clearPause();
       }
       for (const { target, view } of replies) {
+        const control = this.pauseControl;
+        if (
+          control?.session === target.session &&
+          ((view.stream.pauseNext ?? false) === control.enabled ||
+            view.stream.paused ||
+            view.stream.closed ||
+            (view.stream.skipPauses && this.debuggerSkipPauses))
+        ) {
+          // Replies may fall out of the bounded event history. The snapshot
+          // also confirms when a one-shot pause was armed, consumed, or canceled.
+          this.pauseControl = null;
+        }
         const eventSequences = new Map(
           view.stream.events.map(
             (item, index) =>
@@ -2080,7 +2092,7 @@ export class DebuggerWorkspace extends WebUIElement {
       }
       const request = await this.action({ kind: "pause-next", enabled }, session);
       if (request !== undefined) {
-        this.pauseControl = { session, request };
+        this.pauseControl = { session, request, enabled };
         if (session === this.debuggerTarget) {
           this.debuggerPauseNext = enabled;
         }
@@ -2618,6 +2630,9 @@ export class DebuggerWorkspace extends WebUIElement {
     }
   }
   keyboard(event: KeyboardEvent): void {
+    if (event.key === "Escape" && this.shadowRoot?.querySelector(".placement:popover-open")) {
+      return;
+    }
     if (
       (event.key === "Escape" || event.key === "Enter") &&
       event

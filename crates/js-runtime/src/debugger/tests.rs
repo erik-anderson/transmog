@@ -1328,7 +1328,7 @@ fn controller_loss_stops_a_paused_engine_and_default_runtime_ignores_debugger_st
             )
             .unwrap();
         let failed = runtime
-            .execute_script("transmog:invoke", "debugger; while(true){}")
+            .execute_script(SOURCE, "debugger; while(true){}")
             .is_err();
         let _ = done.send(failed);
     });

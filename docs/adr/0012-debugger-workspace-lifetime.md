@@ -12,6 +12,10 @@ restoration. A failed or canceled handoff restores the previous placement and
 rejects late readiness acknowledgments.
 F12 closes the whole workspace during a handoff; canceling only an unready
 destination restores its source.
+Pending pause-next commands reconcile with worker snapshots as well as replies,
+because event history is bounded.
+Internal `transmog:` wrappers are ignored when stepping into authored callbacks,
+so pause-next does not exhaust the execution budget stepping through request preparation.
 
 Each surface transfers bounded value leases with its Console state. The destination
 keeps live result roots and releases old scope and property handles. Native pause
