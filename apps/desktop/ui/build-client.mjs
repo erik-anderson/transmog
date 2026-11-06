@@ -38,8 +38,6 @@ if (relative(workingDirectory, outputDirectory) !== "dist")
   throw new Error("Unsafe build output directory: " + outputDirectory);
 await rm(outputDirectory, { recursive: true, force: true });
 await mkdir(outputDirectory, { recursive: true });
-await buildCredits(workingDirectory, join(outputDirectory, "credits.json"));
-
 const client = await esbuild.build({
   absWorkingDir: workingDirectory,
   entryPoints: { app: "src/index.ts", monaco: "src/monaco.ts" },
@@ -61,6 +59,7 @@ const client = await esbuild.build({
 });
 
 const outputs = { ...client.metafile.outputs };
+const inputs = { ...client.metafile.inputs };
 for (const [entryPoint, outfile] of [
   ["node_modules/monaco-editor/esm/vs/editor/editor.worker.js", "monaco-editor.worker.js"],
   ["node_modules/monaco-editor/esm/vs/language/typescript/ts.worker.js", "monaco-ts.worker.js"],
@@ -81,12 +80,32 @@ for (const [entryPoint, outfile] of [
     metafile: true,
   });
   Object.assign(outputs, worker.metafile.outputs);
+  Object.assign(inputs, worker.metafile.inputs);
 }
 
+// Split roots each receive identical CSS; templates load the Monaco entry once.
+const shippedOutputs = Object.fromEntries(
+  Object.entries(outputs).filter(
+    ([file]) => !file.endsWith(".css") || file.endsWith("/monaco.css"),
+  ),
+);
+// Document-scoped fonts and styles ship outside the client asset inventory.
+const documentStyles = await esbuild.build({
+  absWorkingDir: workingDirectory,
+  entryPoints: ["src/document.css"],
+  outfile: join(outputDirectory, "document.css"),
+  bundle: true,
+  minify: true,
+  loader: { ".ttf": "dataurl" },
+  metafile: true,
+});
+await buildCredits(workingDirectory, join(outputDirectory, "credits.json"), {
+  outputs: { ...shippedOutputs, ...documentStyles.metafile.outputs },
+  inputs: { ...inputs, ...documentStyles.metafile.inputs },
+});
+
 // The native origin embeds only the current bundler outputs, including dynamic chunks.
-// Split roots each receive an identical CSS output; templates load the Monaco entry once.
-const assets = Object.entries(outputs)
-  .filter(([file]) => !file.endsWith(".css") || file.endsWith("/monaco.css"))
+const assets = Object.entries(shippedOutputs)
   .map(([file, metadata]) => {
     const name = relative(outputDirectory, resolve(workingDirectory, file)).replaceAll("\\", "/");
     if (!/^(?:chunks\/)?[a-zA-Z0-9_.-]+\.(?:js|css)$/.test(name))
@@ -141,17 +160,6 @@ await writeFile(
     2,
   ) + "\n",
 );
-// Font faces must be document-scoped to reach editors inside shadow roots.
-// Inline the installed Monaco font under the existing font-src data: policy.
-await esbuild.build({
-  absWorkingDir: workingDirectory,
-  entryPoints: ["src/document.css"],
-  outfile: join(outputDirectory, "document.css"),
-  bundle: true,
-  minify: true,
-  loader: { ".ttf": "dataurl" },
-});
-
 await copyFile(
   join(workingDirectory, "../icons/icon.svg"),
   join(outputDirectory, "transmog-icon.svg"),

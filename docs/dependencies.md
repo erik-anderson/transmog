@@ -88,6 +88,13 @@ reproducible patches. Preflight validates both files and Cargo resolution; see
 and generated notices include their licenses, and CycloneDX records archive and
 patch identities.
 
+Desktop credits follow the normal dependencies of the four shipped executables
+for the build target, excluding build/dev-only packages and procedural macros.
+Browser notices follow the actual application, worker and stylesheet inputs,
+including development packages when their code ships. Bundled native/data notices
+remain intact. UI builds use `CARGO_BUILD_TARGET` when set and otherwise the Rust host;
+Windows packaging supplies its selected release target.
+
 Generated notices and CycloneDX artifacts identify Git packages by their full
 resolved commit, even when the package version matches a registry release.
 They record the native BoringSSL base revision, enabled binding features and

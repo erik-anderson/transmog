@@ -1,0 +1,10 @@
+{
+  "package": "swc_sourcemap",
+  "version": "10.0.2",
+  "commit": "f10b83098a834b7704c22df2c0db5539dee62893",
+  "license": "BSD-3-Clause",
+  "sources": [
+    "https://raw.githubusercontent.com/swc-project/swc-sourcemap/64fcb47c16547d40fb37bbe4d8790b520716c741/LICENSE"
+  ],
+  "note": "The published crate omits its BSD license and declares the SWC monorepo URL. Its published VCS ref is unavailable there and in the declared homepage repository. This notice is pinned separately from the fork homepage and retains the original Armin Ronacher copyright."
+}

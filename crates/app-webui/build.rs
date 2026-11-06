@@ -43,6 +43,16 @@ fn compile_webui(ui_dir: &Path) {
         client_bundle.is_file() && projection_manifest.is_file(),
         "missing generated UI assets; run scripts/build-desktop.ps1"
     );
+    let credits: serde_json::Value = serde_json::from_slice(
+        &fs::read(ui_dir.join("dist/credits.json")).expect("read target-specific credits"),
+    )
+    .expect("parse target-specific credits");
+    let target = env::var("TARGET").expect("Cargo provides TARGET");
+    assert_eq!(
+        credits["target"].as_str(),
+        Some(target.as_str()),
+        "credits target differs from Cargo; rebuild UI assets with CARGO_BUILD_TARGET set to the Cargo target"
+    );
 
     let result = build(BuildOptions {
         app_dir: ui_dir.join("src"),

@@ -8726,6 +8726,25 @@ try {
     (await credits.locator("details").count()) > 100,
     "Credits omitted the dependency inventory",
   );
+  const creditLabels = await credits
+    .locator(".credits-scroll > details > summary")
+    .allTextContents();
+  for (const name of ["cc", "cmake", "bindgen"])
+    assert.ok(
+      !creditLabels.some((label) => label.startsWith(name + " ")),
+      "Credits include build tool " + name,
+    );
+  for (const name of [
+    "v8",
+    "image",
+    "@microsoft/webui-framework",
+    "monaco-editor",
+    "Microsoft MAPI protocol enum data",
+  ])
+    assert.ok(
+      creditLabels.some((label) => label.startsWith(name + " ")),
+      "Credits omit shipped component " + name,
+    );
   for (const name of ["h2", "hyper", "quiche"]) {
     const dependency = credits
       .locator("details")
@@ -8748,6 +8767,18 @@ try {
     /license|copyright|permission/i,
   );
   await page.screenshot({ path: resolve(root, "../../../target/ui-check/credits-wide.png") });
+  const creditsViewport = page.viewportSize();
+  await page.setViewportSize({ width: 800, height: 600 });
+  const creditsBounds = await credits.boundingBox();
+  assert.ok(
+    creditsBounds.x >= 0 &&
+      creditsBounds.y >= 0 &&
+      creditsBounds.x + creditsBounds.width <= 801 &&
+      creditsBounds.y + creditsBounds.height <= 601,
+    "Credits dialog clips at a compact window size",
+  );
+  await page.screenshot({ path: resolve(root, "../../../target/ui-check/credits-compact.png") });
+  await page.setViewportSize(creditsViewport);
   await page.keyboard.press("Escape");
   assert.equal(await credits.count(), 0);
   await page

@@ -63,6 +63,20 @@ if (-not $SkipTests) {
     if ($LASTEXITCODE -ne 0) { throw "Cargo release tests failed with exit code $LASTEXITCODE" }
 }
 
+# Host tests consume host credits; regenerate the release inventory before a
+# cross-architecture build so its embedded notices match the shipped helpers.
+if ($platform.Architecture -ceq 'arm64') {
+    $previousCargoBuildTarget = $env:CARGO_BUILD_TARGET
+    Push-Location (Join-Path $desktopRoot 'ui')
+    try {
+        $env:CARGO_BUILD_TARGET = $Target
+        npm run build
+    } finally {
+        $env:CARGO_BUILD_TARGET = $previousCargoBuildTarget
+        Pop-Location
+    }
+}
+
 if (-not $BuildOnly) {
     $hostBuildArguments = @('build', '--locked', '--release', '-p', 'transmog', '-p', 'transmog-script-host', '-p', 'transmog-preview-worker')
     if ($platform.Architecture -ceq 'arm64') { $hostBuildArguments += @('--target', $Target) }

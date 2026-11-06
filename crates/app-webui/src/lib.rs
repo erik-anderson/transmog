@@ -8,8 +8,8 @@ use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::Serialize;
 use thiserror::Error;
 use transmog_app::{AppLifecycle, AppStatus};
-use webui::{Protocol, RenderOptions, ResponseWriter, WebUIHandler};
 use webui_handler::plugin::webui::WebUIHydrationPlugin;
+use webui_handler::{Protocol, RenderOptions, ResponseWriter, WebUIHandler};
 
 mod assets;
 const DOCUMENT_CSP_PREFIX: &str = "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'self' 'nonce-";

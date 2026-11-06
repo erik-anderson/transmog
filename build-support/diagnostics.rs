@@ -269,9 +269,9 @@ pub fn desktop(root: &Path) {
         ),
         dependency(
             &lock,
-            "microsoft-webui",
+            "microsoft-webui-handler",
             "Microsoft WebUI (Rust)",
-            &renderer["dependencies"]["microsoft-webui"],
+            &renderer["dependencies"]["microsoft-webui-handler"],
         ),
     ];
     let dist = root.join("apps/desktop/ui/dist");

@@ -342,9 +342,12 @@ mod tests {
                 .any(|dependency| dependency.name == "swc_ecma_parser")
         );
         assert!(
-            !build.dependencies.iter().any(
-                |dependency| dependency.name == "tauri" || dependency.name == "microsoft-webui"
-            )
+            !build
+                .dependencies
+                .iter()
+                .any(|dependency| dependency.name == "tauri"
+                    || dependency.name == "microsoft-webui"
+                    || dependency.name == "microsoft-webui-handler")
         );
         assert_eq!(
             build

@@ -154,6 +154,8 @@ fn main(){let root=std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR
             self.assertTrue(archive["app"]["identity"]["rustc"].startswith("rustc "))
             self.assertNotIn("tauri", {item["name"] for item in archive["app"]["dependencies"]})
             self.assertIn("tauri", {item["name"] for item in archive["host"]["dependencies"]})
+            self.assertIn("microsoft-webui-handler", {item["name"] for item in archive["host"]["dependencies"]})
+            self.assertNotIn("microsoft-webui", {item["name"] for item in archive["host"]["dependencies"]})
             git(root, "init", "-q")
             git(root, "add", ".")
             commit(root)
