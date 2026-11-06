@@ -58,6 +58,48 @@ def source_fixture():
             yield root, vendor, pin
 
 
+class NativeHostToolTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        pin = v8_native.source_pin()
+        archive = v8_native.source_archive(pin)
+        overlays = v8_native.patched_files(archive, pin)
+        if "tools/ninja_gn_binaries.py" in overlays:
+            cls.script = overlays["tools/ninja_gn_binaries.py"]
+        else:
+            with tarfile.open(archive) as original:
+                cls.script = original.extractfile(f'v8-{pin["version"]}/tools/ninja_gn_binaries.py').read()
+
+    def packages(self, system, machine):
+        from types import SimpleNamespace
+        dependencies = SimpleNamespace(Var=lambda name: {"gn_version": "gn-pin", "ninja_version": "ninja-pin"}[name])
+        download = SimpleNamespace(DownloadUrl=None)
+        namespace = {"__name__": "native_host_tools_fixture"}
+        with (patch.dict(sys.modules, {"v8_deps": dependencies, "download_file": download}),
+              patch("platform.system", return_value=system), patch("platform.machine", return_value=machine)):
+            exec(compile(self.script, "ninja_gn_binaries.py", "exec"), namespace)
+        return namespace
+
+    def test_windows_arm64_uses_available_gn_and_native_ninja(self):
+        for machine in ("ARM64", "aarch64"):
+            with self.subTest(machine=machine):
+                tools = self.packages("Windows", machine)
+                self.assertEqual(tools["GN_PACKAGE"], "gn/gn/windows-amd64")
+                self.assertEqual(tools["NINJA_PACKAGE"], "infra/3pp/tools/ninja/windows-arm64")
+                self.assertEqual(tools["GN_VERSION"], "gn-pin")
+                self.assertEqual(tools["NINJA_VERSION"], "ninja-pin")
+
+    def test_other_host_packages_are_preserved(self):
+        for system, machine, package in [("Windows", "AMD64", "windows-amd64"),
+                                         ("Linux", "aarch64", "linux-arm64"),
+                                         ("Linux", "x86_64", "linux-amd64"),
+                                         ("Darwin", "arm64", "mac-arm64")]:
+            with self.subTest(system=system, machine=machine):
+                tools = self.packages(system, machine)
+                self.assertEqual(tools["GN_PACKAGE"], "gn/gn/" + package)
+                self.assertEqual(tools["NINJA_PACKAGE"], "infra/3pp/tools/ninja/" + package)
+
+
 class NativeSourceTests(unittest.TestCase):
     def test_clean_cache_and_changed_patch_have_separate_immutable_sources(self):
         with source_fixture() as (root, vendor, _pin):

@@ -27,7 +27,7 @@
   "nativeRevision": "c4ca1eccb90c5464d826b7713dc27178a53b0cfe",
   "files": {
     ".cargo_vcs_info.json": "db528dcc2f01ab34ee071170186666c6d72da1e639a6926f1c7260940841e204",
-    "bindings.patch": "4ebc83a03e0993b5639c5ecc25c3cadc3f8ddbe47d7a88c1da31cea7a3cf9b03",
+    "bindings.patch": "a79be5ce76fe768ff6653c0730278822e29c09f5a59f51c727d393e70ff24146",
     "build.rs": "1c90550c43c0be81add299296c979cbb394091a1acfa822009ff22bb74e63562",
     "Cargo.toml": "85ab28c1442f42589d9df80718f7c56c8e78b62b37614fe791cecd3d49c9ebb9",
     "LICENSE": "1c6356fb751d45f0c53093ebf8a7f5e580e802f51999178e19d60f3ec39e147d",
@@ -35,7 +35,7 @@
     "LICENSE-THIRD-PARTY": "a92eb8edf74e82ed8fdef3c4be0069f3fbff2e4dbdb6b4148157288ff90e1797",
     "LICENSE-V8": "6ab33af8774a0f396ee3aeeb761e3229057682d6f9fa7f572e390c2cb3a6e509",
     "native-licenses.json": "d6a6871b449fd7dea4a5bd05d4acaf432aa0272316aba1162e39cf6168e5080f",
-    "native.patch": "2659d0d9b1bc7fe8a4da0dce6d92d3f6072c1541cedd4a353b8871b0c0464a1f",
+    "native.patch": "f377a4581717c1082d35ea9768857863bd2b4944601d0905ab56ea9e8079a481",
     "profile.gn": "9e8431092b922f5befec16ed9b556110df0f97c458ce8fd679e026b98b8fafba",
     "README.md": "96023f6d98983b05ac06d67d3d06ae9df505ae804a7ab75a4ff5a359610e5aff",
     "source-receipt.sha256": "0e433f966965c34857e735209e4e63f700466a054152ce436ad863f7707f4d6d",

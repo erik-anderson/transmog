@@ -2376,7 +2376,7 @@
 +]
 --- /dev/null
 +++ b/native.patch
-@@ -0,0 +1,168 @@
+@@ -0,0 +1,182 @@
 +--- a/src/binding.cc
 ++++ b/src/binding.cc
 +@@ -15,9 +15,11 @@
@@ -2545,6 +2545,20 @@
 +     cflags = [ "/MD" ]
 + 
 +     # /MD specifies msvcrt.lib as the CRT library, which is the dynamic+release
++--- a/tools/ninja_gn_binaries.py
+++++ b/tools/ninja_gn_binaries.py
++@@ -41,7 +41,10 @@
++ GN_VERSION = Var('gn_version')
++ 
++ NINJA_PACKAGE = f'infra/3pp/tools/ninja/{PLATFORM}'
++-GN_PACKAGE = f'gn/gn/{PLATFORM}'
+++# GN has no Windows ARM64 CIPD package. Windows 11 on ARM runs its x64 host
+++# executable under emulation; Ninja and the requested V8 target remain native.
+++GN_PLATFORM = 'windows-amd64' if PLATFORM == 'windows-arm64' else PLATFORM
+++GN_PACKAGE = f'gn/gn/{GN_PLATFORM}'
++ 
++ 
++ def EnsureDirExists(path):
 --- /dev/null
 +++ b/profile.gn
 @@ -0,0 +1,10 @@
