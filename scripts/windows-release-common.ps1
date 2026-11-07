@@ -46,6 +46,11 @@ function Get-WindowsSignatureEvidence {
     }
 }
 
+function Assert-ExplicitReleaseType($Manifest) {
+    if ($Manifest.ReleaseType -cnotin @('Canary', 'Beta', 'Stable')) { throw 'Release metadata requires an explicit validated ReleaseType.' }
+    Resolve-ReleaseType $Manifest $Manifest.SourceBranch $Manifest.ReleaseType | Out-Null
+}
+
 function Assert-ReleasePayload {
     param([Parameter(Mandatory)][string]$PayloadRoot, [Parameter(Mandatory)][string]$Commit, [Parameter(Mandatory)][string]$RunId)
     $PayloadRoot = (Get-Item -LiteralPath $PayloadRoot).FullName
@@ -70,7 +75,7 @@ function Assert-ReleasePayload {
     $actualFiles = @(Get-ChildItem -LiteralPath $PayloadRoot -File -Recurse | Where-Object { $_.FullName -ne (Join-Path $PayloadRoot 'build-manifest.json') })
     if ($actualFiles.Count -ne $seen.Count) { throw 'The build payload contains unlisted files.' }
     ConvertTo-ReleaseSemVer $manifest.Version | Out-Null
-    Resolve-ReleaseType $manifest $manifest.SourceBranch $manifest.ReleaseType | Out-Null
+    Assert-ExplicitReleaseType $manifest
     foreach ($binary in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe', 'transmog-cli.exe')) {
         $expectedPath = 'target/release/' + $binary
         if (@($manifest.Files | Where-Object { $_.Path -ceq $expectedPath }).Count -ne 1) { throw "Missing or duplicate payload binary: $binary" }
@@ -120,7 +125,7 @@ function Assert-SignedRelease {
     $manifest = Get-Content -Raw -LiteralPath (Join-Path $ReleaseRoot 'release-manifest.json') | ConvertFrom-Json
     if ($manifest.Commit -cne $Commit -or $manifest.RunId -cne $RunId) { throw 'Signed release provenance mismatch.' }
     ConvertTo-ReleaseSemVer $manifest.Version | Out-Null
-    Resolve-ReleaseType $manifest $manifest.SourceBranch $manifest.ReleaseType | Out-Null
+    Assert-ExplicitReleaseType $manifest
     foreach ($entry in $manifest.Files) {
         if ($entry.Name -notmatch '^[A-Za-z0-9_.-]+$' -or $entry.Sha256 -notmatch '^[A-Fa-f0-9]{64}$') { throw 'Invalid release asset.' }
         if ((Get-FileHash -LiteralPath (Join-Path $ReleaseRoot $entry.Name) -Algorithm SHA256).Hash -ne $entry.Sha256) { throw "Release asset checksum mismatch: $($entry.Name)" }

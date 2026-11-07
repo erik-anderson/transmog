@@ -81,6 +81,13 @@ try {
 } finally { Pop-Location }
 Require-Rejection { Assert-ReleasePayload -PayloadRoot $fixture -Commit 'different-commit' -RunId '123' } 'a different source commit'
 Require-Rejection { Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-commit' -RunId '124' } 'a different workflow run'
+foreach ($type in @($null, '', 'Unknown')) {
+    $invalid = $baseline | ConvertFrom-Json
+    $invalid.ReleaseType = $type
+    $invalid | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath
+    Require-Rejection { Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-commit' -RunId '123' } 'missing or invalid package release type' 'explicit validated ReleaseType'
+}
+Set-TestManifest
 $missingCli = $baseline | ConvertFrom-Json
 $missingCli.Files = @($missingCli.Files | Where-Object { $_.Path -cne 'target/release/transmog-cli.exe' })
 $missingCli | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath

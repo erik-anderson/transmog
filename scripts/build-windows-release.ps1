@@ -131,9 +131,10 @@ try {
             [pscustomobject]@{ Path = [System.IO.Path]::GetRelativePath($payloadRoot, $_.FullName).Replace('\', '/'); Sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }
         })
         $manifest = [ordered]@{ Commit = $sourceCommit; RunId = $env:GITHUB_RUN_ID; SourceBranch = $env:GITHUB_REF_NAME; Version = $buildResult.Version; Channel = $buildResult.Channel; ReleaseType = $env:RELEASE_TYPE; Target = $buildResult.Target; BuiltAtUtc = [DateTimeOffset]::UtcNow.ToString('o'); Files = $files }
+        . (Join-Path $PSScriptRoot 'windows-release-common.ps1')
+        Assert-ExplicitReleaseType $manifest
         $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $payloadRoot 'build-manifest.json') -Encoding utf8NoBOM
         if ($Stage -eq 'All') {
-            . (Join-Path $PSScriptRoot 'windows-release-common.ps1')
             Assert-ReleasePayload -PayloadRoot $payloadRoot -Commit $sourceCommit -RunId $env:GITHUB_RUN_ID | Out-Null
         } else {
             # This is a partial producer, never a signable build payload. The

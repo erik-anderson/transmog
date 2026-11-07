@@ -44,6 +44,20 @@ try {
     $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN = $null
     & (Join-Path $PSScriptRoot 'merge-windows-releases.ps1') -X64Root (Join-Path $fixture 'x64') -Arm64Root (Join-Path $fixture 'arm64') -OutputRoot $releaseRoot
     $merged = Assert-SignedRelease -ReleaseRoot $releaseRoot -Commit 'fixture-commit' -RunId '123'
+    $signedManifestPath = Join-Path $releaseRoot 'release-manifest.json'
+    $signedManifestText = Get-Content -Raw -LiteralPath $signedManifestPath
+    foreach ($type in @($null, '', 'Unknown')) {
+        $invalid = $signedManifestText | ConvertFrom-Json
+        $invalid.ReleaseType = $type
+        $invalid | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $signedManifestPath
+        $rejected = $false
+        try { Assert-SignedRelease -ReleaseRoot $releaseRoot -Commit 'fixture-commit' -RunId '123' | Out-Null } catch {
+            if ($_ -notmatch 'explicit validated ReleaseType') { throw }
+            $rejected = $true
+        }
+        if (-not $rejected) { throw 'Signed release accepted missing or invalid release type.' }
+    }
+    $signedManifestText | Set-Content -NoNewline -LiteralPath $signedManifestPath
     if (@($merged.Packages).Count -ne 2) { throw 'Merged release lost an architecture.' }
     $updates = Get-Content -Raw -LiteralPath (Join-Path $releaseRoot 'latest.json') | ConvertFrom-Json
     if (@($updates.platforms.PSObject.Properties).Count -ne 2) { throw 'Merged updater lost an architecture.' }

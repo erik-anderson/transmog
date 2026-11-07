@@ -78,7 +78,7 @@ class ReleaseDecisions(unittest.TestCase):
             module.synchronize("fixture/repository", api)
             self.assertEqual(mutations, [] if latest_id == 10 else [("https://api.github.com/repos/fixture/repository/releases/10", {"make_latest": "true"})])
 
-    def test_canary_feed_selects_highest_canary_and_keeps_beta_out(self):
+    def test_canary_feed_selects_highest_canary_and_keeps_beta_or_untyped_releases_out(self):
         module = load("sync-canary-update-feed")
         base = "https://api.github.com/repos/fixture/repository"
         updates = {"0.2.0": b'{"version":"0.2.0"}', "0.2.1": b'{"version":"0.2.1"}'}
@@ -88,6 +88,7 @@ class ReleaseDecisions(unittest.TestCase):
             dict(tag_name="v0.2.0", id=20, prerelease=True, assets=[dict(name="release-manifest.json", id=200), dict(name="latest.json", id=201)]),
             dict(tag_name="v0.2.1", id=21, prerelease=True, assets=[dict(name="release-manifest.json", id=210), dict(name="latest.json", id=211)]),
             dict(tag_name="v9.0.0", id=90, prerelease=True, assets=[dict(name="release-manifest.json", id=900), dict(name="latest.json", id=901)]),
+            dict(tag_name="v9.0.1", id=91, prerelease=True, assets=[dict(name="release-manifest.json", id=910), dict(name="latest.json", id=911)]),
         ]
         mutations, uploads = [], []
         def api(url, **kwargs):
@@ -100,6 +101,7 @@ class ReleaseDecisions(unittest.TestCase):
             if url.endswith("/releases/assets/210"): return manifest("0.2.1", "Canary")
             if url.endswith("/releases/assets/211"): return updates["0.2.1"]
             if url.endswith("/releases/assets/900"): return manifest("9.0.0", "Beta")
+            if url.endswith("/releases/assets/910"): return manifest("9.0.1", None)
             if kwargs.get("method") == "POST" and url.endswith("/git/refs"):
                 mutations.append((url, kwargs["data"]))
                 return {}
@@ -246,6 +248,19 @@ class LocalReleaseFixtures(unittest.TestCase):
         write_json(self.root / "release-version.json", State("1.2.7", "Canary", "Canary").to_dict())
         with self.assertRaisesRegex(ValueError, "reserved"):
             module.preflight(self.root, "fixture/repository", "main", api=lambda url: dict(ref="reserved"))
+
+    def test_preflight_exports_the_validated_track_for_other_jobs(self):
+        module = load("check-published-release-version")
+        for track in ("Canary", "Beta", "Stable"):
+            environment = self.root / (track + "-environment")
+            output = self.root / (track + "-output")
+            state = State("1.2.7", "Canary" if track == "Canary" else "Release", track)
+            with self.subTest(track=track), patch.object(module, "preflight", return_value=(state, track)), \
+                 patch.dict(module.os.environ, {"GITHUB_ENV": str(environment), "GITHUB_OUTPUT": str(output)}), \
+                 patch("sys.argv", ["check-published-release-version", "--source-branch", "main"]):
+                module.main()
+            self.assertEqual(environment.read_text(), f"RELEASE_TYPE={track}\n")
+            self.assertEqual(output.read_text(), f"release-type={track}\n")
 
     def test_real_git_events_are_idempotent_and_keep_stable_track(self):
         module = load("advance-release-version")

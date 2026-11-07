@@ -30,6 +30,9 @@ def main():
     if os.environ.get("GITHUB_ENV"):
         with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8", newline="\n") as output:
             output.write(f"RELEASE_TYPE={track}\n")
+    if os.environ.get("GITHUB_OUTPUT"):
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8", newline="\n") as output:
+            output.write(f"release-type={track}\n")
     print(f"Release version {state.version} is available for {track}.")
 
 

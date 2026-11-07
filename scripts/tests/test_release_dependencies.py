@@ -23,6 +23,15 @@ def consumer_setup_missing(workflow):
 
 
 class ReleaseDependencyTests(unittest.TestCase):
+    def test_package_metadata_receives_the_validated_policy_job_track(self):
+        workflow = (ROOT / ".github/workflows/windows-release.yml").read_text()
+        policy = workflow.split("  policy:", 1)[1].split("  engine:", 1)[0]
+        package = workflow.split("  package:", 1)[1].split("  build:", 1)[0]
+        self.assertIn("release-type: ${{ steps.versions.outputs.release-type }}", policy)
+        version_step = policy.split("id: versions", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("python ./scripts/check-published-release-version.py", version_step)
+        self.assertIn("RELEASE_TYPE: ${{ needs.policy.outputs.release-type }}", package)
+
     def test_each_isolated_native_or_package_consumer_installs_its_own_reference_encoders(self):
         workflow = (ROOT / ".github/workflows/windows-release.yml").read_text(encoding="utf-8")
         self.assertEqual(consumer_setup_missing(workflow), [])

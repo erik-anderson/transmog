@@ -166,6 +166,7 @@ class ReleaseStageTests(unittest.TestCase):
             stages.export(root, stage, COMMIT, "123", TARGET, "1")
         write(self.sources["Package"] / "evidence/package-metadata.json", {
             "Commit": COMMIT, "RunId": "123", "Target": TARGET, "Version": "0.1.20",
+            "Channel": "Canary", "ReleaseType": "Canary", "SourceBranch": "main",
         })
         self.refresh("Package")
 
@@ -183,10 +184,25 @@ class ReleaseStageTests(unittest.TestCase):
         self.merge(attempt="2")
         manifest = json.loads((self.output / "build-manifest.json").read_text())
         self.assertEqual(manifest["PipelineSchema"], 1)
+        self.assertEqual(manifest["ReleaseType"], "Canary")
         provenance = json.loads((self.output / "evidence/pipeline-inputs.json").read_text())
         self.assertEqual(provenance["Stages"]["Validation"]["ArtifactId"], "102")
         self.assertEqual(provenance["Stages"]["Validation"]["RunAttempt"], "1")
         self.assertEqual(len(list((self.output / "evidence/gates").glob("*.json"))), 8)
+
+    def test_rejects_missing_null_or_incompatible_package_release_type(self):
+        path = self.sources["Package"] / "evidence/package-metadata.json"
+        metadata = json.loads(path.read_text())
+        for index, track in enumerate((None, "", "Unknown", "Stable", "missing")):
+            with self.subTest(track=track):
+                invalid = dict(metadata, ReleaseType=track)
+                if track == "missing":
+                    del invalid["ReleaseType"]
+                write(path, invalid)
+                self.refresh("Package")
+                self.output = self.root / f"invalid-track-{index}"
+                with self.assertRaises(ValueError):
+                    self.merge()
 
     def test_rejects_failed_gate_even_if_catalog_was_updated(self):
         path = self.sources["Validation"] / "evidence/gates/Tests.json"

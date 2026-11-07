@@ -10,6 +10,7 @@ import shutil
 from repo_tools import main_guard
 from v8_artifact import digest, input_hashes, encoded_digest
 from windows_compiled import verify_qualified
+from release_version import State, resolve_type
 
 GATES = {
     "Frontend": ("UI", "Browser"),
@@ -104,6 +105,9 @@ def merge(inputs, artifact_ids, output, commit, run_id, target, attempt):
     metadata = json.loads((output / "evidence/package-metadata.json").read_text(encoding="utf-8-sig"))
     if metadata["Commit"] != commit or metadata["RunId"] != run_id or metadata["Target"] != target:
         raise ValueError("Package metadata source differs")
+    if metadata.get("ReleaseType") not in ("Canary", "Beta", "Stable"):
+        raise ValueError("Release metadata requires an explicit validated ReleaseType")
+    resolve_type(State.from_dict(metadata), metadata["SourceBranch"], metadata["ReleaseType"])
     provenance = {"Commit": commit, "RunId": run_id, "RunAttempt": attempt, "Target": target,
                   "Stages": {stage: {"ArtifactId": artifact_ids[stage],
                                       "ManifestSha256": digest(inputs[stage] / "stage-manifest.json"),
