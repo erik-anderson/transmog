@@ -41,6 +41,44 @@ export async function checkDebuggerNavigation(page, workspace, root) {
   await workspace.getByRole("textbox", { name: "Source query", exact: true }).fill(":2:9");
   await workspace.getByRole("textbox", { name: "Source query", exact: true }).press("Enter");
   assert.equal(await workspace.evaluate((element) => element.editor.getPosition().column), 9);
+  // A poll can rebuild the tree before the browser delivers its queued toggle event.
+  // Preserve both opening and closing through that exact event-order boundary.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const toggled = await workspace.evaluate((element) => {
+      const summary = [...element.shadowRoot.querySelectorAll(".sources summary")].find(
+        (summary) => summary.textContent === "Extensions",
+      );
+      const details = summary.parentElement;
+      const before = details.open;
+      summary.click();
+      const clicked = details.open;
+      element.updateNavigation();
+      element.$flushUpdates();
+      return { before, clicked, refreshed: details.open };
+    });
+    assert.notEqual(toggled.clicked, toggled.before, "The native summary click must toggle");
+    assert.equal(
+      toggled.refreshed,
+      toggled.clicked,
+      "Refreshing source metadata before the toggle event must preserve the user's choice",
+    );
+  }
+  const extensions = workspace.locator(".sources summary").filter({ hasText: /^Extensions$/u });
+  for (const key of ["Space", "Enter"]) {
+    const before = await extensions.evaluate((summary) => summary.parentElement.open);
+    await extensions.press(key);
+    const toggled = await workspace.evaluate((element) => {
+      const details = [...element.shadowRoot.querySelectorAll(".sources summary")].find(
+        (summary) => summary.textContent === "Extensions",
+      ).parentElement;
+      const clicked = details.open;
+      element.updateNavigation();
+      element.$flushUpdates();
+      return { clicked, refreshed: details.open };
+    });
+    assert.notEqual(toggled.clicked, before, `${key} must retain native disclosure activation`);
+    assert.equal(toggled.refreshed, toggled.clicked, "Refresh must preserve keyboard disclosure");
+  }
   await workspace
     .locator(".sources summary")
     .filter({ hasText: /^Extensions$/u })

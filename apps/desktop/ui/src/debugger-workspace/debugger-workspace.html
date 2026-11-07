@@ -254,7 +254,7 @@
           ><div key="{{node.key}}" class="source-node">
             <if condition="!node.file"
               ><details ?open="{{node.open}}" @toggle="{sourceGroupToggled(node,e)}">
-                <summary>{{node.label}}</summary>
+                <summary @click="{sourceGroupClicked(node,e)}">{{node.label}}</summary>
                 <div class="source-folder">
                   <for id="debug-source-node" each="node in node.children" />
                 </div></details
@@ -306,7 +306,7 @@
               ?open="{{group.open}}"
               @toggle="{breakpointGroupToggled(group,e)}"
             >
-              <summary>{{group.label}}</summary>
+              <summary @click="{sourceGroupClicked(group,e)}">{{group.label}}</summary>
               <for each="point in group.points"
                 ><div
                   class="breakpoint"

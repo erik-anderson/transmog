@@ -1046,6 +1046,14 @@ export class DebuggerWorkspace extends WebUIElement {
   private decorations: Monaco.editor.IEditorDecorationsCollection | null = null;
   private files: File[] = [];
   private sourceGroups = new Map<string, boolean>();
+  sourceGroupClicked(group: { key: string }, event: Event): void {
+    const details = (event.currentTarget as HTMLElement).parentElement;
+    if (!event.defaultPrevented && details instanceof HTMLDetailsElement) {
+      // Native toggle events are queued. A metadata refresh must already know
+      // the user's choice before it rebuilds the controlled disclosure state.
+      this.sourceGroups.set(group.key, !details.open);
+    }
+  }
   sourceGroupToggled(group: { key: string }, event: Event): void {
     this.sourceGroups.set(group.key, (event.target as HTMLDetailsElement).open);
   }
