@@ -111,7 +111,8 @@ jobs:
             target: aarch64-pc-windows-msvc
             runner: windows-11-arm
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 40
+    # Both browser suites need ARM64 headroom plus time to retain failure evidence.
+    timeout-minutes: 60
     permissions:
       contents: read
     outputs:
@@ -149,7 +150,7 @@ jobs:
         timeout-minutes: 4
         run: ./scripts/build-windows-release.ps1 -Stage Frontend -Target ${{ matrix.target }} -Phase UI -PolicySnapshot artifacts/release-policy/shared-snapshot
       - name: Frontend gate - Browser
-        timeout-minutes: 10
+        timeout-minutes: 25
         run: ./scripts/build-windows-release.ps1 -Stage Frontend -Target ${{ matrix.target }} -Phase Browser
       - name: Retain immutable frontend producer
         id: payload
@@ -171,6 +172,7 @@ jobs:
           path: |
             artifacts/windows-build-state.json
             artifacts/windows-build-gates/
+            target/ui-check/workspace-failure.png
             artifacts/windows-build/evidence/
             artifacts/windows-desktop-validation/
             artifacts/client-certificate-desktop/
@@ -179,7 +181,7 @@ jobs:
 
   validation:
     name: Native validation (${{ matrix.arch }})
-    needs: [policy, engine]
+    needs: [policy, engine, frontend]
     strategy:
       fail-fast: false
       matrix:
@@ -273,7 +275,7 @@ jobs:
 
   package:
     name: Optimized package and soak (${{ matrix.arch }})
-    needs: [policy, engine]
+    needs: [policy, engine, frontend]
     strategy:
       fail-fast: false
       matrix:

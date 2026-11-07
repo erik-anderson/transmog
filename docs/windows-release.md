@@ -96,9 +96,10 @@ linking. A mismatch fails closed; it never falls back to an unplanned cold build
 Rust application targets, unsigned payloads and signed outputs are not cached.
 The unsigned workflow's `use_cache: false` also forces cold engine preparation.
 
-After policy preflight, frontend/browser acceptance (40 minutes, including release
-safety fixtures) runs independently of engine preparation. Once V8 is ready,
-Clippy, workspace tests, native acceptance and archive interoperability share one
+After policy preflight, frontend/browser acceptance (60 minutes, including release
+safety fixtures, with a 25-minute deadline for the complete workspace and debugger
+browser suites) runs independently of engine preparation. Once V8 is ready and
+frontend acceptance passes, Clippy, workspace tests, native acceptance and archive interoperability share one
 120-minute validation job; optimized packaging, CLI/symbol checks and the desktop
 soak run independently in a 90-minute job. Each gate has a shorter step deadline
 and records its result and duration. Diagnostic uploads run even after a failed

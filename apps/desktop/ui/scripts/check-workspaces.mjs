@@ -1,3 +1,4 @@
+import { createBrowserCheckRunner, reportBrowserCheckFailure } from "./browser-check-report.mjs";
 import { transformSync } from "esbuild";
 import { checkCaptureTools } from "./check-capture-tools.mjs";
 import { checkResponseSetFollowups } from "./check-response-set-followups.mjs";
@@ -4611,6 +4612,8 @@ const cancelRule = async () => {
     .click();
   await discardIfAsked();
 };
+const runBrowserCheck = createBrowserCheckRunner();
+
 try {
   if (process.argv.includes("--mcp-only")) {
     await checkMcp(page, root);
@@ -5048,7 +5051,7 @@ try {
     );
     process.exit(0);
   }
-  await checkResponseSnapshots(page, root);
+  await runBrowserCheck(checkResponseSnapshots, page, root);
   if (process.argv.includes("--file-modes-only")) {
     await checkResponseFiles(page, root);
     assert.deepEqual(errors, []);
@@ -5171,7 +5174,7 @@ try {
     "Traffic rows still advertise cross-tab dragging",
   );
   await view("automation");
-  await checkUserAgentOverrides(page, root);
+  await runBrowserCheck(checkUserAgentOverrides, page, root);
   assert.equal(
     requests.slice(startupRequests).some((path) => path === "/monaco.js"),
     false,
@@ -6575,7 +6578,8 @@ try {
   );
   assert.equal(await responseInspector.getByLabel("Decode", { exact: true }).isChecked(), false);
   assert.equal(await responseInspector.getByLabel("Decode", { exact: true }).isEnabled(), false);
-  await checkHexViewer(
+  await runBrowserCheck(
+    checkHexViewer,
     page,
     responseInspector,
     resolve(root, "../../../target/ui-check/hex-selection.png"),
@@ -6693,7 +6697,7 @@ try {
     page.locator('traffic-workspace message-inspector[side="response"]'),
     "body for first",
   );
-  await checkTrafficFailures(page, resolve(root, "../../../target/ui-check"));
+  await runBrowserCheck(checkTrafficFailures, page, resolve(root, "../../../target/ui-check"));
   await page.locator('tr[data-session-id="second"]').click();
   await page
     .locator('traffic-workspace message-inspector[side="response"]')
@@ -7290,8 +7294,8 @@ try {
     globalThis.__workspaceFixture.assetDelay = 0;
   });
 
-  await checkResponseBodyEditor(page, root);
-  await checkBinaryResponse(page, root);
+  await runBrowserCheck(checkResponseBodyEditor, page, root);
+  await runBrowserCheck(checkBinaryResponse, page, root);
   await page.evaluate(async () => {
     const s = globalThis.__workspaceFixture;
     s.assetCodings = ["X-GZIP", "BR"];
@@ -7535,7 +7539,7 @@ try {
     "https://api.example.test/users/{account:digits}",
   );
   await autoEditor.getByRole("button", { name: "Add test case", exact: true }).click();
-  await checkMatchingTests(page, root);
+  await runBrowserCheck(checkMatchingTests, page, root);
   await autoEditor.getByRole("button", { name: "Save rule", exact: true }).click();
   await savedProperties();
   const patternRuleId = await page
@@ -7560,7 +7564,11 @@ try {
     ),
     1,
   );
-  await checkMatchingSelectionRace(page, await capturedRule.getAttribute("data-rule-id"));
+  await runBrowserCheck(
+    checkMatchingSelectionRace,
+    page,
+    await capturedRule.getAttribute("data-rule-id"),
+  );
   await page.evaluate((id) => {
     const state = globalThis.__workspaceFixture;
     state.automation.usage = [{ ruleId: id, matches: 2, lastMatchedAt: 1000 }];
@@ -7577,7 +7585,7 @@ try {
   await cancelRule();
 
   // The dense list shares keyboard range selection, bulk state changes and Undo.
-  await checkAutoResponseDragging(page, root);
+  await runBrowserCheck(checkAutoResponseDragging, page, root);
   const firstRule = page.locator(".auto-response-rule").first();
   await firstRule.click();
   await savedProperties();
@@ -7751,7 +7759,7 @@ try {
 
   // Traffic supports multiselection, eligibility review, atomic failure and batch creation.
   await view("traffic");
-  await checkTrafficList(page, resolve(root, "../../../target/ui-check"));
+  await runBrowserCheck(checkTrafficList, page, resolve(root, "../../../target/ui-check"));
   await page.evaluate(async () => {
     const state = globalThis.__workspaceFixture;
     state.sessions.find((row) => row.id === "cached").terminal = "active";
@@ -7926,8 +7934,8 @@ try {
     .locator(".workspace-tabs")
     .getByRole("button", { name: "Scripts", exact: true })
     .click();
-  await checkScripts(page, root);
-  await checkScriptDiagnostics(page, root);
+  await runBrowserCheck(checkScripts, page, root);
+  await runBrowserCheck(checkScriptDiagnostics, page, root);
   const editorsBefore = await page.evaluate(
     () =>
       document
@@ -7967,7 +7975,7 @@ try {
     () =>
       document.querySelector("app-shell").shadowRoot.querySelector("paused-exchange")?.editorReady,
   );
-  await checkMonacoIcons(page.locator("paused-exchange .monaco-editor-host"));
+  await runBrowserCheck(checkMonacoIcons, page.locator("paused-exchange .monaco-editor-host"));
   await page.setViewportSize({ width: 760, height: 520 });
   await page.locator('tr[data-decision-id="1"]').click();
   await page.screenshot({ path: resolve(root, "../../../target/ui-check/breakpoints-small.png") });
@@ -8046,7 +8054,7 @@ try {
   });
   await view("captures");
   const captures = page.locator("capture-workspace");
-  await checkCaptureTools(page, root, view);
+  await runBrowserCheck(checkCaptureTools, page, root, view);
   const focusBounds = await captures
     .getByLabel("Traffic to record", { exact: true })
     .evaluate((input) => ({
@@ -8277,7 +8285,7 @@ try {
   );
   assert.match(await captures.locator(".capture-receipt").textContent(), /Valid prefix preserved/);
   await page.screenshot({ path: resolve(root, "../../../target/ui-check/capture-wide.png") });
-  await checkTraceImport(page, root, view);
+  await runBrowserCheck(checkTraceImport, page, root, view);
   await view("captures");
   await page.setViewportSize({ width: 760, height: 520 });
   await page.screenshot({ path: resolve(root, "../../../target/ui-check/capture-small.png") });
@@ -8428,7 +8436,7 @@ try {
   assert.equal(networkSaved.allowRemoteClients, true);
   assert.equal(networkSaved.proxyPort, 8123);
   assert.equal(networkSaved.isolateOutboundConnections, false);
-  await checkNetworkProfiles(page, root);
+  await runBrowserCheck(checkNetworkProfiles, page, root);
   assert.equal(networkSaved.configureSystemProxy, false, "Saving preferences enabled host routing");
   await preferences
     .getByLabel("Isolate outbound connections by caller process", { exact: true })
@@ -9624,12 +9632,12 @@ try {
     .getByText("Import canceled. Traffic is unchanged.", { exact: true })
     .waitFor();
   assert.equal(await page.locator(".operation-error-dialog[open]").count(), 0);
-  await checkLoopback(page, root);
-  await checkClientCertificates(page, root);
-  await checkExtensions(page, root);
-  await checkCopy(page, root);
-  await checkAuth(page, root);
-  await checkVisualizers(page, root);
+  await runBrowserCheck(checkLoopback, page, root);
+  await runBrowserCheck(checkClientCertificates, page, root);
+  await runBrowserCheck(checkExtensions, page, root);
+  await runBrowserCheck(checkCopy, page, root);
+  await runBrowserCheck(checkAuth, page, root);
+  await runBrowserCheck(checkVisualizers, page, root);
   await page.goto("https://workspace.test/?viewer");
   await page.getByText("Capture viewer", { exact: true }).waitFor();
   assert.equal(await page.getByRole("button", { name: "Start proxy", exact: true }).count(), 0);
@@ -9759,7 +9767,7 @@ try {
     await saveTrace.getByLabel("Encrypt with a password (AES-256)", { exact: true }).isDisabled(),
     false,
   );
-  await checkTraceSave(page, root, saveTrace);
+  await runBrowserCheck(checkTraceSave, page, root, saveTrace);
   assert.equal(
     (await page.evaluate(() => globalThis.__workspaceFixture.savedTraceArgs)).options.format,
     "saz-strict",
@@ -10164,8 +10172,8 @@ try {
       .evaluate((node) => node === node.getRootNode().activeElement),
     true,
   );
-  await checkCertificates(page, root);
-  await checkConnectTunnels(page, root);
+  await runBrowserCheck(checkCertificates, page, root);
+  await runBrowserCheck(checkConnectTunnels, page, root);
   await page.evaluate(() => {
     globalThis.__workspaceFixture.performance = undefined;
   });
@@ -10268,7 +10276,7 @@ try {
       .evaluate((node) => node.getRootNode().activeElement === node),
     true,
   );
-  await checkPagePreviewRules(page, root);
+  await runBrowserCheck(checkPagePreviewRules, page, root);
   await page.evaluate(() => {
     const workspace = document
       .querySelector("app-shell")
@@ -10369,26 +10377,26 @@ try {
     /1 GB or more/,
   );
   await page.goto("https://workspace.test/");
-  await checkTrafficFilters(page, root);
-  await checkTrafficAdvanced(page, root);
-  await checkStreams(page, root);
-  await checkAutomationContracts(page, root);
-  await checkActionMenus(page, root);
-  await checkWindowShortcuts(page, root);
-  await checkTrafficPresentation(page, root);
-  await checkTrafficClassifications(page, root);
-  await checkBodyRefresh(page, root);
-  await checkBodyDecoding(page);
-  await checkXssiJson(page, root);
-  await checkBodySource(page, root);
-  await checkJsonFields(page);
-  await checkBodySourceBounds(page);
-  await checkRequestOrder(page, root);
-  await checkTrafficNavigation(page);
+  await runBrowserCheck(checkTrafficFilters, page, root);
+  await runBrowserCheck(checkTrafficAdvanced, page, root);
+  await runBrowserCheck(checkStreams, page, root);
+  await runBrowserCheck(checkAutomationContracts, page, root);
+  await runBrowserCheck(checkActionMenus, page, root);
+  await runBrowserCheck(checkWindowShortcuts, page, root);
+  await runBrowserCheck(checkTrafficPresentation, page, root);
+  await runBrowserCheck(checkTrafficClassifications, page, root);
+  await runBrowserCheck(checkBodyRefresh, page, root);
+  await runBrowserCheck(checkBodyDecoding, page);
+  await runBrowserCheck(checkXssiJson, page, root);
+  await runBrowserCheck(checkBodySource, page, root);
+  await runBrowserCheck(checkJsonFields, page);
+  await runBrowserCheck(checkBodySourceBounds, page);
+  await runBrowserCheck(checkRequestOrder, page, root);
+  await runBrowserCheck(checkTrafficNavigation, page);
   await page.goto("https://workspace.test/");
-  await checkAppSelection(page, root);
-  await checkTimingLabels(page, root);
-  await checkTrafficTimeline(page, root);
+  await runBrowserCheck(checkAppSelection, page, root);
+  await runBrowserCheck(checkTimingLabels, page, root);
+  await runBrowserCheck(checkTrafficTimeline, page, root);
   await page.goto("https://workspace.test/?empty");
   await page.waitForFunction(() => document.querySelector("app-shell").traffic.queryLoaded);
   const emptyDrop = page.locator("traffic-workspace trace-drop-target");
@@ -10418,29 +10426,29 @@ try {
   await page.screenshot({
     path: resolve(root, "../../../target/ui-check/traffic-cleared-empty.png"),
   });
-  await checkComparison(page, root);
-  await checkMcp(page, root);
-  await checkFormatConverter(page, root);
-  await checkPortableCases(page, root);
-  await checkIncidents(page, root);
-  await checkResponseFiles(page, root);
-  await checkResponseSetGuide(page, root);
-  await checkPreviewPrerequisites(page, root);
-  await checkResponseSetFollowups(page, root);
-  await checkRequestControls(page);
-  await checkTrafficShortcuts(page, root);
-  await checkResponseSetWorkspaces(page, root);
-  await checkResponseSetDraftRegressions(page);
-  await checkResponseSetPendingDialogs(page, root);
-  await checkResponseSetCollectionAdds(page, root);
-  await checkResponseSetIntake(page, root);
-  await checkResponseSetIntakeRefresh(page, root);
-  await checkResponseSetIntakeMove(page, root);
-  await checkResponseSetLifecycle(page, root);
-  await checkSavedDemos(page, root);
-  await checkResponseSetPreview(page, root);
-  await checkHeaderRules(page, root);
-  await checkTextEdits(page, root);
+  await runBrowserCheck(checkComparison, page, root);
+  await runBrowserCheck(checkMcp, page, root);
+  await runBrowserCheck(checkFormatConverter, page, root);
+  await runBrowserCheck(checkPortableCases, page, root);
+  await runBrowserCheck(checkIncidents, page, root);
+  await runBrowserCheck(checkResponseFiles, page, root);
+  await runBrowserCheck(checkResponseSetGuide, page, root);
+  await runBrowserCheck(checkPreviewPrerequisites, page, root);
+  await runBrowserCheck(checkResponseSetFollowups, page, root);
+  await runBrowserCheck(checkRequestControls, page);
+  await runBrowserCheck(checkTrafficShortcuts, page, root);
+  await runBrowserCheck(checkResponseSetWorkspaces, page, root);
+  await runBrowserCheck(checkResponseSetDraftRegressions, page);
+  await runBrowserCheck(checkResponseSetPendingDialogs, page, root);
+  await runBrowserCheck(checkResponseSetCollectionAdds, page, root);
+  await runBrowserCheck(checkResponseSetIntake, page, root);
+  await runBrowserCheck(checkResponseSetIntakeRefresh, page, root);
+  await runBrowserCheck(checkResponseSetIntakeMove, page, root);
+  await runBrowserCheck(checkResponseSetLifecycle, page, root);
+  await runBrowserCheck(checkSavedDemos, page, root);
+  await runBrowserCheck(checkResponseSetPreview, page, root);
+  await runBrowserCheck(checkHeaderRules, page, root);
+  await runBrowserCheck(checkTextEdits, page, root);
   assert.deepEqual(errors, []);
   process.stdout.write(
     JSON.stringify({
@@ -10453,43 +10461,57 @@ try {
     }) + "\n",
   );
 } catch (error) {
-  await page.screenshot({ path: resolve(root, "../../../target/ui-check/workspace-failure.png") });
-  process.stderr.write(
-    JSON.stringify(
-      {
-        errors,
-        requests,
-        state: await page.evaluate(() => ({
-          calls: globalThis.__workspaceFixture?.calls,
-          output: document.querySelector("app-shell")?.shadowRoot?.querySelector(".session-status")
-            ?.textContent,
-          diagnostics: document
-            .querySelector("app-shell")
-            ?.shadowRoot?.querySelector(".global-diagnostics")?.textContent,
-          debugger: (() => {
-            const element = document
-              .querySelector("app-shell")
-              ?.shadowRoot?.querySelector("debugger-workspace");
-            return element
-              ? {
-                  html: element.outerHTML,
-                  shadow: element.shadowRoot?.innerHTML,
-                  error: element.debuggerError,
-                  sourceHost: !!element.sourceHost,
-                }
-              : null;
-          })(),
-          definitions: ["app-shell", "traffic-workspace", "settings-workspace"].map((tag) => [
-            tag,
-            Boolean(customElements.get(tag)),
-          ]),
-        })),
+  throw await reportBrowserCheckFailure(error, [
+    {
+      name: "screenshot",
+      collect: () =>
+        page.screenshot({
+          path: resolve(root, "../../../target/ui-check/workspace-failure.png"),
+          timeout: 2000,
+        }),
+    },
+    {
+      name: "workspace state",
+      collect: async () => {
+        process.stderr.write(
+          JSON.stringify(
+            {
+              errors,
+              requests,
+              state: await page.evaluate(() => ({
+                calls: globalThis.__workspaceFixture?.calls,
+                output: document
+                  .querySelector("app-shell")
+                  ?.shadowRoot?.querySelector(".session-status")?.textContent,
+                diagnostics: document
+                  .querySelector("app-shell")
+                  ?.shadowRoot?.querySelector(".global-diagnostics")?.textContent,
+                debugger: (() => {
+                  const element = document
+                    .querySelector("app-shell")
+                    ?.shadowRoot?.querySelector("debugger-workspace");
+                  return element
+                    ? {
+                        html: element.outerHTML,
+                        shadow: element.shadowRoot?.innerHTML,
+                        error: element.debuggerError,
+                        sourceHost: !!element.sourceHost,
+                      }
+                    : null;
+                })(),
+                definitions: ["app-shell", "traffic-workspace", "settings-workspace"].map((tag) => [
+                  tag,
+                  Boolean(customElements.get(tag)),
+                ]),
+              })),
+            },
+            null,
+            2,
+          ) + "\n",
+        );
       },
-      null,
-      2,
-    ) + "\n",
-  );
-  throw error;
+    },
+  ]);
 } finally {
   await browser.close();
 }
