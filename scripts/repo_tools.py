@@ -104,10 +104,12 @@ def version_key(path: Path):
     return tuple(int(part) if part.isdecimal() else part for part in path.name.split("."))
 
 
-def development_environment(*, root=ROOT, environment=None, platform=None) -> dict[str, str]:
+def development_environment(*, root=ROOT, environment=None, platform=None, target=None) -> dict[str, str]:
     """Configure native tools in a child environment, without changing the host."""
     env = dict(os.environ if environment is None else environment)
     windows = (os.name == "nt") if platform is None else platform == "win32"
+    if target and not windows:
+        raise ValueError("Windows target configuration requires a Windows host")
     bins = []
     if windows:
         architecture = "arm64" if host_platform.machine().lower() in {"arm64", "aarch64"} else "x64"
@@ -174,6 +176,11 @@ def development_environment(*, root=ROOT, environment=None, platform=None) -> di
         if (clang_dir / "libclang.dll").is_file():
             env["LIBCLANG_PATH"] = str(clang_dir)
     env["TRANSMOG_PYTHON"] = sys.executable
+    if windows:
+        from windows_cross import configure
+        configure(env, target or env.get("CARGO_BUILD_TARGET") or
+                  ("aarch64-pc-windows-msvc" if architecture == "arm64" else "x86_64-pc-windows-msvc"),
+                  root=root, host="aarch64-pc-windows-msvc" if architecture == "arm64" else "x86_64-pc-windows-msvc")
     return env
 
 

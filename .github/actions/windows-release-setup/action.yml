@@ -6,7 +6,10 @@ inputs:
     default: 'true'
   target:
     required: true
-    description: Native Rust target
+    description: Rust output target
+  host-target:
+    description: Native Rust host; defaults to the output target for native qualification
+    default: ''
 runs:
   using: composite
   steps:
@@ -25,12 +28,17 @@ runs:
       shell: pwsh
       run: |
         $PSNativeCommandUseErrorActionPreference = $true
-        rustup set default-host ${{ inputs.target }}
+        $requestedHost = '${{ inputs.host-target || inputs.target }}'
+        rustup set default-host $requestedHost
         $pin = [regex]::Match((Get-Content -Raw rust-toolchain.toml), '(?m)^channel\s*=\s*"([^"]+)"').Groups[1].Value
         rustup toolchain install $pin --profile minimal --component clippy --component rustfmt --target ${{ inputs.target }}
         ./scripts/setup-windows-ci.ps1
         $hostTarget = (rustc -vV | Select-String '^host: ').ToString().Substring(6)
-        if ($hostTarget -cne '${{ inputs.target }}') { throw 'Release tests require the native Rust host toolchain.' }
+        if ($hostTarget -cne $requestedHost) { throw 'Rust host differs from the requested build runner.' }
+        if ('${{ inputs.target }}' -cne $requestedHost) {
+          python ./scripts/dev-env.py --target ${{ inputs.target }} --check
+          if ($LASTEXITCODE -ne 0) { throw 'Cross-compilation tools or target libraries are missing.' }
+        }
         ./scripts/setup-release-validation-tools.ps1
     - name: Confirm native tool archive cache checkpoint
       if: inputs.use-cache == 'true'

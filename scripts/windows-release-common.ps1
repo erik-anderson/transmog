@@ -107,6 +107,10 @@ function Assert-ReleasePayload {
             $engine = Get-Content -Raw -LiteralPath (Join-Path $PayloadRoot $enginePath) | ConvertFrom-Json
             if ($engine.ManifestSha256 -cne $pipeline.V8.ManifestSha256 -or $engine.ArtifactId -cne $pipeline.V8.ArtifactId) { throw 'V8 producer provenance differs.' }
         }
+        if (Test-Path -LiteralPath (Join-Path $PayloadRoot 'evidence/compiled-build.json')) {
+            Invoke-TransmogPython 'windows_compiled.py' @('verify','--target',$manifest.Target,'--directory',$PayloadRoot) | Out-Host
+            if ($LASTEXITCODE -ne 0) { throw 'Compiled package provenance differs at the signing boundary.' }
+        }
     }
     return $manifest
 }

@@ -11,6 +11,7 @@ on:
       - 'scripts/setup-windows-ci.ps1'
       - 'scripts/repo_tools.py'
       - 'scripts/v8_artifact.py'
+      - 'scripts/windows_cross.py'
       - 'scripts/cache-v8.py'
       - 'scripts/v8_native.py'
       - 'scripts/v8_cache.py'
@@ -54,13 +55,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON((github.event_name == 'push' || inputs.include_arm64) && '[{"arch":"x64","target":"x86_64-pc-windows-msvc","runner":"windows-2025"},{"arch":"arm64","target":"aarch64-pc-windows-msvc","runner":"windows-11-arm"}]' || '[{"arch":"x64","target":"x86_64-pc-windows-msvc","runner":"windows-2025"}]') }}
+        include: ${{ fromJSON((github.event_name == 'push' || inputs.include_arm64) && '[{"arch":"x64","target":"x86_64-pc-windows-msvc"},{"arch":"arm64","target":"aarch64-pc-windows-msvc"}]' || '[{"arch":"x64","target":"x86_64-pc-windows-msvc"}]') }}
     concurrency:
       group: windows-v8-${{ github.ref }}-${{ matrix.target }}
       cancel-in-progress: false
       # Keep waiting releases when later pushes queue more prewarm work.
       queue: max
-    runs-on: ${{ matrix.runner }}
+    runs-on: windows-2025
     # Cold native compilation gets its own budget; ordinary release jobs stay <=120m.
     timeout-minutes: 240
     outputs:
@@ -76,12 +77,13 @@ jobs:
         timeout-minutes: 10
         with:
           target: ${{ matrix.target }}
+          host-target: x86_64-pc-windows-msvc
           use-cache: ${{ github.event_name == 'push' || inputs.use_cache }}
       - name: Compute engine inputs and compiler identity
         id: identity
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
-          . ./scripts/dev-env.ps1
+          . ./scripts/dev-env.ps1 -Target ${{ matrix.target }}
           $key = python ./scripts/v8_artifact.py key --target ${{ matrix.target }}
           if ($LASTEXITCODE -ne 0) { throw 'Could not compute V8 identity.' }
           "V8_PREPARATION_STARTED=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())" | Add-Content -LiteralPath $env:GITHUB_ENV
@@ -99,7 +101,7 @@ jobs:
         timeout-minutes: 210
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
-          . ./scripts/dev-env.ps1
+          . ./scripts/dev-env.ps1 -Target ${{ matrix.target }}
           python ./scripts/dev-env.py --check
           python ./scripts/cache-v8.py --target ${{ matrix.target }} --export artifacts/v8-engine --verbose
       - name: Verify prepared engine and report cold or warm timing
@@ -107,7 +109,7 @@ jobs:
         timeout-minutes: 2
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
-          . ./scripts/dev-env.ps1
+          . ./scripts/dev-env.ps1 -Target ${{ matrix.target }}
           python ./scripts/v8_artifact.py verify --target ${{ matrix.target }} --directory artifacts/v8-engine
           $seconds = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:V8_PREPARATION_STARTED
           $hit = '${{ steps.engine.outputs.cache-hit }}' -eq 'true'
@@ -155,3 +157,49 @@ jobs:
             target/*/release/build/v8-*/output
             target/*/release/build/v8-*/stderr
           if-no-files-found: warn
+
+  verify_arm64:
+    name: Verify cross-built V8 on native ARM64
+    needs: engine
+    if: (github.event_name == 'push' || inputs.include_arm64) && needs.engine.outputs.artifact-id-arm64 != ''
+    runs-on: windows-11-arm
+    timeout-minutes: 30
+    env:
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/windows-release-setup
+        timeout-minutes: 10
+        with:
+          target: aarch64-pc-windows-msvc
+          use-cache: ${{ github.event_name == 'push' || inputs.use_cache }}
+      - name: Download immutable ARM64 engine producer
+        timeout-minutes: 3
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.engine.outputs.artifact-id-arm64 }}
+          path: artifacts/v8-engine
+      - name: Verify SDK, target objects and Cargo ABI with a native consumer
+        timeout-minutes: 12
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          . ./scripts/dev-env.ps1
+          python ./scripts/dev-env.py --check
+          python ./scripts/v8_artifact.py verify --target aarch64-pc-windows-msvc --directory artifacts/v8-engine
+          $env:TRANSMOG_V8_ARTIFACT = (Resolve-Path artifacts/v8-engine).Path
+          cargo check --locked -p transmog-js-runtime --target aarch64-pc-windows-msvc
+          $engine = Get-Content -Raw artifacts/v8-engine/manifest.json | ConvertFrom-Json
+          @{ Commit=$env:GITHUB_SHA; RunId=$env:GITHUB_RUN_ID; Target='aarch64-pc-windows-msvc'; ArtifactId='${{ needs.engine.outputs.artifact-id-arm64 }}'; EngineKey=$engine.key; CargoAbiVerified=$true } | ConvertTo-Json | Set-Content -LiteralPath artifacts/v8-native-consumer.json -Encoding utf8NoBOM
+      - name: Retain native consumer identity and diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-v8-arm64-consumer-${{ github.run_attempt }}
+          path: |
+            artifacts/v8-engine/manifest.json
+            artifacts/native-tools-cache-checkpoint.json
+            artifacts/v8-native-consumer.json
+          if-no-files-found: warn
+          retention-days: 7

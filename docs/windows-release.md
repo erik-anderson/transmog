@@ -13,8 +13,10 @@ version command and confirms that the app installer includes the signed CLI
 beside the desktop for local MCP connections.
 Local packaging returns both the installer and the standalone CLI paths.
 
-The signed workflow builds and qualifies x64 on `windows-2025` and ARM64 on
-`windows-11-arm`, using native Rust toolchains and LLVM for each host. Both builds
+The signed workflow compiles both x64 and ARM64 production binaries on
+`windows-2025`. The ARM64 engine, desktop, CLI, script host and preview worker are
+cross-compiled with x64-hosted tools. Both targets are qualified on native runners:
+x64 on `windows-2025`, ARM64 on `windows-11-arm`. Both builds
 must pass the repository, browser, CLI, and WebView soak gates before the protected
 signing job bundles them on x64. Signed installers are then installed, upgraded,
 and uninstalled on their matching native runners. A single draft contains both
@@ -79,8 +81,8 @@ check runs after both builds and before signing. Policy summaries stay concise i
 the console, with complete JSON diagnostics retained as artifacts. Each build
 gate has a named workflow step and source-bound timing/result evidence.
 
-The signed and unsigned Windows workflows prepare V8 in a separate native job
-per architecture. Cold preparation has a 240-minute job budget and a 210-minute
+The signed and unsigned Windows workflows prepare V8 in a separate x64-hosted job
+per output architecture. Cold preparation has a 240-minute job budget and a 210-minute
 compile deadline, with verbose native progress and diagnostics upload afterward.
 The completed engine is verified and saved immediately; later application or
 test failures cannot discard that checkpoint. The reusable preparation workflow
@@ -88,11 +90,17 @@ also runs when engine inputs change on main and can be dispatched ahead of a rel
 
 Native-tool archives, Cargo downloads and prepared V8 have independent caches.
 V8 keys bind the reviewed source, patches, profile, generated bindings, native
-tool setup, locked V8 build dependencies, Rust compiler and SDK/MSVC environment.
+tool setup, locked V8 build dependencies, compiler versions and the target SDK/MSVC
+headers and libraries. Host compiler triples and paths are recorded separately;
+they do not change the ARM64 target ABI. Every COFF member of the V8 archive must
+match the output architecture. Consumer checks retain compiler versions, target
+features, non-default flags, SDK/toolset versions and target library fingerprints.
 Unrelated application dependencies and release version bumps do not change that key.
 The engine manifest records the original source/run and archive/bindings hashes.
 Every Cargo consumer verifies that manifest and its target/features/ABI before
 linking. A mismatch fails closed; it never falls back to an unplanned cold build.
+A native ARM64 consumer verifies the cross-built engine's SDK and COFF target,
+then runs the real Cargo ABI-reuse path before engine preparation succeeds.
 Rust application targets, unsigned payloads and signed outputs are not cached.
 The unsigned workflow's `use_cache: false` also forces cold engine preparation.
 
@@ -100,8 +108,14 @@ After policy preflight, frontend/browser acceptance (60 minutes, including relea
 safety fixtures, with a 25-minute deadline for the complete workspace and debugger
 browser suites) runs independently of engine preparation. Once V8 is ready and
 frontend acceptance passes, Clippy, workspace tests, native acceptance and archive interoperability share one
-120-minute validation job; optimized packaging, CLI/symbol checks and the desktop
-soak run independently in a 90-minute job. Each gate has a shorter step deadline
+120-minute native validation job. Test compilation uses the matching native Rust,
+LLVM and CMake toolchains; this retains stable Rust's complete workspace and
+doc-test execution. Optimized production compilation runs independently in a
+90-minute x64 job. A source/run/target-bound immutable artifact transfers its four
+executables, full PDBs and UI to a 45-minute native qualification job for CLI/symbol
+checks and the desktop soak. Qualification and the signing boundary verify that
+the compiled bytes, symbols, UI and engine identity survive that transfer unchanged.
+Each gate has a shorter step deadline
 and records its result and duration. Diagnostic uploads run even after a failed
 or timed-out step. These budgets leave room beyond the observed warm timings;
 the next hosted cold/warm run must confirm actual headroom on both architectures.
@@ -123,6 +137,12 @@ and packaging must use the identical engine artifact. `pipeline-inputs.json`
 retains the producer IDs, manifest digests and original engine identity, and the
 signing boundary checks the gate results again. The fresh final dependency-policy
 job still waits for every required producer before the protected signing gate.
+
+For a local cross-build with the ARM64 Visual Studio C++ component installed, use
+`python scripts/dev-env.py --target aarch64-pc-windows-msvc --run cargo build --locked --target aarch64-pc-windows-msvc`.
+The environment keeps host `PATH` and `LIB` native for Cargo build scripts and
+generators, and scopes ARM64 library searches, C/C++ flags and the CMake toolchain
+to the output target. Cross-built executables must be run and qualified on ARM64.
 
 From the repository root in PowerShell 7, check versions and formatting first,
 then prepare the same locked dependencies used by the hosted build:

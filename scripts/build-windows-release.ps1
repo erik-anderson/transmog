@@ -4,13 +4,17 @@ param(
     [ValidateSet('All','UI','Browser','Analysis','Tests','Native','Archives','Build','Qualify','Assemble')][string]$Phase = 'All',
     [ValidateSet('All','Frontend','Validation','Package')][string]$Stage = 'All',
     [string]$PolicySnapshot,
+    [string]$CompiledBuild,
+    [string]$CompiledBuildId,
     [switch]$HostedRunnerDevToolsPolicy
 )
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
+if ($CompiledBuild -and ($Stage -ne 'Package' -or $Phase -ne 'Build')) { throw 'Compiled inputs are restricted to the Package Build gate.' }
+if ([bool]$CompiledBuild -ne [bool]$CompiledBuildId) { throw 'Compiled inputs require their immutable artifact ID.' }
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'windows-release-target.ps1')
-. (Join-Path $PSScriptRoot 'dev-env.ps1')
+. (Join-Path $PSScriptRoot 'dev-env.ps1') -Target $Target
 $platform = Get-WindowsReleaseTarget $Target
 $payloadRoot = Join-Path $repositoryRoot 'artifacts/windows-build'
 $statePath = Join-Path $repositoryRoot 'artifacts/windows-build-state.json'
@@ -90,6 +94,11 @@ try {
     }
     Invoke-BuildPhase 'Archives' { Invoke-TransmogPython 'test-saz-interop.py' @('--workspace-features') }
     Invoke-BuildPhase 'Build' {
+        if ($CompiledBuild) {
+            $restored = Invoke-TransmogPython 'windows_compiled.py' @('restore','--target',$Target,'--directory',$CompiledBuild,'--artifact-id',$CompiledBuildId)
+            $state.Build = ($restored -join "`n") | ConvertFrom-Json -AsHashtable
+            return
+        }
         Invoke-TransmogPython 'generate-supply-chain-artifacts.py' @('--notice-path',(Join-Path $payloadRoot 'evidence/THIRD_PARTY_NOTICES.md'),'--sbom-path',(Join-Path $payloadRoot 'evidence/sbom.cdx.json'))
         $build = & (Join-Path $PSScriptRoot 'package-windows.ps1') -Target $Target -UnsignedDevelopment -BuildOnly -SkipTests |
             ForEach-Object { if ($null -ne $_.PSObject.Properties['BuildDirectory']) { $_ } else { $_ | Out-Host } }

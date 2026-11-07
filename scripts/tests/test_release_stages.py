@@ -15,6 +15,14 @@ TARGET = engine.TARGETS[0]
 COMMIT = "a" * 40
 
 
+def coff_library(machine=0x8664):
+    import struct
+    data = struct.pack("<HHIIIHH", machine, 0, 0, 0, 0, 0, 0)
+    header = (b"object.obj/".ljust(16) + b"0".ljust(12) + b"0".ljust(6) + b"0".ljust(6)
+              + b"0".ljust(8) + str(len(data)).encode().ljust(10) + b"`\n")
+    return b"!<arch>\n" + header + data
+
+
 def write(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
@@ -44,12 +52,15 @@ class EngineArtifactTests(unittest.TestCase):
         self.tools = patch.object(engine, "tools", return_value={"rustc": "pinned", "clang": "pinned"})
         self.tools.start()
         self.addCleanup(self.tools.stop)
+        self.raw_tools = patch.object(engine, "raw_tools", return_value={"rustc": "pinned\nhost: " + TARGET, "clang": "pinned"})
+        self.raw_tools.start()
+        self.addCleanup(self.raw_tools.stop)
         self.environment = patch.dict(os.environ, {name: "" for name in engine.ABI_ENV})
         self.environment.start()
         self.addCleanup(self.environment.stop)
         with patch.object(engine.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, COMMIT)):
             source = self.root / "native-output"
-            source.write_bytes(b"native bytes")
+            source.write_bytes(coff_library())
             engine.export(self.directory, TARGET, source, source, source, self.root)
 
     def test_engine_survives_unrelated_application_and_lockfile_changes(self):
@@ -88,6 +99,20 @@ class EngineArtifactTests(unittest.TestCase):
         cargo.write_text(cargo.read_text().replace('["simdutf"]', '["simdutf", "v8_enable_sandbox"]'))
         with self.assertRaisesRegex(ValueError, "source, profile"):
             engine.validate(self.directory, TARGET, self.root)
+
+    def test_cross_producer_is_reused_with_native_arm64_defaults_and_retained_host_provenance(self):
+        source = self.root / "arm64.lib"
+        source.write_bytes(coff_library(0xAA64))
+        directory = self.root / "arm64-engine"
+        with patch.object(engine.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, COMMIT)):
+            engine.export(directory, engine.TARGETS[1], source, source, source, self.root)
+        with patch.dict(os.environ, {"CFLAGS": "--target=" + engine.TARGETS[1], "CXXFLAGS": "--target=" + engine.TARGETS[1]}):
+            manifest = engine.validate(directory, engine.TARGETS[1], self.root, cargo=True)
+        self.assertEqual(manifest["producerHost"], TARGET)
+        manifest["producerHost"] = engine.TARGETS[1]
+        write(directory / "manifest.json", manifest)
+        with self.assertRaisesRegex(ValueError, "producer provenance"):
+            engine.validate(directory, engine.TARGETS[1], self.root)
 
     def test_engine_rejects_changed_locked_bindgen_dependency(self):
         lockfile = self.root / "Cargo.lock"

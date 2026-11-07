@@ -48,6 +48,8 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(environment, {"PATH": "/tools", "CC": "custom-clang", "CXX": "custom-clang++", "AR": "custom-ar"})
         self.assertEqual(configured["CXX"], "custom-clang++")
         self.assertEqual(configured["TRANSMOG_PYTHON"], sys.executable)
+        with self.assertRaisesRegex(ValueError, "Windows host"):
+            repo_tools.development_environment(environment=environment, platform="linux", target="aarch64-pc-windows-msvc")
 
     def test_windows_environment_repairs_duplicate_paths_and_repeated_setup_is_stable(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -87,7 +89,7 @@ class CommandTests(unittest.TestCase):
         for name in ("dev-env", "build-desktop", "build-dotnet-sample", "test", "test-live", "test-load", "test-interop",
                      "test-linux-docker", "fuzz-content-docker", "update-content-fuzz-corpus-docker", "generate-supply-chain-artifacts",
                      "set-release-version", "check-published-release-version", "sync-stable-update-release", "sync-canary-update-feed", "advance-release-version",
-                     "create-update-manifest", "cache-checkpoint", "v8_artifact", "release_stages", "cache-v8", "test-saz-interop", "benchmark-content", "setup-updater-signing", "clean-disk", "trim-build-cache", "trim-test-outputs", "test-output-run", "release-policy",
+                     "create-update-manifest", "cache-checkpoint", "v8_artifact", "windows_compiled", "release_stages", "cache-v8", "test-saz-interop", "benchmark-content", "setup-updater-signing", "clean-disk", "trim-build-cache", "trim-test-outputs", "test-output-run", "release-policy",
                      "update-chromium-psl", "vendor-boringssl-pki", "roll-chromium-dependencies", "compare-chromium"):
             with self.subTest(name=name):
                 result = subprocess.run([sys.executable, SCRIPTS / (name + ".py"), "--help"], capture_output=True, text=True)

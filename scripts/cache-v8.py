@@ -23,7 +23,7 @@ def main():
         # Selecting the owning workspace crate preserves the product's V8
         # features instead of enabling the binding crate's upstream defaults.
         started = time.monotonic()
-        environment = development_environment()
+        environment = development_environment(target=args.target)
         if args.export:
             environment["TRANSMOG_V8_EXPORT"] = str(args.export.resolve())
         command(["cargo", "build", "--release", "--locked", "-p", "transmog-js-runtime", "--target", args.target, *(["-vv"] if args.verbose else [])],

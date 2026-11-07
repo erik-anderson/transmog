@@ -10,6 +10,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--emit-env", action="store_true")
+    parser.add_argument("--target", choices=("x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"))
     parser.add_argument("--run", nargs=argparse.REMAINDER)
     # Python 3.11 argparse may split an option's REMAINDER at a literal --.
     # Once --run appears, its entire suffix belongs to the child command.
@@ -22,7 +23,7 @@ def main():
         args = parser.parse_args(argv)
     if args.run is not None and not args.run:
         parser.error("--run requires a command")
-    env = development_environment()
+    env = development_environment(target=args.target)
     if args.emit_env:
         from build_cache import automatic
         automatic(env)

@@ -7,10 +7,12 @@ import json
 import os
 from pathlib import Path
 import shutil
+import struct
 import subprocess
 import tomllib
 
 from repo_tools import ROOT, main_guard
+from windows_cross import target_libraries
 
 TARGETS = ("x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc")
 ABI_ENV = (
@@ -22,7 +24,7 @@ ABI_ENV = (
 )
 INPUTS = (
     "rust-toolchain.toml", "scripts/setup-windows-ci.ps1", "scripts/repo_tools.py",
-    "scripts/v8_artifact.py", "scripts/cache-v8.py", "scripts/v8_native.py",
+    "scripts/v8_artifact.py", "scripts/windows_cross.py", "scripts/cache-v8.py", "scripts/v8_native.py",
     "scripts/v8_cache.py", "scripts/v8_bindgen.py", "scripts/icu_data.py",
 )
 FILES = ("rusty_v8.lib", "src_binding.rs", "args.gn")
@@ -79,7 +81,7 @@ def input_hashes(root=ROOT):
     return result
 
 
-def tools():
+def raw_tools():
     result = {}
     for name, arguments in (("rustc", ["-vV"]), ("clang", ["--version"])):
         result[name] = subprocess.run([name, *arguments], cwd=ROOT, check=True, capture_output=True,
@@ -90,8 +92,98 @@ def tools():
     return result
 
 
+def compiler_versions(raw):
+    # Host triples and executable locations describe where a compiler runs, not
+    # the target ABI. Preserve their complete values separately as provenance.
+    if not isinstance(raw, dict) or any(not isinstance(raw.get(name), str) for name in ("rustc", "clang")):
+        raise ValueError("Missing compiler version evidence")
+    return {name: "\n".join(line for line in raw[name].splitlines()
+                           if not line.startswith(("host: ", "Target: ", "InstalledDir: ")))
+            for name in ("rustc", "clang")}
+
+
+def sdk_identity(target, environment):
+    result = {}
+    for value in environment.get("INCLUDE", "").split(";"):
+        if not value:
+            continue
+        path = Path(value)
+        parts = path.parts
+        if "MSVC" in parts:
+            relative = "/".join(parts[parts.index("MSVC"):])
+        elif "Include" in parts:
+            relative = "SDK/" + "/".join(parts[parts.index("Include"):])
+        else:
+            raise ValueError(f"Unrecognized Windows SDK headers: {path}")
+        markers = {"include": ("vcruntime.h", "yvals_core.h"), "ucrt": ("corecrt.h",),
+                   "shared": ("sdkddkver.h",), "um": ("windows.h",), "winrt": ()}[path.name.lower()]
+        if not path.is_dir() or relative in result:
+            raise ValueError("Missing or duplicate Windows SDK headers")
+        result[relative] = {name: digest(path / name) for name in markers}
+    if len(result) != 5:
+        raise ValueError("Expected the pinned MSVC and Windows SDK header directories")
+    for path in target_libraries(environment, target):
+        parts = path.parts
+        if "MSVC" in parts:
+            relative = "/".join(parts[parts.index("MSVC"):])
+            names = ("libcmt.lib", "msvcrt.lib", "vcruntime.lib")
+        elif "Lib" in parts:
+            relative = "SDK/" + "/".join(parts[parts.index("Lib"):])
+            names = ("ucrt.lib",) if path.parent.name == "ucrt" else ("kernel32.lib",)
+        else:
+            raise ValueError(f"Unrecognized Windows SDK libraries: {path}")
+        result[relative] = {name: digest(path / name) for name in names}
+    return result
+
+
+def tools(target):
+    raw = raw_tools()
+    return dict(compiler_versions(raw), windows=sdk_identity(target, raw))
+
+
+def abi(target):
+    result = {name: os.environ.get(name, "") for name in ABI_ENV}
+    for name in ("CFLAGS", "CXXFLAGS"):
+        if result[name].strip() == "--target=" + target:
+            result[name] = ""
+    flags = result["CARGO_ENCODED_RUSTFLAGS"].split("\x1f")
+    if any(flag.startswith("-Lnative=") for flag in flags):
+        verified = {"-Lnative=" + str(path) for path in target_libraries(os.environ, target)}
+        flags = [flag for flag in flags if flag not in verified]
+        result["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join(flags)
+    return result
+
+
+def archive_target(path, target):
+    machine = {TARGETS[0]: 0x8664, TARGETS[1]: 0xAA64}[target]
+    objects = 0
+    length = Path(path).stat().st_size
+    with Path(path).open("rb") as stream:
+        if stream.read(8) != b"!<arch>\n":
+            raise ValueError("V8 library is not a COFF archive")
+        while header := stream.read(60):
+            if len(header) != 60 or header[58:] != b"`\n":
+                raise ValueError("Invalid V8 library member")
+            size = int(header[48:58].strip())
+            start = stream.tell()
+            if size < 0 or start + size + size % 2 > length:
+                raise ValueError("Truncated V8 library member")
+            name = header[:16].strip()
+            if name not in (b"/", b"//", b"/SYM64/"):
+                if size < 20:
+                    raise ValueError("Invalid V8 COFF object")
+                data = stream.read(min(size, 8))
+                actual = struct.unpack_from("<H", data, 6 if data[:4] == b"\0\0\xff\xff" else 0)[0]
+                if actual != machine:
+                    raise ValueError("V8 library object architecture differs from its target")
+                objects += 1
+            stream.seek(start + size + size % 2)
+        if not objects:
+            raise ValueError("V8 library contains no target objects")
+
+
 def identity(target, root=ROOT):
-    return {"schema": 1, "target": target, "inputs": input_hashes(root), "tools": tools()}
+    return {"schema": 2, "target": target, "inputs": input_hashes(root), "tools": tools(target)}
 
 
 def validate(directory, target, root=ROOT, *, cargo=False):
@@ -109,10 +201,16 @@ def validate(directory, target, root=ROOT, *, cargo=False):
         raise ValueError("V8 artifact identity key differs")
     if manifest["files"] != {name: digest(directory / name) for name in FILES}:
         raise ValueError("V8 artifact checksum mismatch")
-    if cargo and manifest["abi"] != {name: os.environ.get(name, "") for name in ABI_ENV}:
+    archive_target(directory / "rusty_v8.lib", target)
+    if cargo and manifest["abi"] != abi(target):
         raise ValueError("V8 artifact Cargo features or ABI flags differ")
     if not manifest.get("originCommit") or not manifest.get("originRunId"):
         raise ValueError("V8 artifact has no producer provenance")
+    producer = manifest.get("producerTools", {})
+    if (manifest.get("producerHost") not in TARGETS
+            or "host: " + manifest["producerHost"] not in producer.get("rustc", "").splitlines()
+            or compiler_versions(producer) != {name: manifest["identity"]["tools"][name] for name in ("rustc", "clang")}):
+        raise ValueError("V8 artifact compiler producer provenance differs")
     return manifest
 
 
@@ -126,12 +224,15 @@ def export(directory, target, library, bindings, gn_args, root=ROOT):
     engine = identity(target, root)
     manifest = {
         "identity": engine, "key": encoded_digest(engine),
-        "abi": {name: os.environ.get(name, "") for name in ABI_ENV},
+        "abi": abi(target),
         "files": {name: digest(directory / name) for name in FILES},
         "originCommit": subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True,
                                         text=True, capture_output=True).stdout.strip(),
         "originRunId": os.environ.get("GITHUB_RUN_ID", "local"),
     }
+    manifest["producerTools"] = raw_tools()
+    manifest["producerHost"] = next((line.removeprefix("host: ") for line in manifest["producerTools"]["rustc"].splitlines()
+                                     if line.startswith("host: ")), "")
     (directory / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     validate(directory, target, root, cargo=True)
 

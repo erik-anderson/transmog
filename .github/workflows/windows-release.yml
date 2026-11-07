@@ -275,9 +275,96 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-  package:
-    name: Optimized package and soak (${{ matrix.arch }})
+  package_compile:
+    name: Compile optimized package on x64 (${{ matrix.arch }})
     needs: [policy, engine, frontend]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            target: x86_64-pc-windows-msvc
+            runner: windows-2025
+          - arch: arm64
+            target: aarch64-pc-windows-msvc
+            runner: windows-2025
+    runs-on: windows-2025
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    outputs:
+      artifact-id-x64: ${{ steps.reference.outputs.artifact-id-x64 }}
+      artifact-id-arm64: ${{ steps.reference.outputs.artifact-id-arm64 }}
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/windows-release-setup
+        timeout-minutes: 8
+        with:
+          target: ${{ matrix.target }}
+          host-target: x86_64-pc-windows-msvc
+      - name: Download exact engine producer
+        timeout-minutes: 2
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ matrix.arch == 'x64' && needs.engine.outputs.artifact-id-x64 || needs.engine.outputs.artifact-id-arm64 }}
+          path: artifacts/v8-engine
+      - name: Verify engine before enabling reuse
+        timeout-minutes: 2
+        env:
+          V8_ID: ${{ matrix.arch == 'x64' && needs.engine.outputs.artifact-id-x64 || needs.engine.outputs.artifact-id-arm64 }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          . ./scripts/dev-env.ps1 -Target ${{ matrix.target }}
+          python ./scripts/dev-env.py --check
+          python ./scripts/v8_artifact.py verify --target ${{ matrix.target }} --directory artifacts/v8-engine
+          "TRANSMOG_V8_ARTIFACT=$((Resolve-Path artifacts/v8-engine).Path)" | Add-Content -LiteralPath $env:GITHUB_ENV
+          "V8_ARTIFACT_ID=$env:V8_ID" | Add-Content -LiteralPath $env:GITHUB_ENV
+      - name: Install locked compilation tooling
+        timeout-minutes: 6
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          npm ci --prefix apps/desktop/ui
+      - name: Package gate - Build
+        timeout-minutes: 55
+        run: ./scripts/build-windows-release.ps1 -Stage Package -Target ${{ matrix.target }} -Phase Build
+      - name: Export source-bound compiled binaries, full PDBs and UI
+        timeout-minutes: 3
+        run: python ./scripts/windows_compiled.py export --target ${{ matrix.target }} --directory artifacts/compiled-package
+      - name: Retain immutable compiled producer
+        id: payload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-release-compiled-${{ matrix.arch }}-${{ github.run_attempt }}
+          path: artifacts/compiled-package/
+          if-no-files-found: error
+          retention-days: 7
+      - id: reference
+        env:
+          ARTIFACT_ID: ${{ steps.payload.outputs.artifact-id }}
+        run: '"artifact-id-${{ matrix.arch }}=$env:ARTIFACT_ID" | Add-Content -LiteralPath $env:GITHUB_OUTPUT'
+      - name: Retain compilation diagnostics even after a step timeout
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-release-diagnostics-compile-${{ matrix.arch }}-${{ github.run_attempt }}
+          path: |
+            artifacts/windows-build-state.json
+            artifacts/native-tools-cache-checkpoint.json
+            artifacts/windows-build-gates/
+            artifacts/windows-build/evidence/
+            artifacts/windows-desktop-validation/
+            artifacts/client-certificate-desktop/
+          if-no-files-found: warn
+          retention-days: 7
+
+  package:
+    name: Native optimized package qualification (${{ matrix.arch }})
+    needs: [policy, engine, frontend, package_compile]
     strategy:
       fail-fast: false
       matrix:
@@ -289,7 +376,7 @@ jobs:
             target: aarch64-pc-windows-msvc
             runner: windows-11-arm
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
+    timeout-minutes: 45
     permissions:
       contents: read
     outputs:
@@ -330,9 +417,17 @@ jobs:
           ./scripts/setup-windows-webview-ci.ps1
           npm ci --prefix apps/desktop/ui
           npm ci --prefix e2e/playwright
-      - name: Package gate - Build
-        timeout-minutes: 55
-        run: ./scripts/build-windows-release.ps1 -Stage Package -Target ${{ matrix.target }} -Phase Build
+      - name: Download exact compiled producer
+        timeout-minutes: 3
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ matrix.arch == 'x64' && needs.package_compile.outputs.artifact-id-x64 || needs.package_compile.outputs.artifact-id-arm64 }}
+          path: artifacts/compiled-package
+      - name: Package gate - Verify compiled build
+        timeout-minutes: 3
+        env:
+          COMPILED_ID: ${{ matrix.arch == 'x64' && needs.package_compile.outputs.artifact-id-x64 || needs.package_compile.outputs.artifact-id-arm64 }}
+        run: ./scripts/build-windows-release.ps1 -Stage Package -Target ${{ matrix.target }} -Phase Build -CompiledBuild artifacts/compiled-package -CompiledBuildId $env:COMPILED_ID
       - name: Package gate - Qualify
         timeout-minutes: 10
         run: ./scripts/build-windows-release.ps1 -Stage Package -Target ${{ matrix.target }} -Phase Qualify -HostedRunnerDevToolsPolicy

@@ -9,6 +9,7 @@ import shutil
 
 from repo_tools import main_guard
 from v8_artifact import digest, input_hashes, encoded_digest
+from windows_compiled import verify_qualified
 
 GATES = {
     "Frontend": ("UI", "Browser"),
@@ -66,6 +67,9 @@ def verify(root, stage, commit, run_id, target, attempt):
                 or native["identity"]["target"] != target
                 or native["key"] != encoded_digest(native["identity"])):
             raise ValueError("V8 engine inputs differ from the release candidate")
+        compiled = root / "evidence/compiled-build.json"
+        if stage == "Package" and compiled.exists():
+            verify_qualified(root, target, commit, run_id, attempt)
     return manifest
 
 

@@ -46,6 +46,9 @@ if ($arm64Host) {
     $nativeTools[1].File = 'cmake-4.4.4-windows-arm64.zip'
     $nativeTools[1].Url = 'https://github.com/Kitware/CMake/releases/download/v4.4.4/cmake-4.4.4-windows-arm64.zip'
     $nativeTools[1].Sha256 = 'ED673BBC4EB7C1E59B0407FD52F1680FC0AE3229A46B9B7B3EA9133764F07F67'
+    $nativeTools[2].File = 'ninja-winarm64.zip'
+    $nativeTools[2].Url = 'https://github.com/ninja-build/ninja/releases/download/v1.13.2/ninja-winarm64.zip'
+    $nativeTools[2].Sha256 = 'E52F0BDEF9DFB1003229DBD6508A508C4073FD017247002ADC66E5E806CB0391'
 }
 
 New-Item -ItemType Directory -Force -Path $downloadsRoot | Out-Null
@@ -86,7 +89,7 @@ if (-not (Test-Path -LiteralPath $windowsSdk)) {
 . (Join-Path $PSScriptRoot 'dev-env.ps1') -Check
 . (Join-Path $PSScriptRoot 'windows-release-target.ps1')
 $nativeTarget = if ($arm64Host) { 'aarch64-pc-windows-msvc' } else { 'x86_64-pc-windows-msvc' }
-foreach ($tool in @('clang', 'cmake')) {
+foreach ($tool in @('clang', 'cmake', 'ninja')) {
     Assert-WindowsBinaryTarget -Path (Get-Command $tool).Source -Target $nativeTarget
 }
 
