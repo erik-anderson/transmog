@@ -14,6 +14,13 @@ For TypeScript or `.mjs` changes, install the root tooling with
 `npm run lint:fix` applies TypeScript ESLint fixes and Prettier formatting across
 maintained TypeScript sources and JavaScript modules.
 
+Do not rerun validation after a merge or rebase when the only incoming commit
+is a version bump. Confirm that its diff is limited to release, package, or
+workspace versions, internal workspace version references, and corresponding
+lockfile metadata, then carry forward the existing validation evidence. Changes
+to behavior, external dependencies, build configuration, or functional conflict
+resolutions still require the affected checks.
+
 Before dispatching a signed release, complete the
 [local release qualification](docs/windows-release.md#local-release-qualification-before-dispatch)
 on the candidate commit. All required checks must pass, including formatting,
