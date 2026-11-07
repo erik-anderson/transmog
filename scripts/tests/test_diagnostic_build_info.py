@@ -87,14 +87,14 @@ class BuildInfoIntegrationTests(unittest.TestCase):
                      "third_party/swc-ecma-parser/.cargo_vcs_info.json", "third_party/chromium-certificate-policy/snapshot.json",
                      "third_party/chromium-root-store/snapshot.json", "third_party/chromium-suffix-list/snapshot.json",
                      "scripts/dev-env.ps1", "scripts/dev-env.py", "scripts/python-tools.ps1", "scripts/repo_tools.py",
-                     "scripts/build_cache.py", "scripts/cargo_cache_usage.py"]
+                     "scripts/build_cache.py", "scripts/cargo_cache_usage.py", "scripts/windows_cross.py"]
             for name in paths:
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(repo_tools.ROOT / name, path)
-            (root / "scripts/probe-cargo.ps1").write_text('''param([string]$Manifest, [string]$Target)
+            (root / "scripts/probe-cargo.ps1").write_text('''param([string]$Manifest, [string]$TargetDirectory)
 . (Join-Path $PSScriptRoot 'dev-env.ps1')
-cargo run --quiet --offline --manifest-path $Manifest --target-dir $Target
+cargo run --quiet --offline --manifest-path $Manifest --target-dir $TargetDirectory
 exit $LASTEXITCODE
 ''')
             (package / "Cargo.toml").write_text('''[workspace]
@@ -189,7 +189,8 @@ fn main(){let root=std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR
                     self.assertTrue(build(source_root=checkout)["app"]["identity"]["sourceDirty"])
                     untracked.unlink()
                     self.assertIsNone(build(source_root=checkout, powershell=True)["app"]["identity"]["sourceDirty"])
-                    self.assertFalse(build(source_root=checkout)["app"]["identity"]["sourceDirty"])
+                    self.assertFalse(build(source_root=checkout)["app"]["identity"]["sourceDirty"],
+                                     git(checkout, "status", "--porcelain").stdout.decode())
             with (root / "Cargo.toml").open("a") as output:
                 output.write("\n# source modification\n")
             self.assertTrue(build()["app"]["identity"]["sourceDirty"])

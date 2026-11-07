@@ -14,7 +14,7 @@ export async function smokeBuildInfo(call, evaluate, screenshotPath) {
       if(build.identity.sourceCommit!==null&&!/^[0-9a-f]{40}$/.test(build.identity.sourceCommit))throw new Error('Invalid source commit');
       if(build.identity.sourceDirty!==null&&typeof build.identity.sourceDirty!=='boolean')throw new Error('Invalid source modified state');
       const names=new Set(build.dependencies.filter(item=>item.version).map(item=>item.name));
-      for(const name of ['tauri','microsoft-webui','@microsoft/webui-framework','@tauri-apps/api','boring','v8','swc_ecma_parser'])if(!names.has(name))throw new Error('Missing built dependency '+name);
+      for(const name of ['tauri','microsoft-webui-handler','@microsoft/webui-framework','@tauri-apps/api','boring','v8','swc_ecma_parser'])if(!names.has(name))throw new Error('Missing built dependency '+name);
       const sources=new Set(build.bundledSources.map(item=>item.name));
       for(const name of ['BoringSSL','Chromium certificate policy','Chromium root store','Chromium Public Suffix List'])if(!sources.has(name))throw new Error('Missing bundled source '+name);
       if(!report.runtime.webviewVersion)throw new Error('Runtime WebView observation is unavailable');
