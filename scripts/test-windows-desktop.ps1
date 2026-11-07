@@ -24,6 +24,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
+. (Join-Path $PSScriptRoot 'desktop-probe-startup.ps1')
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $desktopUi = Join-Path $repositoryRoot 'apps\desktop\ui'
 $executable = Join-Path $repositoryRoot 'target\release\transmog.exe'
@@ -296,28 +297,16 @@ try {
     $launchArguments = @{ FilePath = $executable; PassThru = $true; WindowStyle = 'Hidden'; RedirectStandardOutput = (Join-Path $probeRoot 'stdout.txt'); RedirectStandardError = (Join-Path $probeRoot 'stderr.txt') }
     if ($viewerSource) { $launchArguments.ArgumentList = ('"' + $viewerSource + '"') }
     $process = Start-Process @launchArguments
-    $deadline = [DateTime]::UtcNow.AddSeconds(30)
-    do {
-        if ($ViewerChecks -or $PortableCaseChecks) {
-            $endpoint = Get-ChildItem -LiteralPath $probeRoot -Filter DevToolsActivePort -Recurse -File | Select-Object -First 1
-            if ($endpoint) { $DevToolsPort = [int](Get-Content -LiteralPath $endpoint.FullName -First 1) }
-        }
-        try {
-            $targets = Invoke-RestMethod -Uri "http://127.0.0.1:$DevToolsPort/json/list" -TimeoutSec 1
-        } catch {
-            $targets = $null
-        }
-        if ($targets) { break }
-        if ($process.HasExited) { break }
-        Start-Sleep -Milliseconds 250
-    } while ([DateTime]::UtcNow -lt $deadline)
-    if (-not $targets) {
+    $startup = Wait-DesktopProbePage -Process $process -ProfileRoot $probeRoot -Port $DevToolsPort -DiscoverPort:($ViewerChecks -or $PortableCaseChecks)
+    $DevToolsPort = $startup.Port
+    $startup | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $probeRoot 'devtools-discovery.json') -Encoding utf8NoBOM
+    if (-not $startup.Ready) {
         $exited = $process.HasExited
         $exitCode = if ($exited) { $process.ExitCode } else { $null }
         [ordered]@{ StartupVerified = $false; ProcessExited = $exited; ExitCode = $exitCode; HostedPolicy = [bool]$HostedRunnerDevToolsPolicy; Elevated = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) } |
             ConvertTo-Json | Set-Content -LiteralPath (Join-Path $probeRoot 'startup.json') -Encoding utf8NoBOM
         Get-Content -LiteralPath (Join-Path $probeRoot 'stderr.txt') -Tail 30 | ForEach-Object { Write-Host $_ }
-        throw "WebView2 DevTools endpoint did not become ready (exited=$exited, exit=$exitCode); startup diagnostics were retained."
+        throw "WebView2 application page did not become ready (reason=$($startup.Reason), exited=$exited, exit=$exitCode); startup diagnostics were retained."
     }
     if ($ScriptDebuggerChecks) {
         Push-Location $desktopUi
