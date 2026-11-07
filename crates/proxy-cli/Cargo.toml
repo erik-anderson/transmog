@@ -12,26 +12,26 @@ name = "transmog-cli"
 path = "src/main.rs"
 
 [dependencies]
-transmog-install-support = { version = "=0.1.20", path = "../install-support" }
-transmog-mcp = { version = "=0.1.20", path = "../mcp", features = ["connector"] }
+transmog-install-support = { version = "=0.1.21", path = "../install-support" }
+transmog-mcp = { version = "=0.1.21", path = "../mcp", features = ["connector"] }
 rpassword.workspace = true
 zeroize.workspace = true
-transmog-key-protection = { version = "=0.1.20", path = "../key-protection" }
+transmog-key-protection = { version = "=0.1.21", path = "../key-protection" }
 sysinfo.workspace = true
-transmog-network = { version = "=0.1.20", path = "../network" }
+transmog-network = { version = "=0.1.21", path = "../network" }
 bytes.workspace = true
 boring.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
-transmog-host-windows = { version = "=0.1.20", path = "../host-windows" }
-transmog-session = { version = "=0.1.20", path = "../proxy-session" }
-transmog-capture = { version = "=0.1.20", path = "../proxy-capture" }
-transmog-content = { version = "=0.1.20", path = "../proxy-content" }
-transmog-core = { version = "=0.1.20", path = "../proxy-core" }
-transmog-runtime = { version = "=0.1.20", path = "../proxy-runtime" }
-transmog-saz = { version = "=0.1.20", path = "../proxy-saz" }
-transmog-tls = { version = "=0.1.20", path = "../proxy-tls" }
+transmog-host-windows = { version = "=0.1.21", path = "../host-windows" }
+transmog-session = { version = "=0.1.21", path = "../proxy-session" }
+transmog-capture = { version = "=0.1.21", path = "../proxy-capture" }
+transmog-content = { version = "=0.1.21", path = "../proxy-content" }
+transmog-core = { version = "=0.1.21", path = "../proxy-core" }
+transmog-runtime = { version = "=0.1.21", path = "../proxy-runtime" }
+transmog-saz = { version = "=0.1.21", path = "../proxy-saz" }
+transmog-tls = { version = "=0.1.21", path = "../proxy-tls" }
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
