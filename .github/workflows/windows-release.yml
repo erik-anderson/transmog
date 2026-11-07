@@ -233,6 +233,8 @@ jobs:
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           ./scripts/setup-windows-webview-ci.ps1
+          npm ci --ignore-scripts
+          node --input-type=module -e "await import('./scripts/binary-reference-fixtures.mjs')"
           npm ci --prefix apps/desktop/ui
           npm --prefix apps/desktop/ui run build
           npm ci --prefix e2e/playwright
@@ -328,6 +330,8 @@ jobs:
         timeout-minutes: 6
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
+          npm ci --ignore-scripts
+          node --input-type=module -e "await import('./scripts/binary-reference-fixtures.mjs')"
           npm ci --prefix apps/desktop/ui
       - name: Package gate - Build
         timeout-minutes: 55
@@ -415,6 +419,8 @@ jobs:
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           ./scripts/setup-windows-webview-ci.ps1
+          npm ci --ignore-scripts
+          node --input-type=module -e "await import('./scripts/binary-reference-fixtures.mjs')"
           npm ci --prefix apps/desktop/ui
           npm ci --prefix e2e/playwright
       - name: Download exact compiled producer

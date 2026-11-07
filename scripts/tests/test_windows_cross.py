@@ -132,6 +132,20 @@ class CrossToolchainTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Truncated"):
             engine.archive_target(path, cross.ARM64)
 
+    def test_pinned_libclang_host_paths_are_portable_but_custom_overrides_stay_distinct(self):
+        results = []
+        for name in ("x64-checkout-on-D", "arm64-checkout-on-C"):
+            root = self.root / name
+            directory = root / ".tools/llvm/bin"
+            directory.mkdir(parents=True)
+            (directory / "libclang.dll").write_bytes(b"pinned host-specific tool")
+            with patch.dict(os.environ, {value: "" for value in engine.ABI_ENV}), patch.dict(os.environ, LIBCLANG_PATH=str(directory)):
+                results.append(engine.abi(cross.ARM64, root))
+                os.environ["LIBCLANG_PATH"] = str(root / "custom-libclang")
+                self.assertNotEqual(engine.abi(cross.ARM64, root), results[-1])
+        self.assertEqual(results[0], results[1])
+        self.assertEqual(results[0]["LIBCLANG_PATH"], "@pinned-llvm/bin")
+
 
 class CompiledTransferTests(unittest.TestCase):
     def setUp(self):

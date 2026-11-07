@@ -88,7 +88,7 @@ def raw_tools():
                                       text=True, encoding="utf-8").stdout.strip()
     # The reviewed native environment fixes SDK and MSVC include/library paths.
     # Include them so an image/toolset change cannot silently reuse old objects.
-    result.update({name: os.environ.get(name, "") for name in ("INCLUDE", "LIB")})
+    result.update({name: os.environ.get(name, "") for name in ("INCLUDE", "LIB", "LIBCLANG_PATH")})
     return result
 
 
@@ -141,8 +141,14 @@ def tools(target):
     return dict(compiler_versions(raw), windows=sdk_identity(target, raw))
 
 
-def abi(target):
+def abi(target, root=ROOT):
     result = {name: os.environ.get(name, "") for name in ABI_ENV}
+    # GitHub's x64 and ARM64 checkouts use different drives. The pinned host
+    # libclang installation is tooling provenance, independent of target layout.
+    libclang = result["LIBCLANG_PATH"]
+    pinned = root / ".tools/llvm/bin"
+    if libclang and Path(libclang).resolve() == pinned.resolve() and (pinned / "libclang.dll").is_file():
+        result["LIBCLANG_PATH"] = "@pinned-llvm/bin"
     for name in ("CFLAGS", "CXXFLAGS"):
         if result[name].strip() == "--target=" + target:
             result[name] = ""
@@ -202,7 +208,7 @@ def validate(directory, target, root=ROOT, *, cargo=False):
     if manifest["files"] != {name: digest(directory / name) for name in FILES}:
         raise ValueError("V8 artifact checksum mismatch")
     archive_target(directory / "rusty_v8.lib", target)
-    if cargo and manifest["abi"] != abi(target):
+    if cargo and manifest["abi"] != abi(target, root):
         raise ValueError("V8 artifact Cargo features or ABI flags differ")
     if not manifest.get("originCommit") or not manifest.get("originRunId"):
         raise ValueError("V8 artifact has no producer provenance")
@@ -224,7 +230,7 @@ def export(directory, target, library, bindings, gn_args, root=ROOT):
     engine = identity(target, root)
     manifest = {
         "identity": engine, "key": encoded_digest(engine),
-        "abi": abi(target),
+        "abi": abi(target, root),
         "files": {name: digest(directory / name) for name in FILES},
         "originCommit": subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True,
                                         text=True, capture_output=True).stdout.strip(),

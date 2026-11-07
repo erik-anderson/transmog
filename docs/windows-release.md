@@ -144,6 +144,11 @@ The environment keeps host `PATH` and `LIB` native for Cargo build scripts and
 generators, and scopes ARM64 library searches, C/C++ flags and the CMake toolchain
 to the output target. Cross-built executables must be run and qualified on ARM64.
 
+Each isolated validation, compilation and qualification job installs the locked
+root Node tooling with `npm ci --ignore-scripts` and imports the independent binary
+reference encoders before expensive work. UI and Playwright dependency installs
+do not supply packages imported by scripts at repository root.
+
 From the repository root in PowerShell 7, check versions and formatting first,
 then prepare the same locked dependencies used by the hosted build:
 

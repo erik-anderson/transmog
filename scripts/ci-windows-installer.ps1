@@ -62,6 +62,10 @@ try {
         $versionReport | ForEach-Object { Write-Host $_ }
     }
     Invoke-BuildPhase 'Locked UI dependencies' {
+        & npm ci --ignore-scripts
+        if ($LASTEXITCODE -ne 0) { throw 'Root qualification dependencies failed to install.' }
+        & node --input-type=module -e "await import('./scripts/binary-reference-fixtures.mjs')"
+        if ($LASTEXITCODE -ne 0) { throw 'Binary reference encoders are unavailable.' }
         Push-Location (Join-Path $repositoryRoot 'apps\desktop\ui')
         try {
             & npm ci
