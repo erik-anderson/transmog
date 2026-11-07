@@ -36,6 +36,16 @@ try {
     if ($state.Phases.Assemble.Result -cne 'passed') { throw 'Successful phases did not allow assembly.' }
     Invoke-BuildPhase 'Tests' { }
     if ($state.Phases.ContainsKey('Assemble')) { throw 'Rerunning an earlier gate retained stale downstream qualification.' }
+    # A stage must skip unrelated gates and retain order within its own group.
+    $phases = @('Analysis','Tests','Native','Archives')
+    $Stage = 'Validation'
+    $state = @{ Phases=@{} }
+    Invoke-BuildPhase 'UI' { throw 'Validation must not repeat the frontend.' }
+    $rejected = $false
+    try { Invoke-BuildPhase 'Native' { throw 'Must not skip workspace tests.' } } catch { $rejected = $_ -match 'requires a successful Analysis' }
+    if (-not $rejected) { throw 'An independent stage bypassed its own required gate.' }
+    foreach ($name in $phases) { Invoke-BuildPhase $name { } }
+    if ($state.Phases.Archives.Stage -cne 'Validation') { throw 'Stage ownership was not retained.' }
     Write-Host 'Release build phases preserve failures, source binding and prerequisite order.'
 } finally {
     $env:GITHUB_STEP_SUMMARY = $priorSummary

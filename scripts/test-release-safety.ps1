@@ -16,7 +16,9 @@ $files += @(foreach ($relative in @(
 )) {
     $path = Join-Path $symbolsDirectory $relative
     New-Item -ItemType Directory -Force (Split-Path -Parent $path) | Out-Null
-    'evidence fixture' | Set-Content -LiteralPath $path
+    if ($relative.StartsWith('gates/')) {
+        @{ Name=[IO.Path]::GetFileNameWithoutExtension($relative); Commit='test-commit'; RunId='123'; Target='x86_64-pc-windows-msvc'; Result='passed' } | ConvertTo-Json | Set-Content -LiteralPath $path
+    } else { 'evidence fixture' | Set-Content -LiteralPath $path }
     [ordered]@{ Path = "evidence/$relative"; Sha256 = (Get-FileHash -LiteralPath $path).Hash }
 })
 $symbolsPath = Join-Path $symbolsDirectory 'Transmog_0.1.0_windows-x64-symbols.zip'
@@ -25,9 +27,9 @@ $files += [ordered]@{ Path = 'evidence/Transmog_0.1.0_windows-x64-symbols.zip'; 
 $baseline = [ordered]@{ Commit = 'test-commit'; RunId = '123'; SourceBranch = 'main'; Target = 'x86_64-pc-windows-msvc'; Version = '0.1.0'; Channel = 'Canary'; ReleaseType = 'Canary'; Files = @($files) } | ConvertTo-Json -Depth 5
 $manifestPath = Join-Path $fixture 'build-manifest.json'
 function Set-TestManifest { $baseline | Set-Content -LiteralPath $manifestPath }
-function Require-Rejection([scriptblock]$Action, [string]$Reason) {
+function Require-Rejection([scriptblock]$Action, [string]$Reason, [string]$ExpectedMessage) {
     $rejected = $false
-    try { & $Action | Out-Null } catch { $rejected = $true }
+    try { & $Action | Out-Null } catch { if ($ExpectedMessage -and $_ -notmatch $ExpectedMessage) { throw }; $rejected = $true }
     if (-not $rejected) { throw "Safety check failed to reject $Reason" }
     Write-Host "Rejected $Reason."
 }
@@ -50,6 +52,13 @@ foreach ($relative in @('gates/Unexpected.json','gates/UI.exe','policy/unexpecte
 Set-TestManifest
 $arm64 = $baseline | ConvertFrom-Json
 $arm64.Target = 'aarch64-pc-windows-msvc'
+foreach ($entry in $arm64.Files | Where-Object { $_.Path -like 'evidence/gates/*' }) {
+    $path = Join-Path $fixture $entry.Path
+    $gate = Get-Content -Raw $path | ConvertFrom-Json
+    $gate.Target = $arm64.Target
+    $gate | ConvertTo-Json | Set-Content -LiteralPath $path
+    $entry.Sha256 = (Get-FileHash -LiteralPath $path).Hash
+}
 $armSymbolsPath = Join-Path $symbolsDirectory 'Transmog_0.1.0_windows-arm64-symbols.zip'
 Move-Item -LiteralPath $symbolsPath -Destination $armSymbolsPath
 $arm64.Files[-1].Path = 'evidence/Transmog_0.1.0_windows-arm64-symbols.zip'
@@ -59,6 +68,12 @@ $arm64.Target = 'x86_64-pc-windows-msvc'
 $arm64 | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath
 Require-Rejection { Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-commit' -RunId '123' } 'symbols from a different architecture'
 Move-Item -LiteralPath $armSymbolsPath -Destination $symbolsPath
+foreach ($entry in ($baseline | ConvertFrom-Json).Files | Where-Object { $_.Path -like 'evidence/gates/*' }) {
+    $path = Join-Path $fixture $entry.Path
+    $gate = Get-Content -Raw $path | ConvertFrom-Json
+    $gate.Target = 'x86_64-pc-windows-msvc'
+    $gate | ConvertTo-Json | Set-Content -LiteralPath $path
+}
 Set-TestManifest
 Push-Location (Split-Path -Parent $fixture)
 try {
@@ -93,7 +108,77 @@ Require-Rejection { Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-co
 Set-TestManifest
 'unlisted' | Set-Content -LiteralPath (Join-Path $fixture 'unexpected.ps1')
 Require-Rejection { Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-commit' -RunId '123' } 'an unlisted payload file'
+Remove-Item -LiteralPath (Join-Path $fixture 'unexpected.ps1')
+Set-TestManifest
+Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-commit' -RunId '123' | Out-Null
+$gatePath = Join-Path $fixture 'evidence/gates/Tests.json'
+$originalGate = Get-Content -Raw $gatePath
+$gate = $originalGate | ConvertFrom-Json
+$gate.Result = 'failed'
+$gate | ConvertTo-Json | Set-Content -LiteralPath $gatePath
+$invalid = $baseline | ConvertFrom-Json
+($invalid.Files | Where-Object Path -CEQ 'evidence/gates/Tests.json').Sha256 = (Get-FileHash -LiteralPath $gatePath).Hash
+$invalid | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath
+Require-Rejection { Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-commit' -RunId '123' } 'a failed gate with a matching file catalog' 'Unqualified release gate: Tests'
+$originalGate | Set-Content -NoNewline -LiteralPath $gatePath
+Set-TestManifest
+Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-commit' -RunId '123' | Out-Null
 Write-Host 'Release payload safety checks passed.'
+# Verify the complete merged schema at the same boundary used by signing.
+$qualified = $baseline | ConvertFrom-Json
+$qualified | Add-Member -NotePropertyName PipelineSchema -NotePropertyValue 1
+$groups = @{ Frontend=@('UI','Browser'); Validation=@('Analysis','Tests','Native','Archives'); Package=@('Build','Qualify') }
+$originalGates = @{}
+foreach ($stage in $groups.Keys) {
+    foreach ($name in $groups[$stage]) {
+        $relative = "evidence/gates/$name.json"
+        $path = Join-Path $fixture $relative
+        $originalGates[$path] = Get-Content -Raw $path
+        $gate = Get-Content -Raw $path | ConvertFrom-Json
+        $gate | Add-Member -NotePropertyName Stage -NotePropertyValue $stage
+        $gate | Add-Member -NotePropertyName RunAttempt -NotePropertyValue '1'
+        $gate | ConvertTo-Json | Set-Content -LiteralPath $path
+        ($qualified.Files | Where-Object Path -CEQ $relative).Sha256 = (Get-FileHash $path).Hash
+    }
+}
+$v8 = @{ Commit='test-commit'; RunId='123'; Target='x86_64-pc-windows-msvc'; ArtifactId='100'; ManifestSha256=('a' * 64) }
+$pipeline = @{ Commit='test-commit'; RunId='123'; Target='x86_64-pc-windows-msvc'; RunAttempt='2'; V8=$v8; Stages=@{
+    Frontend=@{ ArtifactId='101'; ManifestSha256=('b' * 64); RunAttempt='1' }
+    Validation=@{ ArtifactId='102'; ManifestSha256=('c' * 64); RunAttempt='1' }
+    Package=@{ ArtifactId='103'; ManifestSha256=('d' * 64); RunAttempt='1' }
+} }
+foreach ($name in @('pipeline-inputs','v8-engine-validation','v8-engine-package')) {
+    $value = if ($name -eq 'pipeline-inputs') { $pipeline } else { $v8 }
+    $relative = "evidence/$name.json"
+    $path = Join-Path $fixture $relative
+    $value | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $path
+    $qualified.Files += [pscustomobject]@{ Path=$relative; Sha256=(Get-FileHash $path).Hash }
+}
+$qualified | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifestPath
+Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-commit' -RunId '123' | Out-Null
+$path = Join-Path $fixture 'evidence/gates/Tests.json'
+$goodGate = Get-Content -Raw $path
+$gate = $goodGate | ConvertFrom-Json
+$gate.Stage = 'Package'
+$gate | ConvertTo-Json | Set-Content $path
+($qualified.Files | Where-Object Path -CEQ 'evidence/gates/Tests.json').Sha256 = (Get-FileHash $path).Hash
+$qualified | ConvertTo-Json -Depth 8 | Set-Content $manifestPath
+Require-Rejection { Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-commit' -RunId '123' } 'a gate with the wrong producer' 'Release gate producer differs'
+$goodGate | Set-Content -NoNewline $path
+($qualified.Files | Where-Object Path -CEQ 'evidence/gates/Tests.json').Sha256 = (Get-FileHash $path).Hash
+$path = Join-Path $fixture 'evidence/v8-engine-package.json'
+$other = $v8.Clone()
+$other.ArtifactId = '99'
+$other | ConvertTo-Json | Set-Content $path
+($qualified.Files | Where-Object Path -CEQ 'evidence/v8-engine-package.json').Sha256 = (Get-FileHash $path).Hash
+$qualified | ConvertTo-Json -Depth 8 | Set-Content $manifestPath
+Require-Rejection { Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-commit' -RunId '123' } 'different validated and packaged engines' 'V8 producer provenance differs'
+foreach ($entry in $originalGates.GetEnumerator()) { $entry.Value | Set-Content -NoNewline $entry.Key }
+foreach ($name in @('pipeline-inputs','v8-engine-validation','v8-engine-package')) { Remove-Item -LiteralPath (Join-Path $fixture "evidence/$name.json") }
+Set-TestManifest
+Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-commit' -RunId '123' | Out-Null
+Write-Host 'Merged pipeline payload provenance checks passed.'
+
 function Invoke-EnvironmentIsolatedFixture([string]$Script) {
     $before = [Environment]::GetEnvironmentVariables()
     & (Join-Path $PSScriptRoot $Script)

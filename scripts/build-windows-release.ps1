@@ -2,6 +2,7 @@
 param(
     [ValidateSet('x86_64-pc-windows-msvc', 'aarch64-pc-windows-msvc')][string]$Target = 'x86_64-pc-windows-msvc',
     [ValidateSet('All','UI','Browser','Analysis','Tests','Native','Archives','Build','Qualify','Assemble')][string]$Phase = 'All',
+    [ValidateSet('All','Frontend','Validation','Package')][string]$Stage = 'All',
     [string]$PolicySnapshot,
     [switch]$HostedRunnerDevToolsPolicy
 )
@@ -15,27 +16,32 @@ $payloadRoot = Join-Path $repositoryRoot 'artifacts/windows-build'
 $statePath = Join-Path $repositoryRoot 'artifacts/windows-build-state.json'
 $gateRoot = Join-Path $repositoryRoot 'artifacts/windows-build-gates'
 $phases = @('UI','Browser','Analysis','Tests','Native','Archives','Build','Qualify','Assemble')
+if ($Stage -eq 'Frontend') { $phases = @('UI','Browser') }
+if ($Stage -eq 'Validation') { $phases = @('Analysis','Tests','Native','Archives') }
+if ($Stage -eq 'Package') { $phases = @('Build','Qualify','Assemble') }
+if ($Phase -ne 'All' -and $Phase -notin $phases) { throw "Phase $Phase does not belong to stage $Stage." }
+
 $sourceCommit = (git -C $repositoryRoot rev-parse HEAD).Trim()
 if ($env:GITHUB_SHA -and $env:GITHUB_SHA -cne $sourceCommit) { throw 'Checkout differs from the workflow source.' }
 if (git -C $repositoryRoot status --porcelain) { throw 'Release builds require a clean committed source.' }
 if ($env:GITHUB_STEP_SUMMARY) { @('| Gate | Result | Duration |','| --- | --- | --- |') | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY }
-if ($Phase -in @('All','UI')) {
+if ($Phase -eq 'All' -or $Phase -eq $phases[0]) {
     if (Test-Path -LiteralPath $payloadRoot) { throw 'Build payload directory already exists; use a fresh checkout.' }
     New-Item -ItemType Directory -Force -Path (Join-Path $payloadRoot 'target/release'), (Join-Path $payloadRoot 'apps/desktop/ui'), (Join-Path $payloadRoot 'evidence/gates') | Out-Null
     New-Item -ItemType Directory -Force -Path $gateRoot | Out-Null
-    $state = @{ Commit=$sourceCommit; Target=$Target; Phases=@{} }
+    $state = @{ Commit=$sourceCommit; Target=$Target; Stage=$Stage; RunId=$env:GITHUB_RUN_ID; RunAttempt=$env:GITHUB_RUN_ATTEMPT; Phases=@{} }
 } else {
     $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json -AsHashtable
-    if ($state.Commit -cne $sourceCommit -or $state.Target -cne $Target) { throw 'Build phase evidence belongs to a different source or target.' }
+    if ($state.Commit -cne $sourceCommit -or $state.Target -cne $Target -or $state.Stage -cne $Stage -or $state.RunId -cne $env:GITHUB_RUN_ID -or $state.RunAttempt -cne $env:GITHUB_RUN_ATTEMPT) { throw 'Build phase evidence belongs to a different source or target.' }
 }
 function Invoke-BuildPhase([string]$Name, [scriptblock]$Action) {
-    if ($Phase -cne 'All' -and $Phase -cne $Name) { return }
+    if ($Name -notin $phases -or ($Phase -cne 'All' -and $Phase -cne $Name)) { return }
     foreach ($required in $phases[0..([array]::IndexOf($phases,$Name))] | Where-Object { $_ -cne $Name }) {
         if ($state.Phases[$required].Result -cne 'passed') { throw "Build phase $Name requires a successful $required phase." }
     }
     $phaseIndex = [array]::IndexOf($phases,$Name)
     foreach ($invalidated in $phases[$phaseIndex..($phases.Count-1)]) { [void]$state.Phases.Remove($invalidated) }
-    if ($phaseIndex -le [array]::IndexOf($phases,'Build')) { [void]$state.Remove('Build') }
+    if ('Build' -in $phases -and $phaseIndex -le [array]::IndexOf($phases,'Build')) { [void]$state.Remove('Build') }
     $started = [DateTimeOffset]::UtcNow
     $result = 'failed'
     Write-Host "::group::Release gate: $Name"
@@ -45,7 +51,7 @@ function Invoke-BuildPhase([string]$Name, [scriptblock]$Action) {
         if ($LASTEXITCODE -ne 0) { throw "$Name exited with $LASTEXITCODE" }
         $result = 'passed'
     } finally {
-        $record = [ordered]@{ Name=$Name; Commit=$sourceCommit; Target=$Target; Result=$result; StartedAtUtc=$started.ToString('o'); DurationSeconds=[math]::Round(([DateTimeOffset]::UtcNow-$started).TotalSeconds,2) }
+        $record = [ordered]@{ Name=$Name; Commit=$sourceCommit; Target=$Target; Stage=$Stage; RunId=$env:GITHUB_RUN_ID; RunAttempt=$env:GITHUB_RUN_ATTEMPT; Result=$result; StartedAtUtc=$started.ToString('o'); DurationSeconds=[math]::Round(([DateTimeOffset]::UtcNow-$started).TotalSeconds,2) }
         $state.Phases[$Name] = $record
         $state | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $statePath -Encoding utf8NoBOM
         $record | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $gateRoot "$Name.json") -Encoding utf8NoBOM
@@ -117,9 +123,29 @@ try {
         })
         $manifest = [ordered]@{ Commit = $sourceCommit; RunId = $env:GITHUB_RUN_ID; SourceBranch = $env:GITHUB_REF_NAME; Version = $buildResult.Version; Channel = $buildResult.Channel; ReleaseType = $env:RELEASE_TYPE; Target = $buildResult.Target; BuiltAtUtc = [DateTimeOffset]::UtcNow.ToString('o'); Files = $files }
         $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $payloadRoot 'build-manifest.json') -Encoding utf8NoBOM
-        . (Join-Path $PSScriptRoot 'windows-release-common.ps1')
-        Assert-ReleasePayload -PayloadRoot $payloadRoot -Commit $sourceCommit -RunId $env:GITHUB_RUN_ID | Out-Null
+        if ($Stage -eq 'All') {
+            . (Join-Path $PSScriptRoot 'windows-release-common.ps1')
+            Assert-ReleasePayload -PayloadRoot $payloadRoot -Commit $sourceCommit -RunId $env:GITHUB_RUN_ID | Out-Null
+        } else {
+            # This is a partial producer, never a signable build payload. The
+            # aggregation job must verify all three immutable stage artifacts.
+            Remove-Item -LiteralPath (Join-Path $payloadRoot 'build-manifest.json')
+            $manifest.Remove('Files')
+            $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $payloadRoot 'evidence/package-metadata.json') -Encoding utf8NoBOM
+        }
         if ($env:GITHUB_OUTPUT) { "version=$($buildResult.Version)" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8NoBOM }
         Write-Host "Prepared tested unsigned build payload for Transmog $($buildResult.Version)."
+    }
+    if ($Stage -ne 'All' -and ($Phase -eq 'All' -or $Phase -eq $phases[-1])) {
+        foreach ($gate in $phases | Where-Object { $_ -ne 'Assemble' }) {
+            Copy-Item -LiteralPath (Join-Path $gateRoot "$gate.json") -Destination (Join-Path $payloadRoot 'evidence/gates') -Force
+        }
+        if ($Stage -ne 'Frontend') {
+            if (-not $env:TRANSMOG_V8_ARTIFACT -or $env:V8_ARTIFACT_ID -notmatch '^\d+$') { throw 'A verified immutable V8 artifact is required.' }
+            $engineManifest = Join-Path $env:TRANSMOG_V8_ARTIFACT 'manifest.json'
+            $engine = [ordered]@{ Commit=$sourceCommit; RunId=$env:GITHUB_RUN_ID; Target=$Target; ArtifactId=$env:V8_ARTIFACT_ID; ManifestSha256=(Get-FileHash -LiteralPath $engineManifest -Algorithm SHA256).Hash; Engine=(Get-Content -Raw -LiteralPath $engineManifest | ConvertFrom-Json) }
+            $engine | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $payloadRoot "evidence/v8-engine-$($Stage.ToLowerInvariant()).json") -Encoding utf8NoBOM
+        }
+        Invoke-TransmogPython 'release_stages.py' @('export','--stage',$Stage,'--root',$payloadRoot,'--target',$Target,'--commit',$sourceCommit)
     }
 } finally { Pop-Location }

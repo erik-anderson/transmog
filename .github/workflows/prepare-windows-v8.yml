@@ -1,0 +1,145 @@
+name: Prepare reusable Windows V8
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'third_party/rusty-v8/**'
+      - 'rust-toolchain.toml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'crates/js-runtime/Cargo.toml'
+      - 'scripts/setup-windows-ci.ps1'
+      - 'scripts/repo_tools.py'
+      - 'scripts/v8_artifact.py'
+      - 'scripts/cache-v8.py'
+      - 'scripts/v8_native.py'
+      - 'scripts/v8_cache.py'
+      - 'scripts/v8_bindgen.py'
+      - 'scripts/icu_data.py'
+      - '.github/actions/windows-release-setup/**'
+      - '.github/workflows/prepare-windows-v8.yml'
+
+  workflow_call:
+    inputs:
+      include_arm64:
+        type: boolean
+        default: true
+      use_cache:
+        type: boolean
+        default: true
+    outputs:
+      artifact-id-x64:
+        value: ${{ jobs.engine.outputs.artifact-id-x64 }}
+      artifact-id-arm64:
+        value: ${{ jobs.engine.outputs.artifact-id-arm64 }}
+  workflow_dispatch:
+    inputs:
+      include_arm64:
+        type: boolean
+        default: true
+      use_cache:
+        type: boolean
+        default: true
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: pwsh
+env:
+  PYTHONUTF8: '1'
+jobs:
+  engine:
+    if: github.event.repository.private == false
+    name: Prepare V8 (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON((github.event_name == 'push' || inputs.include_arm64) && '[{"arch":"x64","target":"x86_64-pc-windows-msvc","runner":"windows-2025"},{"arch":"arm64","target":"aarch64-pc-windows-msvc","runner":"windows-11-arm"}]' || '[{"arch":"x64","target":"x86_64-pc-windows-msvc","runner":"windows-2025"}]') }}
+    runs-on: ${{ matrix.runner }}
+    # Cold native compilation gets its own budget; ordinary release jobs stay <=120m.
+    timeout-minutes: 240
+    outputs:
+      artifact-id-x64: ${{ steps.reference.outputs.artifact-id-x64 }}
+      artifact-id-arm64: ${{ steps.reference.outputs.artifact-id-arm64 }}
+    env:
+      CARGO_INCREMENTAL: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/windows-release-setup
+        timeout-minutes: 10
+        with:
+          target: ${{ matrix.target }}
+          use-cache: ${{ github.event_name == 'push' || inputs.use_cache }}
+      - name: Compute engine inputs and compiler identity
+        id: identity
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          . ./scripts/dev-env.ps1
+          $key = python ./scripts/v8_artifact.py key --target ${{ matrix.target }}
+          if ($LASTEXITCODE -ne 0) { throw 'Could not compute V8 identity.' }
+          "V8_PREPARATION_STARTED=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())" | Add-Content -LiteralPath $env:GITHUB_ENV
+          "key=$key" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+      - name: Restore verified engine only
+        timeout-minutes: 3
+        id: engine
+        if: github.event_name == 'push' || inputs.use_cache
+        uses: actions/cache/restore@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
+        with:
+          path: artifacts/v8-engine
+          key: windows-v8-v1-${{ matrix.target }}-${{ steps.identity.outputs.key }}
+      - name: Compile cold V8 with visible native progress
+        if: steps.engine.outputs.cache-hit != 'true'
+        timeout-minutes: 210
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          . ./scripts/dev-env.ps1
+          python ./scripts/dev-env.py --check
+          python ./scripts/cache-v8.py --target ${{ matrix.target }} --export artifacts/v8-engine --verbose
+      - name: Verify prepared engine and report cold or warm timing
+        timeout-minutes: 2
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          . ./scripts/dev-env.ps1
+          python ./scripts/v8_artifact.py verify --target ${{ matrix.target }} --directory artifacts/v8-engine
+          $seconds = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:V8_PREPARATION_STARTED
+          $hit = '${{ steps.engine.outputs.cache-hit }}' -eq 'true'
+          @{ Target='${{ matrix.target }}'; CacheHit=$hit; DurationSeconds=$seconds; Key='${{ steps.identity.outputs.key }}'; Commit=$env:GITHUB_SHA; RunId=$env:GITHUB_RUN_ID } | ConvertTo-Json | Set-Content -Encoding utf8NoBOM artifacts/v8-preparation.json
+          "### V8 ${{ matrix.arch }}: cache hit = $hit, preparation = $seconds seconds" | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+      # This checkpoint is independent of every later application/test job.
+      - name: Save verified V8 immediately
+        timeout-minutes: 3
+        if: (github.event_name == 'push' || inputs.use_cache) && steps.engine.outputs.cache-hit != 'true'
+        uses: actions/cache/save@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
+        with:
+          path: artifacts/v8-engine
+          key: ${{ steps.engine.outputs.cache-primary-key }}
+      - name: Upload immutable engine for this run
+        timeout-minutes: 3
+        id: payload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-v8-${{ matrix.arch }}-${{ github.run_attempt }}
+          path: artifacts/v8-engine/
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - id: reference
+        env:
+          ARTIFACT_ID: ${{ steps.payload.outputs.artifact-id }}
+        run: '"artifact-id-${{ matrix.arch }}=$env:ARTIFACT_ID" | Add-Content -LiteralPath $env:GITHUB_OUTPUT'
+      - name: Retain native preparation diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-v8-diagnostics-${{ matrix.arch }}-${{ github.run_attempt }}
+          include-hidden-files: true
+          path: |
+            artifacts/v8-preparation.json
+            artifacts/v8-engine/manifest.json
+            target/native-v8/**/args.gn
+            target/native-v8/**/.ninja_log
+            target/*/release/build/v8-*/output
+            target/*/release/build/v8-*/stderr
+          if-no-files-found: warn

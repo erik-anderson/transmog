@@ -17,7 +17,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  engine:
+    if: github.event.repository.private == false
+    uses: ./.github/workflows/prepare-windows-v8.yml
+    permissions:
+      contents: read
+    with:
+      include_arm64: false
+      use_cache: ${{ inputs.use_cache }}
   package:
+    needs: engine
     # Standard runners are free for public repositories. Keep private runs disabled.
     if: github.event.repository.private == false
     runs-on: windows-2025
@@ -38,30 +47,30 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: ./.github/actions/windows-release-setup
+        timeout-minutes: 8
         with:
-          node-version: '24.22.1'
-          package-manager-cache: false
-          cache: ${{ inputs.use_cache && 'npm' || '' }}
-          cache-dependency-path: apps/desktop/ui/package-lock.json
-
-      - name: Restore dependency downloads
-        if: inputs.use_cache
-        uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
+          target: x86_64-pc-windows-msvc
+          use-cache: ${{ inputs.use_cache }}
+      - name: Download exact engine producer
+        timeout-minutes: 2
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          path: |
-            .tools/downloads
-            .tools/rusty-v8
-            target/native-v8
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-          key: windows-installer-downloads-v2-${{ hashFiles('scripts/setup-windows-ci.ps1', 'scripts/cache-v8.py', 'scripts/v8_native.py', 'third_party/rusty-v8/**', 'rust-toolchain.toml') }}-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            windows-installer-downloads-v2-${{ hashFiles('scripts/setup-windows-ci.ps1', 'scripts/cache-v8.py', 'scripts/v8_native.py', 'third_party/rusty-v8/**', 'rust-toolchain.toml') }}-
-
+          artifact-ids: ${{ needs.engine.outputs.artifact-id-x64 }}
+          path: artifacts/v8-engine
+      - name: Verify engine before enabling reuse
+        timeout-minutes: 2
+        env:
+          V8_ID: ${{ needs.engine.outputs.artifact-id-x64 }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          . ./scripts/dev-env.ps1
+          python ./scripts/dev-env.py --check
+          python ./scripts/v8_artifact.py verify --target x86_64-pc-windows-msvc --directory artifacts/v8-engine
+          "TRANSMOG_V8_ARTIFACT=$((Resolve-Path artifacts/v8-engine).Path)" | Add-Content -LiteralPath $env:GITHUB_ENV
+          "V8_ARTIFACT_ID=$env:V8_ID" | Add-Content -LiteralPath $env:GITHUB_ENV
       - name: Test and build the unsigned NSIS installer
+        timeout-minutes: 100
         run: ./scripts/ci-windows-installer.ps1
 
       - name: Upload the unsigned installer

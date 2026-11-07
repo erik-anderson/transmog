@@ -77,6 +77,37 @@ function Assert-ReleasePayload {
     }
     $symbolsPath = "evidence/Transmog_$($manifest.Version)_windows-$($platform.Architecture)-symbols.zip"
     if (@($manifest.Files | Where-Object { $_.Path -ceq $symbolsPath }).Count -ne 1) { throw 'Missing or ambiguous release PDB archive.' }
+    foreach ($name in @('UI','Browser','Analysis','Tests','Native','Archives','Build','Qualify')) {
+        $relative = "evidence/gates/$name.json"
+        if ($relative -cnotin @($manifest.Files.Path)) { throw "Missing required release gate: $name" }
+        $gate = Get-Content -Raw -LiteralPath (Join-Path $PayloadRoot $relative) | ConvertFrom-Json
+        if ($gate.Name -cne $name -or $gate.Commit -cne $Commit -or $gate.RunId -cne $RunId -or
+            $gate.Target -cne $manifest.Target -or $gate.Result -cne 'passed') { throw "Unqualified release gate: $name" }
+    }
+    if ($manifest.PipelineSchema -eq 1) {
+        $relative = 'evidence/pipeline-inputs.json'
+        if ($relative -cnotin @($manifest.Files.Path)) { throw 'Missing pipeline producer provenance.' }
+        $pipeline = Get-Content -Raw -LiteralPath (Join-Path $PayloadRoot $relative) | ConvertFrom-Json
+        if ($pipeline.Commit -cne $Commit -or $pipeline.RunId -cne $RunId -or $pipeline.Target -cne $manifest.Target) { throw 'Pipeline producer provenance differs.' }
+        if ($pipeline.RunAttempt -notmatch '^[1-9]\d*$') { throw 'Invalid pipeline attempt.' }
+        $groups = @{ Frontend=@('UI','Browser'); Validation=@('Analysis','Tests','Native','Archives'); Package=@('Build','Qualify') }
+        foreach ($stage in $groups.Keys) {
+            $producer = $pipeline.Stages.$stage
+            if ($producer.ManifestSha256 -notmatch '^[0-9a-fA-F]{64}$' -or $producer.RunAttempt -notmatch '^[1-9]\d*$' -or [long]$producer.RunAttempt -gt [long]$pipeline.RunAttempt) { throw 'Invalid stage producer provenance.' }
+            foreach ($name in $groups[$stage]) {
+                $gate = Get-Content -Raw -LiteralPath (Join-Path $PayloadRoot "evidence/gates/$name.json") | ConvertFrom-Json
+                if ($gate.Stage -cne $stage -or $gate.RunAttempt -cne $producer.RunAttempt) { throw 'Release gate producer differs.' }
+            }
+        }
+        $ids = @('Frontend','Validation','Package' | ForEach-Object { $pipeline.Stages.$_.ArtifactId })
+        if (@($ids | Select-Object -Unique).Count -ne 3 -or @($ids | Where-Object { $_ -notmatch '^\d+$' }).Count) { throw 'Invalid immutable producer IDs.' }
+        foreach ($stage in @('validation','package')) {
+            $enginePath = "evidence/v8-engine-$stage.json"
+            if ($enginePath -cnotin @($manifest.Files.Path)) { throw 'Missing V8 consumer provenance.' }
+            $engine = Get-Content -Raw -LiteralPath (Join-Path $PayloadRoot $enginePath) | ConvertFrom-Json
+            if ($engine.ManifestSha256 -cne $pipeline.V8.ManifestSha256 -or $engine.ArtifactId -cne $pipeline.V8.ArtifactId) { throw 'V8 producer provenance differs.' }
+        }
+    }
     return $manifest
 }
 

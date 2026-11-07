@@ -6,13 +6,71 @@
  use fslock::LockFile;
  use miniz_oxide::MZFlush;
  use miniz_oxide::MZStatus;
-@@ -46,9 +47,58 @@
+@@ -46,9 +47,116 @@
  }
  
  fn main() {
 -  println!("cargo:rerun-if-changed=.gn");
 -  println!("cargo:rerun-if-changed=BUILD.gn");
 -  println!("cargo:rerun-if-changed=src/binding.cc");
++  // A prepared engine is accepted only after checking the complete reviewed
++  // source/profile, compiler, target, Cargo ABI and every payload hash. This
++  // avoids invoking GN/Ninja or staging the native tree in release consumers.
++  println!("cargo:rerun-if-env-changed=TRANSMOG_V8_ARTIFACT");
++  println!("cargo:rerun-if-env-changed=TRANSMOG_V8_EXPORT");
++  if let Some(directory) = env::var_os("TRANSMOG_V8_ARTIFACT") {
++    let directory = PathBuf::from(directory).canonicalize().unwrap();
++    let result = v8_artifact_command("verify", &directory)
++      .arg("--cargo")
++      .output()
++      .expect("Could not verify prepared V8");
++    assert!(
++      result.status.success(),
++      "Prepared V8 verification failed: {}",
++      String::from_utf8_lossy(&result.stderr)
++    );
++    let output = String::from_utf8(result.stdout).unwrap();
++    let paths: Vec<_> = output.lines().collect();
++    assert_eq!(paths.len(), 3, "Unexpected prepared V8 verifier output");
++    for path in &paths {
++      println!("cargo:rerun-if-changed={path}");
++    }
++    println!("cargo:rerun-if-changed={}", v8_artifact_script().display());
++    let repository = v8_artifact_script()
++      .parent()
++      .unwrap()
++      .parent()
++      .unwrap()
++      .to_owned();
++    for path in [
++      "third_party/rusty-v8/transmog-snapshot.json",
++      "scripts/setup-windows-ci.ps1",
++      "rust-toolchain.toml",
++    ] {
++      println!("cargo:rerun-if-changed={}", repository.join(path).display());
++    }
++    // A cached build-script result must be invalidated if the native toolset
++    // environment changes, even when Cargo can otherwise reuse its fingerprint.
++    for name in [
++      "INCLUDE",
++      "LIB",
++      "GN_ARGS",
++      "EXTRA_GN_ARGS",
++      "CXXSTDLIB",
++      "CFLAGS",
++      "CXXFLAGS",
++      "CLANG_BASE_PATH",
++      "LIBCLANG_PATH",
++      "V8_FORCE_DEBUG",
++      "DISABLE_CLANG",
++    ] {
++      println!("cargo:rerun-if-env-changed={name}");
++    }
++    print_link_flags();
++    println!("cargo:rustc-link-search=native={}", directory.display());
++    println!("cargo:rustc-env=RUSTY_V8_SRC_BINDING_PATH={}", paths[1]);
++    return;
++  }
 +  // Keep Rust bindings in this small vendor tree; prepare the verified native
 +  // source archive in the repository tool cache before entering upstream GN.
 +  let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
@@ -68,7 +126,7 @@
  
    // These are all the environment variables that we check. This is
    // probably more than what is needed, but missing an important
-@@ -63,6 +113,7 @@
+@@ -63,6 +171,7 @@
      "GN",
      "GN_ARGS",
      "HOST",
@@ -76,7 +134,7 @@
      "LIBCLANG_PATH",
      "NINJA",
      "OUT_DIR",
-@@ -80,6 +131,7 @@
+@@ -80,6 +189,7 @@
      "SCCACHE",
      "V8_FORCE_DEBUG",
      "V8_FROM_SOURCE",
@@ -84,7 +142,7 @@
      "PYTHON",
      "DISABLE_CLANG",
      "EXTRA_GN_ARGS",
-@@ -125,10 +177,13 @@
+@@ -125,10 +235,13 @@
    // Cargo likes to run multiple build scripts at once sometimes.
    // Nothing that follows is safe to run multiple times at once,
    // because we store everything in a parent directory of OUT_DIR.
@@ -99,7 +157,28 @@
      if is_asan && env::var_os("OPT_LEVEL").unwrap_or_default() == "0" {
        panic!(
          "v8 crate cannot be compiled with OPT_LEVEL=0 and ASAN.\nTry `[profile.dev.package.v8] opt-level = 1`.\nAborting before miscompilations cause issues."
-@@ -145,26 +200,27 @@
+@@ -142,29 +255,73 @@
+ 
+     build_v8(is_asan);
+     build_binding();
++    if let Some(directory) = env::var_os("TRANSMOG_V8_EXPORT") {
++      let directory = PathBuf::from(directory);
++      assert!(
++        v8_artifact_command("export", &directory)
++          .arg("--library")
++          .arg(static_lib_path())
++          .arg("--bindings")
++          .arg(
++            PathBuf::from(env::var_os("OUT_DIR").unwrap())
++              .join("src_binding.rs")
++          )
++          .arg("--gn-args")
++          .arg(build_dir().join("gn_out/args.gn"))
++          .status()
++          .expect("Could not export prepared V8")
++          .success()
++      );
++    }
  
      return;
    }
@@ -107,18 +186,42 @@
 -  print_prebuilt_src_binding_path();
 -
 -  download_static_lib_binaries();
- }
- 
- fn acquire_lock() -> LockFile {
+-}
+-
+-fn acquire_lock() -> LockFile {
 -  let root = env::current_dir().unwrap();
 -  let out_dir = env::var_os("OUT_DIR").unwrap();
 -  let lockfilepath = root
 -    .join(out_dir)
--    .parent()
--    .unwrap()
--    .parent()
--    .unwrap()
++}
++
++fn v8_artifact_script() -> PathBuf {
++  let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
++  manifest
+     .parent()
+     .unwrap()
+     .parent()
+     .unwrap()
 -    .join("v8.fslock");
++    .join("scripts/v8_artifact.py")
++}
++
++fn v8_artifact_command(operation: &str, directory: &Path) -> Command {
++  let mut command = Command::new(
++    env::var("TRANSMOG_PYTHON").expect("Run Cargo through scripts/dev-env.py"),
++  );
++  command
++    .env("PYTHONUTF8", "1")
++    .arg(v8_artifact_script())
++    .arg(operation)
++    .arg("--target")
++    .arg(env::var("TARGET").unwrap())
++    .arg("--directory")
++    .arg(directory);
++  command
++}
++
++fn acquire_lock() -> LockFile {
 +  let output = get_dirs().out;
 +  fs::create_dir_all(&output).unwrap();
 +  let lockfilepath = output.join("v8.fslock");
@@ -140,7 +243,7 @@
    lockfile
  }
  
-@@ -180,17 +236,34 @@
+@@ -180,17 +337,34 @@
      );
    }
  
@@ -178,7 +281,7 @@
    let filtered_args: Vec<&str> = args
      .iter()
      .filter(|arg| {
-@@ -198,27 +271,32 @@
+@@ -198,27 +372,32 @@
          && !arg.starts_with("-fno-implicit-module")
          && !arg.starts_with("-Xclang")
          && !arg.contains("DUSE_LIBCXX_MODULES")
@@ -221,7 +324,22 @@
  
    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
    if target_os == "macos" {
-@@ -330,7 +408,10 @@
+@@ -271,9 +450,11 @@
+             println!("clang_resource_dir (from LIBCLANG_PATH) {resource_dir}");
+             clang_args.push(format!("-resource-dir={resource_dir}"));
+           }
+-          Err(error) => println!(
+-            "cargo:warning=Skipping Clang resource directory override: {error}"
+-          ),
++          Err(error) => {
++            println!(
++              "cargo:warning=Skipping Clang resource directory override: {error}"
++            )
++          }
+         }
+       } else {
+         println!(
+@@ -330,7 +511,10 @@
      .generate()
      .expect("Unable to generate bindings");
  
@@ -233,7 +351,7 @@
    println!(
      "cargo:rustc-env=RUSTY_V8_SRC_BINDING_PATH={}",
      out_path.display()
-@@ -387,7 +468,7 @@
+@@ -387,7 +571,7 @@
      download_ninja_gn_binaries();
    }
  
@@ -242,7 +360,7 @@
  
    // `#[cfg(...)]` attributes don't work as expected from build.rs -- they refer to the configuration
    // of the host system which the build.rs script will be running on. In short, `cfg!(target_<os/arch>)`
-@@ -402,6 +483,13 @@
+@@ -402,6 +586,13 @@
    } else {
      vec!["is_debug=false".to_string()]
    };
@@ -256,7 +374,7 @@
    if is_asan {
      gn_args.push("is_asan=true".to_string());
    }
-@@ -480,8 +568,8 @@
+@@ -480,8 +671,8 @@
      println!("cargo:warning=Not using sccache or ccache");
    }
  
@@ -267,7 +385,7 @@
    if !gn_args_env.trim().is_empty() {
      gn_args.push(gn_args_env.clone());
    }
-@@ -717,7 +805,7 @@
+@@ -717,7 +908,7 @@
  }
  
  fn download_ninja_gn_binaries() {
@@ -276,7 +394,7 @@
  
    let gn = target_dir.join("gn").join("gn");
    let ninja = target_dir.join("ninja").join("ninja");
-@@ -966,24 +1054,7 @@
+@@ -966,24 +1157,7 @@
  }
  
  fn build_dir() -> PathBuf {
@@ -302,7 +420,7 @@
  }
  
  fn replace_non_alphanumeric(url: &str) -> String {
-@@ -1114,7 +1185,6 @@
+@@ -1114,7 +1288,6 @@
  
  /// One-shot [`Sha256`] over an in-memory slice; only the tests need it, the
  /// build itself hashes files via [`sha256_hex_of_file`].
@@ -310,7 +428,7 @@
  fn sha256_hex(data: &[u8]) -> String {
    let mut hasher = Sha256::new();
    hasher.update(data);
-@@ -1871,7 +1941,7 @@
+@@ -1871,7 +2044,7 @@
  // Download chromium's clang into OUT_DIR because Cargo will not allow us to
  // modify the source directory.
  fn clang_download() -> PathBuf {
@@ -319,7 +437,7 @@
    println!("clang_base_path (downloaded) {}", clang_base_path.display());
    assert!(
      Command::new(python())
-@@ -1911,34 +1981,60 @@
+@@ -1911,34 +2084,60 @@
    clang_base_path
  }
  
@@ -404,7 +522,7 @@
    let mut dirs = Dirs { out, root };
    maybe_symlink_root_dir(&mut dirs);
    dirs
-@@ -2009,16 +2105,8 @@
+@@ -2009,16 +2208,8 @@
  }
  
  pub fn is_debug() -> bool {
@@ -423,7 +541,7 @@
  }
  
  fn gn() -> String {
-@@ -2058,11 +2146,11 @@
+@@ -2058,11 +2249,11 @@
    let dirs = get_dirs();
    let gn_out_dir = dirs.out.join("gn_out");
  

@@ -74,14 +74,45 @@ identities and clean them up afterward. Prepare the pinned policy tool with
 
 The workflow checks dependency policy before compiling either architecture.
 `release-policy.py` records the source commit, lockfile/policy hashes and RustSec
-database commit. Both build jobs use that immutable snapshot; a separate fresh
+database commit. Both architectures use that immutable snapshot; a separate fresh
 check runs after both builds and before signing. Policy summaries stay concise in
 the console, with complete JSON diagnostics retained as artifacts. Each build
 gate has a named workflow step and source-bound timing/result evidence.
 
-Only dependency downloads are cached, separated by architecture and pinned tool
-versions. Native tool and V8 archives are checksum-verified after restoration.
-Compiled targets, unsigned payloads and signed outputs are not restored from caches.
+The signed and unsigned Windows workflows prepare V8 in a separate native job
+per architecture. Cold preparation has a 240-minute job budget and a 210-minute
+compile deadline, with verbose native progress and diagnostics upload afterward.
+The completed engine is verified and saved immediately; later application or
+test failures cannot discard that checkpoint. The reusable preparation workflow
+also runs when engine inputs change on main and can be dispatched ahead of a release.
+
+Native-tool archives, Cargo downloads and prepared V8 have independent caches.
+V8 keys bind the reviewed source, patches, profile, generated bindings, native
+tool setup, locked V8 build dependencies, Rust compiler and SDK/MSVC environment.
+Unrelated application dependencies and release version bumps do not change that key.
+The engine manifest records the original source/run and archive/bindings hashes.
+Every Cargo consumer verifies that manifest and its target/features/ABI before
+linking. A mismatch fails closed; it never falls back to an unplanned cold build.
+Rust application targets, unsigned payloads and signed outputs are not cached.
+The unsigned workflow's `use_cache: false` also forces cold engine preparation.
+
+After policy preflight, frontend/browser acceptance (40 minutes, including release
+safety fixtures) runs independently of engine preparation. Once V8 is ready,
+Clippy, workspace tests, native acceptance and archive interoperability share one
+120-minute validation job; optimized packaging, CLI/symbol checks and the desktop
+soak run independently in a 90-minute job. Each gate has a shorter step deadline
+and records its result and duration. Diagnostic uploads run even after a failed
+or timed-out step. These budgets leave room beyond the observed warm timings;
+the next hosted cold/warm run must confirm actual headroom on both architectures.
+
+An aggregation job downloads each producer by its immutable artifact ID and
+requires all eight successful gates from the exact source, run and target.
+Successful producers from an earlier attempt of that same run may be reused
+when retrying failed jobs; future attempts and other runs are rejected. Validation
+and packaging must use the identical engine artifact. `pipeline-inputs.json`
+retains the producer IDs, manifest digests and original engine identity, and the
+signing boundary checks the gate results again. The fresh final dependency-policy
+job still waits for every required producer before the protected signing gate.
 
 From the repository root in PowerShell 7, check versions and formatting first,
 then prepare the same locked dependencies used by the hosted build:

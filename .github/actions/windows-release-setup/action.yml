@@ -1,0 +1,51 @@
+name: Pinned Windows release tools
+description: Separate verified native-tool downloads from Cargo downloads and prepared V8
+inputs:
+  use-cache:
+    description: Reuse verified downloads
+    default: 'true'
+  target:
+    required: true
+    description: Native Rust target
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: '24.22.1'
+        package-manager-cache: false
+    - name: Restore native tool archives
+      id: native
+      if: inputs.use-cache == 'true'
+      uses: actions/cache/restore@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
+      with:
+        path: .tools/downloads
+        key: native-tools-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/setup-windows-ci.ps1') }}
+    - name: Install and verify pinned native tools
+      shell: pwsh
+      run: |
+        $PSNativeCommandUseErrorActionPreference = $true
+        rustup set default-host ${{ inputs.target }}
+        $pin = [regex]::Match((Get-Content -Raw rust-toolchain.toml), '(?m)^channel\s*=\s*"([^"]+)"').Groups[1].Value
+        rustup toolchain install $pin --profile minimal --component clippy --component rustfmt --target ${{ inputs.target }}
+        ./scripts/setup-windows-ci.ps1
+        $hostTarget = (rustc -vV | Select-String '^host: ').ToString().Substring(6)
+        if ($hostTarget -cne '${{ inputs.target }}') { throw 'Release tests require the native Rust host toolchain.' }
+        ./scripts/setup-release-validation-tools.ps1
+    - name: Save verified native tool archives immediately
+      if: inputs.use-cache == 'true' && steps.native.outputs.cache-hit != 'true'
+      uses: actions/cache/save@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
+      with:
+        path: .tools/downloads
+        key: ${{ steps.native.outputs.cache-primary-key }}
+    - name: Restore Cargo dependency downloads
+      if: inputs.use-cache == 'true'
+      uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
+      with:
+        path: |
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/git/db
+        key: release-cargo-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock', 'fuzz/Cargo.lock') }}
+        restore-keys: |
+          release-cargo-v1-${{ runner.os }}-${{ runner.arch }}-

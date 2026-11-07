@@ -47,6 +47,64 @@ fn clang_resource_dir(clang_bin: &Path) -> Result<String, String> {
 }
 
 fn main() {
+  // A prepared engine is accepted only after checking the complete reviewed
+  // source/profile, compiler, target, Cargo ABI and every payload hash. This
+  // avoids invoking GN/Ninja or staging the native tree in release consumers.
+  println!("cargo:rerun-if-env-changed=TRANSMOG_V8_ARTIFACT");
+  println!("cargo:rerun-if-env-changed=TRANSMOG_V8_EXPORT");
+  if let Some(directory) = env::var_os("TRANSMOG_V8_ARTIFACT") {
+    let directory = PathBuf::from(directory).canonicalize().unwrap();
+    let result = v8_artifact_command("verify", &directory)
+      .arg("--cargo")
+      .output()
+      .expect("Could not verify prepared V8");
+    assert!(
+      result.status.success(),
+      "Prepared V8 verification failed: {}",
+      String::from_utf8_lossy(&result.stderr)
+    );
+    let output = String::from_utf8(result.stdout).unwrap();
+    let paths: Vec<_> = output.lines().collect();
+    assert_eq!(paths.len(), 3, "Unexpected prepared V8 verifier output");
+    for path in &paths {
+      println!("cargo:rerun-if-changed={path}");
+    }
+    println!("cargo:rerun-if-changed={}", v8_artifact_script().display());
+    let repository = v8_artifact_script()
+      .parent()
+      .unwrap()
+      .parent()
+      .unwrap()
+      .to_owned();
+    for path in [
+      "third_party/rusty-v8/transmog-snapshot.json",
+      "scripts/setup-windows-ci.ps1",
+      "rust-toolchain.toml",
+    ] {
+      println!("cargo:rerun-if-changed={}", repository.join(path).display());
+    }
+    // A cached build-script result must be invalidated if the native toolset
+    // environment changes, even when Cargo can otherwise reuse its fingerprint.
+    for name in [
+      "INCLUDE",
+      "LIB",
+      "GN_ARGS",
+      "EXTRA_GN_ARGS",
+      "CXXSTDLIB",
+      "CFLAGS",
+      "CXXFLAGS",
+      "CLANG_BASE_PATH",
+      "LIBCLANG_PATH",
+      "V8_FORCE_DEBUG",
+      "DISABLE_CLANG",
+    ] {
+      println!("cargo:rerun-if-env-changed={name}");
+    }
+    print_link_flags();
+    println!("cargo:rustc-link-search=native={}", directory.display());
+    println!("cargo:rustc-env=RUSTY_V8_SRC_BINDING_PATH={}", paths[1]);
+    return;
+  }
   // Keep Rust bindings in this small vendor tree; prepare the verified native
   // source archive in the repository tool cache before entering upstream GN.
   let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
@@ -197,9 +255,52 @@ fn main() {
 
     build_v8(is_asan);
     build_binding();
+    if let Some(directory) = env::var_os("TRANSMOG_V8_EXPORT") {
+      let directory = PathBuf::from(directory);
+      assert!(
+        v8_artifact_command("export", &directory)
+          .arg("--library")
+          .arg(static_lib_path())
+          .arg("--bindings")
+          .arg(
+            PathBuf::from(env::var_os("OUT_DIR").unwrap())
+              .join("src_binding.rs")
+          )
+          .arg("--gn-args")
+          .arg(build_dir().join("gn_out/args.gn"))
+          .status()
+          .expect("Could not export prepared V8")
+          .success()
+      );
+    }
 
     return;
   }
+}
+
+fn v8_artifact_script() -> PathBuf {
+  let manifest = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
+  manifest
+    .parent()
+    .unwrap()
+    .parent()
+    .unwrap()
+    .join("scripts/v8_artifact.py")
+}
+
+fn v8_artifact_command(operation: &str, directory: &Path) -> Command {
+  let mut command = Command::new(
+    env::var("TRANSMOG_PYTHON").expect("Run Cargo through scripts/dev-env.py"),
+  );
+  command
+    .env("PYTHONUTF8", "1")
+    .arg(v8_artifact_script())
+    .arg(operation)
+    .arg("--target")
+    .arg(env::var("TARGET").unwrap())
+    .arg("--directory")
+    .arg(directory);
+  command
 }
 
 fn acquire_lock() -> LockFile {
@@ -349,9 +450,11 @@ fn build_binding() {
             println!("clang_resource_dir (from LIBCLANG_PATH) {resource_dir}");
             clang_args.push(format!("-resource-dir={resource_dir}"));
           }
-          Err(error) => println!(
-            "cargo:warning=Skipping Clang resource directory override: {error}"
-          ),
+          Err(error) => {
+            println!(
+              "cargo:warning=Skipping Clang resource directory override: {error}"
+            )
+          }
         }
       } else {
         println!(
