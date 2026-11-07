@@ -134,6 +134,10 @@ when changing the experience.
   their request/response header and body inputs. The host owns presentation;
   hidden visualizers release their workers and data. Manage installation and
   declarations together in [Extensions settings](extensions.md), without access histories.
+  Present corresponding request/response visualizers together, preserving exact
+  direction-specific declarations and actions behind a compact access summary.
+  Combine matching conditions only when all predicates other than the selected
+  message direction are equivalent.
   Keep development reload actions in those settings and apply them only to active
   instances across windows, preserving each last good result on replacement failure.
   Optional column cells read bounded header metadata after primary row rendering;

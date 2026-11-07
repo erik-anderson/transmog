@@ -31,5 +31,8 @@ extension-settings {display:block;}
 @media(max-width:600px) {.extension-heading {flex-wrap:wrap;}.extension-heading > div {flex-basis:100%;}.extension-contribution dl {grid-template-columns:minmax(0,1fr);gap:.2rem;}.extension-contribution dd {margin-bottom:.3rem;}}
 @media(forced-colors:active) {.extension-entry,.extension-contribution {border-color:CanvasText;}}
 
-.extension-matches > summary {cursor:pointer;color:var(--muted);}
+.extension-matches > summary,.extension-input-details > summary {cursor:pointer;color:var(--muted);overflow-wrap:anywhere;}
 .extension-matches[open] > summary {margin-bottom:.3rem;}
+.extension-input-details {margin-top:.4rem;}
+.extension-input-value {white-space:pre-line;}
+.extension-debug-targets {display:flex;flex-wrap:wrap;gap:.4rem;}

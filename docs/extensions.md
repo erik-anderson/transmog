@@ -585,7 +585,20 @@ captured field values. Each phase has a finite work ceiling; exhausting context
 does not consume the selected message's budget. Decompression failures reference
 the enclosing encoded bytes and report encoded and declared decoded sizes. Close or
 Escape returns focus to that button. Extensions settings keeps management actions
-visible and folds long matching-rule lists behind a counted disclosure.
+visible. Corresponding request and response viewers share one entry with a short
+access summary. Identical matching conditions appear once as **Request and
+response**; differing conditions retain their direction. Long lists show the media
+types and number of displayed matching rules in a disclosure. **Full declarations**
+preserves exact input access, direction-specific differences, input matching, live
+updates and related context; shared values appear once. Debugging actions still
+select the original request or response contribution. Grouping changes presentation
+only, without combining permissions or runtime instances. Reordering a direction
+pair during reload preserves its open declarations, focus and declaration order.
+Direction-specific input values retain line boundaries when copied. Viewers with
+different entry modules, surfaces, Auto behavior, live updates, context, input
+matching or limits stay separate, as do ambiguous groups with multiple candidates
+per direction. Empty opposite-message input declarations are omitted; actual
+paired header and body access remains explicit.
 
 Browser fixtures cover large trees, concurrent surfaces, deferred expansion,
 wide offsets, derived provenance, late activation and narrow/forced-color layouts.

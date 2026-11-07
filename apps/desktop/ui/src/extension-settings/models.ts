@@ -76,11 +76,12 @@ export interface ContributionRow {
   id: string;
   name: string;
   surfaces: string;
-  requestHeaders: string;
-  responseHeaders: string;
-  requestBody: string;
-  responseBody: string;
+  access: string;
+  inputs: Array<{ name: string; value: string }>;
   matches: string[];
+  matchingSummary: string;
+  inputMatches: string[];
+  targets: Array<{ id: string; direction: string }>;
   live: string;
   context: string;
 }

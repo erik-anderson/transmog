@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
+import { checkExtensionDeclarations } from "./check-extension-declarations.mjs";
 
 function extension(id, name, development = false) {
   const contribution = {
@@ -140,9 +141,11 @@ export async function checkExtensions(page, root) {
   await page.waitForFunction(
     () => !document.querySelector("app-shell").settings.extensionsEditor.extensionsBusy,
   );
-  await installed.locator("summary").click();
+  await installed.getByText("Visualizers and declared inputs", { exact: true }).click();
+  for (const details of await installed.locator(".extension-input-details > summary").all())
+    await details.click();
   await installed.getByText("content-type, x-requesttype", { exact: true }).waitFor();
-  assert.equal(await installed.getByText("No headers", { exact: true }).count(), 1);
+  assert.equal(await installed.getByText("No headers", { exact: true }).count(), 0);
   assert.equal(await installed.getByText("Required", { exact: true }).count(), 1);
   assert.equal(
     await installed
@@ -184,7 +187,7 @@ export async function checkExtensions(page, root) {
     "",
   );
   assert.equal(
-    await installed.locator("details").evaluate((element) => element.open),
+    await installed.locator(".extension-declarations").evaluate((element) => element.open),
     true,
     "Updating enable state collapsed declarations",
   );
@@ -356,7 +359,7 @@ export async function checkExtensions(page, root) {
     true,
   );
   await developer.getByText("Visualizers and declared inputs", { exact: true }).click();
-  const matchingRules = developer.getByText("3 matching rules", { exact: true });
+  const matchingRules = developer.locator(".extension-matches > summary");
   await matchingRules.waitFor();
   assert.equal(
     await matchingRules.locator("..").evaluate((element) => element.open),
@@ -367,6 +370,9 @@ export async function checkExtensions(page, root) {
   await developer
     .getByText("Request · application/example · POST · /protocol-3", { exact: true })
     .waitFor();
+
+  for (const details of await developer.locator(".extension-input-details > summary").all())
+    await details.click();
 
   await developer
     .getByText(
@@ -466,6 +472,7 @@ export async function checkExtensions(page, root) {
     await page.evaluate(() => globalThis.__workspaceFixture.calls.save_product_state ?? 0),
     savesBefore,
   );
+  await checkExtensionDeclarations(page, root);
   await settings.getByRole("button", { name: "Preferences", exact: true }).click();
   await page.waitForFunction(() => globalThis.__workspaceFixture.extensionListenerCount() === 0);
   await page.setViewportSize({ width: 1280, height: 800 });

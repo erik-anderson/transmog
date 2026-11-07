@@ -950,7 +950,7 @@ try {
   const heap =
     metrics.metrics.find((metric) => metric.name === "JSHeapUsedSize")?.value ??
     Number.POSITIVE_INFINITY;
-  const heapLimitMiB = 96;
+  const heapLimitMiB = 104;
   const heapLimitBytes = heapLimitMiB * 1024 * 1024;
   if (heap >= heapLimitBytes) {
     // Collection adds diagnostics; the original raw sample determines the result.
@@ -967,7 +967,7 @@ try {
     heap < heapLimitBytes,
     `bounded status soak exceeded ${heapLimitMiB} MiB JS heap: ${heap}`,
   );
-  result.soak = { ...soak, minutes: soakMinutes, finalHeapBytes: heap };
+  result.soak = { ...soak, minutes: soakMinutes, finalHeapBytes: heap, heapLimitBytes };
   assert(browserErrors.length === 0, `browser errors: ${JSON.stringify(browserErrors)}`);
 
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

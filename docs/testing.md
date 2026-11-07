@@ -172,9 +172,10 @@ the isolated validation evidence folder; `memory-samples.jsonl` records fixture
 phases. Sampling, workload and process-identity failures fail the gate.
 
 The main-window WebView2 probe separately requires raw JavaScript heap below
-96 MiB after the functional suite. On failure it records a post-collection heap
-sample for diagnosis; the original raw sample still determines the result. This
-test threshold does not change extension sandbox memory limits.
+104 MiB after the functional suite, including populated extension declarations
+at wide and compact sizes. On failure it records a post-collection heap sample
+for diagnosis; the original raw sample still determines the result. This test
+threshold does not change extension sandbox memory limits.
 
 The window geometry gate repeats native close/reopen and maximize/restore cycles
 on every connected display. It retains physical bounds and actual display DPI in

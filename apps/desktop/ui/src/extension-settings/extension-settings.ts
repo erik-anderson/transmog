@@ -4,84 +4,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { WorkspaceElement } from "../workspace-element.js";
 import { describeError } from "../utilities.js";
-import type {
-  ContributionRow,
-  ExtensionContribution,
-  ExtensionEntry,
-  ExtensionRow,
-  ExtensionStatus,
-  ExtensionRule,
-} from "./models.js";
+import type { ExtensionRow, ExtensionStatus } from "./models.js";
+import { extensionRow } from "./presentation.js";
 
-const bodyLabel = { none: "No body access", optional: "Optional", required: "Required" };
-const headersLabel = (headers: string[]): string =>
-  headers.length ? headers.join(", ") : "No headers";
-const bodyAccess = (access: ExtensionContribution["inputs"]["request"]): string =>
-  bodyLabel[access.body] + (access.decodeHttpContent ? " · HTTP decoding on demand" : "");
-const ruleLabel = (rule: ExtensionRule): string =>
-  [
-    rule.direction === "request" ? "Request" : "Response",
-    ...(rule.contentTypes ?? []),
-    ...(rule.methods ?? []),
-    ...(rule.pathPrefixes ?? []),
-    ...(rule.statuses ?? []).map(String),
-    ...(rule.headers ?? []).map(
-      (header) =>
-        `${header.direction} ${header.name}: ${header.test.op}${header.test.value === undefined ? "" : ` ${header.test.value}`}`,
-    ),
-  ].join(" · ");
-function contribution(value: ExtensionContribution): ContributionRow {
-  return {
-    id: value.id,
-    name: value.name,
-    surfaces:
-      value.surfaces.map((side) => (side === "headers" ? "Headers" : "Body")).join(" and ") +
-      (value.automatic ? " · Auto on complete parse" : ""),
-    requestHeaders: headersLabel(value.inputs.request.headers),
-    responseHeaders: headersLabel(value.inputs.response.headers),
-    requestBody: bodyAccess(value.inputs.request),
-    responseBody: bodyAccess(value.inputs.response),
-    matches: value.matches.map(ruleLabel),
-    live: value.liveUpdates
-      ? `Optional ${value.liveUpdates.events.join("/")} updates${value.liveUpdates.bodyProgress ? ", including body progress" : ""}`
-      : "Not supported",
-    context: value.context
-      ? `Up to ${value.context.maxExchanges} ${value.context.lookAhead ? "earlier or later" : "earlier"} exchanges from the same capture, origin, and conversation; ${value.context.headers.map((header) => `${header.direction} ${header.name}`).join(", ")}`
-      : "Selected exchange only",
-  };
-}
-function row(entry: ExtensionEntry): ExtensionRow {
-  const { manifest, enabled, origin, digest } = entry.catalog;
-  return {
-    id: manifest.id,
-    name: manifest.name,
-    version: manifest.version,
-    enabled,
-    origin:
-      origin === "bundled"
-        ? "Included with Transmog"
-        : origin === "development"
-          ? "Unpacked development folder"
-          : "Installed",
-    bundled: origin === "bundled",
-    development: origin === "development",
-    directory: entry.directory ?? "",
-    hotReload: entry.hotReload,
-    runtime: manifest.runtime,
-    revision: digest,
-    visualizers: manifest.visualizers.map(contribution),
-    columns: (manifest.trafficColumns ?? []).map((column) => ({
-      id: column.id,
-      name: column.name,
-      requestHeaders: headersLabel(column.inputs.request.headers),
-      responseHeaders: headersLabel(column.inputs.response.headers),
-      values: column.values.map((value) => ({
-        value: value.value,
-        matches: value.matches.map(ruleLabel),
-      })),
-    })),
-  };
-}
 export class ExtensionSettings extends WorkspaceElement {
   async openDebugger(): Promise<void> {
     try {
@@ -179,10 +104,36 @@ export class ExtensionSettings extends WorkspaceElement {
     }
   }
   private accept(status: ExtensionStatus): void {
-    this.extensionsEntries = status.entries.map(row);
+    const surface = this.shadowRoot ?? this;
+    const root = surface.getRootNode();
+    const focused =
+      root instanceof Document || root instanceof ShadowRoot ? root.activeElement : null;
+    const previousFocus =
+      focused instanceof HTMLElement && surface.contains(focused) ? focused : null;
+    const summaries: HTMLElement[] = [];
+    for (
+      let parent = previousFocus?.parentElement;
+      parent && surface.contains(parent);
+      parent = parent.parentElement
+    ) {
+      if (parent instanceof HTMLDetailsElement && parent.firstElementChild instanceof HTMLElement) {
+        summaries.push(parent.firstElementChild);
+      }
+    }
+    this.extensionsEntries = status.entries.map(extensionRow);
     this.extensionsWarning = status.warning ?? "";
     this.extensionsBlocked = status.managementBlocked ?? Boolean(status.warning);
     this.extensionsLoaded = true;
+    if (previousFocus) {
+      this.$flushUpdates();
+      const current =
+        root instanceof Document || root instanceof ShadowRoot ? root.activeElement : null;
+      if (!previousFocus.isConnected && (!current || current === this.ownerDocument.body)) {
+        summaries
+          .find((summary) => summary.isConnected && summary.getClientRects().length > 0)
+          ?.focus();
+      }
+    }
   }
   async refresh(preserveFeedback = false): Promise<void> {
     if (this.extensionsBusy) {
