@@ -6,8 +6,9 @@ use transmog_extensions::{Failure, Snapshot};
 use transmog_script_diagnostics::{MappingIssue, SourceLocation};
 use url::Url;
 
-const MAX_MAP_BYTES: usize = 256 * 1024;
-const MAX_MAP_TOKENS: usize = 8192;
+// Accommodate the bundled MAPI parser, including its embedded TypeScript.
+const MAX_MAP_BYTES: usize = 512 * 1024;
+const MAX_MAP_TOKENS: usize = 32768;
 const ROOT: &str = "file:///transmog-extension/";
 
 fn decode(bytes: &[u8]) -> Result<sourcemap::SourceMap, MappingIssue> {
@@ -196,6 +197,7 @@ fn debug_location(snapshot: &Snapshot, location: &SourceLocation) -> Option<Sour
 pub(super) fn debug_breakpoints(
     snapshot: &Snapshot,
     values: &[transmog_extensions::debugger::SourceBreakpoint],
+    entry_source: &str,
 ) -> Vec<transmog_extensions::debugger::SourceBreakpoint> {
     if !transmog_extensions::debugger::valid_breakpoints(values) {
         return Vec::new();
@@ -266,6 +268,7 @@ pub(super) fn debug_breakpoints(
             if let Some(requests) = requested.get(&(original.to_string(), line)) {
                 for (index, requested_column) in requests {
                     let distance = (
+                        generated.as_str() != entry_source,
                         column.abs_diff(*requested_column),
                         generated_line,
                         generated_column,
@@ -428,6 +431,79 @@ mod tests {
     use super::*;
 
     #[test]
+    fn shared_source_breakpoints_prefer_the_running_entry_bundle() {
+        let map = br#"{"version":3,"sources":["shared.ts"],"names":[],"mappings":"AAAA"}"#;
+        let manifest = serde_json::from_value(serde_json::json!({
+            "formatVersion": 1, "apiVersion": 1, "runtime": "javascript-es2022",
+            "id": "example.shared", "version": "1.0.0", "name": "Shared source",
+            "visualizers": [{
+                "id": "view", "name": "View", "entry": "first.js", "surfaces": ["headers"],
+                "inputs": {"request": {"headers": [], "body": "none"}, "response": {"headers": [], "body": "none"}},
+                "matches": [{"direction": "request", "pathPrefixes": ["/"]}]
+            }],
+            "sourceMaps": {"version": 1, "modules": {"first.js": "shared.map", "second.js": "shared.map"}},
+            "files": [{"path": "first.js", "bytes": 0}, {"path": "second.js", "bytes": 0}, {"path": "shared.map", "bytes": map.len()}]
+        }))
+        .unwrap();
+        let snapshot = Snapshot::new(
+            manifest,
+            BTreeMap::from([
+                ("first.js".into(), std::sync::Arc::<[u8]>::from([])),
+                ("second.js".into(), std::sync::Arc::<[u8]>::from([])),
+                (
+                    "shared.map".into(),
+                    std::sync::Arc::<[u8]>::from(map.as_slice()),
+                ),
+            ]),
+        )
+        .unwrap();
+        let point = transmog_extensions::debugger::SourceBreakpoint {
+            id: 1,
+            log_expression: None,
+            condition: Some("value === 7".into()),
+            location: SourceLocation {
+                source: format!("{ROOT}shared.ts"),
+                line: 1,
+                column: 1,
+            },
+        };
+        for entry in ["first.js", "second.js"] {
+            let source = format!("{ROOT}{entry}");
+            let mapped = debug_breakpoints(&snapshot, std::slice::from_ref(&point), &source);
+            assert_eq!(mapped[0].location.source, source);
+            assert_eq!(mapped[0].id, point.id);
+            assert_eq!(mapped[0].condition, point.condition);
+        }
+    }
+
+    #[test]
+    fn larger_parser_maps_keep_embedded_sources_and_statement_positions() {
+        let bytes = serde_json::to_vec(&serde_json::json!({
+            "version": 3,
+            "sources": ["../../typescript/parser.ts"],
+            "sourcesContent": ["const value: number = 7;\n".repeat(14000)],
+            "names": [],
+            "mappings": format!("AAAA;{}", "AACA;".repeat(10000))
+        }))
+        .unwrap();
+        assert!(bytes.len() > 256 * 1024);
+        let map = decode(&bytes).unwrap();
+        assert!(map.get_token_count() > 8192);
+        let original = project(
+            &map,
+            "dist/runtime/parser.js.map",
+            &SourceLocation {
+                source: format!("{ROOT}dist/runtime/parser.js"),
+                line: 10001,
+                column: 1,
+            },
+        )
+        .unwrap();
+        assert_eq!(original.source, format!("{ROOT}typescript/parser.ts"));
+        assert_eq!((original.line, original.column), (10001, 1));
+    }
+
+    #[test]
     fn cached_maps_do_not_reconsume_work_budget_and_exhaustion_keeps_generated_positions() {
         let map = br#"{"version":3,"sources":["main.ts"],"sourcesContent":["export const original: number = 7;"],"names":[],"mappings":"AAAA"}"#;
         let manifest=serde_json::from_value(serde_json::json!({
@@ -458,7 +534,11 @@ mod tests {
                 column: 1,
             },
         };
-        let translated = debug_breakpoints(&snapshot, std::slice::from_ref(&original_breakpoint));
+        let translated = debug_breakpoints(
+            &snapshot,
+            std::slice::from_ref(&original_breakpoint),
+            &format!("{ROOT}main.js"),
+        );
         assert_eq!(translated[0].location.source, format!("{ROOT}main.js"));
         let missing = transmog_extensions::debugger::SourceBreakpoint {
             location: SourceLocation {
@@ -468,7 +548,11 @@ mod tests {
             ..original_breakpoint
         };
         assert_eq!(
-            debug_breakpoints(&snapshot, std::slice::from_ref(&missing)),
+            debug_breakpoints(
+                &snapshot,
+                std::slice::from_ref(&missing),
+                &format!("{ROOT}main.js"),
+            ),
             vec![missing]
         );
         let original = transmog_extensions::diagnostic_sources::read(

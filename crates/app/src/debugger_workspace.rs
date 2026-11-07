@@ -1403,7 +1403,7 @@ fn extension_maps(snapshot: &transmog_extensions::Snapshot, output: &mut Sources
         let Some(bytes) = snapshot.files.get(path) else {
             continue;
         };
-        if bytes.len() > 256 * 1024 {
+        if bytes.len() > 512 * 1024 {
             continue;
         }
         let Ok(sourcemap::DecodedMap::Regular(map)) = sourcemap::decode_slice(bytes) else {

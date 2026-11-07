@@ -169,6 +169,7 @@ export async function checkDebuggerWorkspace(page, root) {
   );
   await workspace.getByRole("button", { name: "main.js Loaded", exact: true }).click();
   await workspace.locator(".debug-execution-line").waitFor();
+  await checkMappedRepresentations(page, workspace, root);
   await workspace.getByRole("textbox", { name: "Immediate expression" }).fill("value");
   await workspace
     .getByRole("textbox", { name: "Immediate expression" })
@@ -321,4 +322,75 @@ export async function checkDebuggerWorkspace(page, root) {
   await page.emulateMedia({ colorScheme: "light" });
   await workspace.getByRole("button", { name: "Close debugger and continue execution" }).click();
   await workspace.waitFor({ state: "detached" });
+}
+
+async function checkMappedRepresentations(page, workspace, root) {
+  await page.evaluate(() => {
+    const debug = globalThis.__workspaceFixture.workspaceDebug;
+    const file = (name, language, counterpart) => ({
+      id: `script/sample/${name}`,
+      group: "User scripts",
+      package: "sample",
+      path: name,
+      artifact: debug.info.artifact,
+      source: `file:///transmog-scripts/sample/${name}`,
+      language,
+      state: "Loaded",
+      counterpart: `script/sample/${counterpart}`,
+    });
+    debug.extraFiles = [
+      file("shared.ts", "typescript", "secondary.js"),
+      file("other.ts", "typescript", "secondary.js"),
+      file("secondary.js", "javascript", "other.ts"),
+    ];
+    debug.pause();
+    debug.paused.event.frames[0].original.source = debug.extraFiles[0].source;
+  });
+  const representation = workspace.getByRole("combobox", { name: "Source representation" });
+  try {
+    await page.waitForFunction(
+      () =>
+        document.querySelector("app-shell").shadowRoot.querySelector("debugger-workspace")
+          .debuggerFrames[0]?.original?.source === "file:///transmog-scripts/sample/shared.ts",
+    );
+    await representation.selectOption("typescript");
+    assert.equal(
+      await workspace.evaluate((element) => element.selected.id),
+      "script/sample/shared.ts",
+      "A bundle must reveal the paused TypeScript file rather than its default original",
+    );
+    await workspace.locator(".debug-execution-line").waitFor();
+    await page.screenshot({
+      path: resolve(root, "../../../target/ui-check/debugger-mapped-helper.png"),
+    });
+    await representation.selectOption("javascript");
+    assert.equal(
+      await workspace.evaluate((element) => element.selected.id),
+      "script/sample/main.js",
+      "A shared original must switch back to the paused bundle rather than another copy",
+    );
+    await workspace.locator(".debug-execution-line").waitFor();
+    await workspace.evaluate((element) =>
+      element.openFile(element.files.find((file) => file.id === "script/sample/secondary.js")),
+    );
+    await representation.selectOption("typescript");
+    assert.equal(
+      await workspace.evaluate((element) => element.selected.id),
+      "script/sample/other.ts",
+      "Switching an unrelated file must preserve browsing rather than jump to the paused frame",
+    );
+  } finally {
+    await page.evaluate(() => {
+      const debug = globalThis.__workspaceFixture.workspaceDebug;
+      delete debug.extraFiles;
+      debug.pause();
+    });
+    await workspace.evaluate(async (element) => {
+      await element.openFile(element.files.find((file) => file.id === "script/sample/main.js"));
+      for (const name of ["shared.ts", "other.ts", "secondary.js"]) {
+        await element.closeTab(`script/sample/${name}@${element.selected.artifact}`);
+      }
+    });
+    await workspace.locator(".debug-execution-line").waitFor();
+  }
 }

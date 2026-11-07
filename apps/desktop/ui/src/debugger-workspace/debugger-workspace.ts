@@ -1826,13 +1826,30 @@ export class DebuggerWorkspace extends WebUIElement {
     }
   }
   async switchRepresentation(event: Event): Promise<void> {
+    const selected = this.selected;
+    if (!selected) {
+      return;
+    }
     const language = (event.target as HTMLSelectElement).value;
-    const file = this.files.find(
-      (file) =>
-        file.artifact === this.selected?.artifact &&
-        file.language === language &&
-        file.id === this.selected.counterpart,
-    );
+    const pausedFrame = this.debuggerFrames.find((frame) => frame.index === this.debuggerFrame);
+    const pausedPosition =
+      language === "javascript" ? pausedFrame?.location : pausedFrame?.original;
+    const mapped = this.matchesFrameSource()
+      ? this.files.find(
+          (file) =>
+            file.artifact === selected.artifact &&
+            file.language === language &&
+            file.source === pausedPosition?.source,
+        )
+      : undefined;
+    const file =
+      mapped ??
+      this.files.find(
+        (file) =>
+          file.artifact === selected.artifact &&
+          file.language === language &&
+          file.id === selected.counterpart,
+      );
     if (file) {
       await this.openFile(file);
     }

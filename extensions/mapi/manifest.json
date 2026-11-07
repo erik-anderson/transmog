@@ -1022,6 +1022,13 @@
       ]
     }
   ],
+  "sourceMaps": {
+    "version": 1,
+    "modules": {
+      "dist/runtime/body.js": "dist/runtime/body.js.map",
+      "dist/runtime/headers.js": "dist/runtime/headers.js.map"
+    }
+  },
   "files": [
     {
       "path": "dist/runtime/body.js",
@@ -1029,6 +1036,14 @@
     },
     {
       "path": "dist/runtime/headers.js",
+      "bytes": 0
+    },
+    {
+      "path": "dist/runtime/body.js.map",
+      "bytes": 0
+    },
+    {
+      "path": "dist/runtime/headers.js.map",
       "bytes": 0
     },
     {

@@ -661,8 +661,8 @@ package. A missing, malformed, unsupported, or excessive optional map retains
 generated JavaScript positions with a structured fallback reason. Valid
 JavaScript execution does not depend on a valid optional map.
 
-Mapping currently accepts flat version-3 maps up to 256 KiB, 128 sources, and
-8,192 mapping segments/line separators. At most 64 module declarations are used.
+Mapping currently accepts flat version-3 maps up to 512 KiB, 128 sources, and
+32,768 mapping segments/line separators. At most 64 module declarations are used.
 Indexed maps and original URLs outside the package namespace use the generated
 position. Each native mapping operation decodes at most 1 MiB of distinct maps;
 additional maps retain generated positions with a budget marker. Exception evidence shares a 16 KiB text budget and 32 frames across
@@ -764,6 +764,8 @@ The app toolbar keeps a **Debugger** shortcut after the first open until you qui
 Browse installed files without activating them, and set breakpoints before a
 visualizer loads. The debugger attaches to visualizers in the current capture
 window. It supports mapped TypeScript, running JavaScript and Console commands.
+The bundled MAPI/HTTP and Binary formats extensions include source maps with
+their original TypeScript, available in Sources before a visualizer loads.
 See [Debug script execution](automation.md#debug-script-execution) for docking,
 shortcuts and breakpoint behavior.
 

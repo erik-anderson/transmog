@@ -259,6 +259,7 @@ impl Debuggers {
             breakpoints: transmog_extension_supervisor::map_debug_breakpoints(
                 &snapshot,
                 &configuration.breakpoints,
+                &info.source,
             ),
         };
         let run = self.create(owner, &configuration, info, None)?;
@@ -678,7 +679,7 @@ fn translate_for_run(run: &Run, values: &[SourceBreakpoint]) -> Vec<SourceBreakp
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .as_ref()
     {
-        transmog_extension_supervisor::map_debug_breakpoints(snapshot, values)
+        transmog_extension_supervisor::map_debug_breakpoints(snapshot, values, &run.info.source)
     } else {
         translate(
             values,

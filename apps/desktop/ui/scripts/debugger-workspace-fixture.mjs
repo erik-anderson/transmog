@@ -67,6 +67,7 @@ export function installDebuggerWorkspaceFixture() {
         state: "Unloaded",
         counterpart: null,
       },
+      ...(debug.extraFiles ?? []),
     ];
     const view = () => ({
       skipPauses: debug.skipPauses,

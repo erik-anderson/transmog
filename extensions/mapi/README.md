@@ -33,15 +33,18 @@ instances after a successful build. Explicit Reload also lives in settings.
 Leaving the visualizer releases its worker, granted data and source watcher.
 
 Use **Package extension…** in Extensions settings to package a loose folder.
-Only `manifest.json` and its four explicitly listed payloads are included:
+Only `manifest.json` and its six explicitly listed payloads are included:
 
 - `dist/runtime/body.js`
 - `dist/runtime/headers.js`
+- `dist/runtime/body.js.map`
+- `dist/runtime/headers.js.map`
 - `README.runtime.md`
 - `LICENSES/Office-MIT.txt`
 
-The package excludes TypeScript sources, tests, reference code, compiler tools,
-source maps and unlisted files. `dist/package-manifest.json` is the build's
+The source maps embed the original TypeScript for debugger source browsing and
+breakpoints. The package excludes tests, reference code, compiler tools and
+unlisted files. `dist/package-manifest.json` is the build's
 length/hash metadata, not an additional archive member. Installed extensions
 need neither TypeScript nor .NET. The .NET oracle is a developer test tool only.
 
@@ -49,6 +52,8 @@ need neither TypeScript nor .NET. The .NET oracle is a developer test tool only.
 for inspection and editing. The two runtime scripts use readable JavaScript;
 they can be changed directly. Give the copied manifest a different ID before
 loading it alongside the app-owned extension with **Load unpacked…**.
+After editing JavaScript directly, remove `sourceMaps` from the copied manifest
+so the debugger shows the edited JavaScript rather than the original TypeScript.
 
 ## Architecture
 

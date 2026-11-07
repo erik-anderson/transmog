@@ -13,7 +13,7 @@ def main():
     parser.parse_args()
     package = ROOT / "extensions/mapi"
     source = json.loads((package / "manifest.json").read_text(encoding="utf-8"))
-    expected = {"dist/runtime/body.js", "dist/runtime/headers.js", "README.runtime.md", "LICENSES/Office-MIT.txt"}
+    expected = {"dist/runtime/body.js", "dist/runtime/headers.js", "dist/runtime/body.js.map", "dist/runtime/headers.js.map", "README.runtime.md", "LICENSES/Office-MIT.txt"}
     if {item["path"] for item in source["files"]} != expected:
         raise SystemExit("Unexpected MAPI runtime inventory; review the manifest allowlist")
     subprocess.run(["node", str(package / "build.mjs")], cwd=ROOT, check=True)

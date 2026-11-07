@@ -56,3 +56,5 @@ framing. Such results remain limited even if another interpretation completes.
 Only the selected side is read. There is no network access, related-traffic
 lookup or live subscription. The host owns the UI; captured text remains inert.
 Manage the bundled **Binary formats** extension in Settings → Extensions.
+Its source maps embed the original TypeScript for source browsing and mapped
+breakpoints in the debugger's Sources pane.

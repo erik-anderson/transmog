@@ -29,9 +29,12 @@ include correct decoded-source ranges, exact UTC FILETIME values, whole
 FastTransfer values reassembled across retained chunks, and explicit handling of
 reference-parser defects.
 
-Only the two runtime scripts, this README, and the Microsoft MIT notice are
-listed for packaging. Authoring sources, tests and tools are not distributed.
+The package includes the two runtime scripts, their source maps with embedded
+TypeScript, this README, and the Microsoft MIT notice. Browse the TypeScript and
+set mapped breakpoints in the debugger's Sources pane. Tests and tools are not distributed.
 The runtime scripts are readable JavaScript. Use Settings → Extensions →
 Visualizers and declared inputs → Save to folder to inspect or edit them. Change
 the exported manifest's ID (for example, to `local.mapi`) before using Load
 unpacked to register it alongside the built-in `net.transmog.mapi` extension.
+After editing JavaScript directly, remove `sourceMaps` from the copied manifest
+so the debugger shows the edited JavaScript rather than the original TypeScript.

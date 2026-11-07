@@ -27,13 +27,13 @@ pub(super) struct Map {
 }
 impl Map {
     pub(super) fn read(artifact: &str, generated: &str, base: &str, bytes: &[u8]) -> Option<Self> {
-        if bytes.len() > 256 * 1024 || generated.len() > 2048 {
+        if bytes.len() > 512 * 1024 || generated.len() > 2048 {
             return None;
         }
         let sourcemap::DecodedMap::Regular(map) = sourcemap::decode_slice(bytes).ok()? else {
             return None;
         };
-        if map.get_token_count() > 8192 || map.get_source_count() > 128 {
+        if map.get_token_count() > 32768 || map.get_source_count() > 128 {
             return None;
         }
         let base = url::Url::parse(base).ok()?;

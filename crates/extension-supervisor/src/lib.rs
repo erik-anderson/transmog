@@ -27,11 +27,13 @@ pub fn map_debug_event(snapshot: &Snapshot, event: &mut transmog_extensions::deb
     source_maps::debug_event(snapshot, event);
 }
 /// Resolves requested original-source breakpoints through bounded inventory-declared maps.
+/// Shared originals prefer their copy in the worker's entry bundle.
 pub fn map_debug_breakpoints(
     snapshot: &Snapshot,
     values: &[transmog_extensions::debugger::SourceBreakpoint],
+    entry_source: &str,
 ) -> Vec<transmog_extensions::debugger::SourceBreakpoint> {
-    source_maps::debug_breakpoints(snapshot, values)
+    source_maps::debug_breakpoints(snapshot, values, entry_source)
 }
 use transmog_extensions::debugger::DebugCommand;
 use transmog_script_diagnostics::supervision::{ReplyReader, SessionBinding, wait_budget};

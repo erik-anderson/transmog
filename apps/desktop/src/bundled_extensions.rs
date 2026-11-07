@@ -26,6 +26,86 @@ mod tests {
     use transmog_app::extensions::Registry;
 
     #[test]
+    fn bundled_typescript_is_browsable_and_breakpoints_project_to_each_runtime() {
+        let root = tempfile::tempdir().unwrap();
+        let registry = Registry::load_with_bundled(root.path().into(), None, &RESOURCES);
+        let application = transmog_app::Application::new(transmog_app::AppConfig {
+            extensions: Some(registry),
+            ..Default::default()
+        })
+        .unwrap();
+        let workspace = application.open_debugger_workspace().unwrap();
+        assert!(
+            workspace.targets.is_empty(),
+            "Browsing must not start workers"
+        );
+        for (package, module, original) in [
+            ("mapi", "body", "body"),
+            ("mapi", "headers", "headers"),
+            ("binary", "protobuf", "protobuf-entry"),
+            ("binary", "bond", "bond-entry"),
+            ("binary", "msgpack", "msgpack-entry"),
+            ("binary", "cbor", "cbor-entry"),
+            ("binary", "bson", "bson-entry"),
+        ] {
+            let id = format!("net.transmog.{package}");
+            let source = workspace
+                .files
+                .iter()
+                .find(|file| file.package == id && file.path == format!("typescript/{original}.ts"))
+                .unwrap();
+            assert_eq!(source.language, "typescript");
+            assert_eq!(source.state, "Unloaded");
+            let text = application
+                .debugger_file(&source.id, &source.artifact)
+                .unwrap();
+            let authored =
+                std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+                    format!("../../extensions/{package}/typescript/{original}.ts"),
+                ))
+                .unwrap();
+            assert_eq!(
+                text, authored,
+                "Packaged TypeScript must match its build input"
+            );
+            let generated = workspace
+                .files
+                .iter()
+                .find(|file| file.package == id && file.path == format!("dist/runtime/{module}.js"))
+                .unwrap();
+            assert_eq!(source.counterpart.as_deref(), Some(generated.id.as_str()));
+            let line = text
+                .lines()
+                .position(|line| line.starts_with("export function visualize("))
+                .unwrap()
+                + 2;
+            let point = serde_json::from_value(serde_json::json!({
+                "artifact": source.artifact,
+                "file": source.id,
+                "enabled": true,
+                "anchor": text.lines().nth(line - 1).unwrap(),
+                "breakpoint": {
+                    "id": 1,
+                    "location": {"source": source.source, "line": line, "column": 1}
+                }
+            }))
+            .unwrap();
+            application.set_workspace_breakpoints(&[point]).unwrap();
+            let positions = application
+                .debugger_breakpoint_positions(&generated.id, &generated.artifact)
+                .unwrap();
+            assert_eq!(
+                positions.len(),
+                1,
+                "{package}/{module} breakpoint was not mapped"
+            );
+            assert_eq!(positions[0].1.source, generated.source);
+        }
+        assert!(application.debugger_workspace().unwrap().targets.is_empty());
+        application.close_debugger_workspace().unwrap();
+    }
+
+    #[test]
     fn bundled_mapi_discovery_uses_only_generated_metadata() {
         fn no_archive() -> &'static [u8] {
             panic!("Discovery opened the MAPI archive")
@@ -53,11 +133,13 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let registry = Registry::load_with_bundled(root.path().into(), None, &RESOURCES);
         let snapshot = registry.snapshot("net.transmog.mapi").unwrap();
-        assert_eq!(snapshot.files.len(), 4);
+        assert_eq!(snapshot.files.len(), 6);
         assert!(snapshot.files.keys().all(|name| matches!(
             name.as_str(),
             "dist/runtime/body.js"
                 | "dist/runtime/headers.js"
+                | "dist/runtime/body.js.map"
+                | "dist/runtime/headers.js.map"
                 | "LICENSES/Office-MIT.txt"
                 | "README.runtime.md"
         )));
@@ -108,7 +190,7 @@ mod tests {
         assert!(!root.path().join("catalog.json").exists());
         let registry = Registry::load_with_bundled(root.path().into(), None, &RESOURCES);
         let snapshot = registry.snapshot("net.transmog.binary").unwrap();
-        assert_eq!(snapshot.files.len(), 6);
+        assert_eq!(snapshot.files.len(), 11);
         assert!(snapshot.files.keys().all(|name| matches!(
             name.as_str(),
             "dist/runtime/protobuf.js"
@@ -116,6 +198,11 @@ mod tests {
                 | "dist/runtime/msgpack.js"
                 | "dist/runtime/cbor.js"
                 | "dist/runtime/bson.js"
+                | "dist/runtime/protobuf.js.map"
+                | "dist/runtime/bond.js.map"
+                | "dist/runtime/msgpack.js.map"
+                | "dist/runtime/cbor.js.map"
+                | "dist/runtime/bson.js.map"
                 | "README.runtime.md"
         )));
         assert!(

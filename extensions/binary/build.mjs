@@ -26,6 +26,8 @@ const result = await esbuild.build({
   bundle: true,
   format: "esm",
   target: "es2022",
+  sourcemap: "external",
+  sourcesContent: true,
   charset: "ascii",
   legalComments: "none",
   write: false,

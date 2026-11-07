@@ -277,6 +277,16 @@
       ]
     }
   ],
+  "sourceMaps": {
+    "version": 1,
+    "modules": {
+      "dist/runtime/protobuf.js": "dist/runtime/protobuf.js.map",
+      "dist/runtime/bond.js": "dist/runtime/bond.js.map",
+      "dist/runtime/msgpack.js": "dist/runtime/msgpack.js.map",
+      "dist/runtime/cbor.js": "dist/runtime/cbor.js.map",
+      "dist/runtime/bson.js": "dist/runtime/bson.js.map"
+    }
+  },
   "files": [
     {
       "path": "dist/runtime/protobuf.js"
@@ -292,6 +302,21 @@
     },
     {
       "path": "dist/runtime/bson.js"
+    },
+    {
+      "path": "dist/runtime/protobuf.js.map"
+    },
+    {
+      "path": "dist/runtime/bond.js.map"
+    },
+    {
+      "path": "dist/runtime/msgpack.js.map"
+    },
+    {
+      "path": "dist/runtime/cbor.js.map"
+    },
+    {
+      "path": "dist/runtime/bson.js.map"
     },
     {
       "path": "README.runtime.md"
