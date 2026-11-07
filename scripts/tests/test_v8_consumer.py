@@ -115,6 +115,66 @@ class NativeConsumerTests(unittest.TestCase):
                 consumer.verify(self.root / "engine", self.report_path, use_cache=False, root=self.root)
         self.assertFalse(self.report_path.exists())
 
+    def test_producer_proof_skips_native_runner_only_after_verifying_success(self):
+        output = self.root / "output"
+        with patch.dict(os.environ, {"GITHUB_OUTPUT": str(output)}), \
+             patch.object(consumer, "context", return_value=self.context) as context, \
+             patch.object(consumer.github, "request", side_effect=self.request), \
+             patch.object(consumer, "artifact_bytes", return_value=self.payload), \
+             patch.object(consumer.subprocess, "run") as cargo:
+            result = consumer.verify(self.root / "engine", self.report_path, probe=True, root=self.root)
+        context.assert_called_once_with(self.root / "engine", self.root, native=False)
+        cargo.assert_not_called()
+        self.assertIn("reused-arm64=true\n", output.read_text())
+        self.assertTrue(result["NativeRunnerSkipped"])
+        self.assertEqual(result["ValidationMode"], "reused")
+        self.assertEqual(result["ValidationOrigin"]["ArtifactId"], 123)
+
+    def test_producer_cannot_create_fresh_proof_on_missing_invalid_or_disabled_reuse(self):
+        for reason in ("missing", "failed", "disabled", "unavailable"):
+            output = self.root / "output"
+            output.write_text("")
+            with self.subTest(reason=reason), patch.dict(os.environ, {"GITHUB_OUTPUT": str(output)}), \
+                 patch.object(consumer, "context", return_value=self.context), \
+                 patch.object(consumer, "reusable", side_effect=RuntimeError("unavailable") if reason == "unavailable" else None,
+                              return_value=None) as lookup, patch.object(consumer.subprocess, "run") as cargo:
+                self.report_path.parent.mkdir(exist_ok=True)
+                self.report_path.write_text("stale proof")
+                self.assertIsNone(consumer.verify(self.root / "engine", self.report_path, probe=True,
+                                                 use_cache=reason != "disabled", root=self.root))
+                cargo.assert_not_called()
+                self.assertFalse(self.report_path.exists())
+                self.assertIn("reused-arm64=false\n", output.read_text())
+                if reason == "disabled":
+                    lookup.assert_not_called()
+
+    def test_cross_producer_and_native_consumer_compute_the_same_default_context(self):
+        from test_windows_cross import sdk, versions
+        import windows_cross as cross
+        environments = []
+        for label, host in (("producer", cross.X64), ("consumer", cross.ARM64)):
+            root = self.root / label
+            environment = sdk(root / "sdk", "x64" if host == cross.X64 else "arm64")
+            libclang = root / ".tools/llvm/bin"
+            libclang.mkdir(parents=True)
+            (libclang / "libclang.dll").touch()
+            environment["LIBCLANG_PATH"] = str(libclang)
+            if host == cross.X64:
+                with patch.object(cross.shutil, "which", side_effect=lambda name, **_: "C:/native/" + name + ".exe"):
+                    cross.configure(environment, cross.ARM64, root=root, host=host)
+            else:
+                environment.update(CFLAGS="--target=" + cross.ARM64, CXXFLAGS="--target=" + cross.ARM64)
+            with patch.dict(os.environ, {name: "" for name in consumer.engine.ABI_ENV}), \
+                 patch.dict(os.environ, environment), \
+                 patch.object(consumer.engine, "raw_tools", return_value=versions(host, environment)), \
+                 patch.object(consumer.engine, "validate", return_value=self.context["manifest"]), \
+                 patch.object(consumer, "consumer_inputs", return_value={"reviewed": "sources"}):
+                environments.append(consumer.context(root / "engine", root, native=host == cross.ARM64))
+                if host == cross.X64:
+                    with self.assertRaisesRegex(ValueError, "native ARM64"):
+                        consumer.context(root / "engine", root)
+        self.assertEqual(environments[0], environments[1])
+
     def test_artifact_digest_and_ambiguous_report_rejected(self):
         class Response(io.BytesIO):
             pass

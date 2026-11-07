@@ -63,11 +63,15 @@ jobs:
       # Keep waiting releases when later pushes queue more prewarm work.
       queue: max
     runs-on: windows-2025
+    permissions:
+      contents: read
+      actions: read
     # Cold native compilation gets its own budget; ordinary release jobs stay <=120m.
     timeout-minutes: 240
     outputs:
       artifact-id-x64: ${{ steps.reference.outputs.artifact-id-x64 }}
       artifact-id-arm64: ${{ steps.reference.outputs.artifact-id-arm64 }}
+      native-reused-arm64: ${{ steps.native_proof.outputs.reused-arm64 }}
     env:
       CARGO_INCREMENTAL: '0'
     steps:
@@ -142,6 +146,25 @@ jobs:
         env:
           ARTIFACT_ID: ${{ steps.payload.outputs.artifact-id }}
         run: '"artifact-id-${{ matrix.arch }}=$env:ARTIFACT_ID" | Add-Content -LiteralPath $env:GITHUB_OUTPUT'
+      - name: Reuse a successful native ARM64 proof before allocating a native runner
+        id: native_proof
+        if: matrix.arch == 'arm64' && (github.event_name == 'push' || inputs.use_cache)
+        timeout-minutes: 3
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          V8_ARTIFACT_ID: ${{ steps.payload.outputs.artifact-id }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          . ./scripts/dev-env.ps1 -Target ${{ matrix.target }}
+          python ./scripts/v8_consumer.py --probe --directory artifacts/v8-engine --report artifacts/v8-native-consumer.json
+      - name: Retain the reused native proof bound to this engine producer
+        if: steps.native_proof.outputs.reused-arm64 == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-v8-arm64-consumer-${{ steps.native_proof.outputs.key }}-${{ github.run_attempt }}
+          path: artifacts/v8-native-consumer.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Retain native preparation diagnostics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -162,7 +185,7 @@ jobs:
   verify_arm64:
     name: Verify cross-built V8 on native ARM64
     needs: engine
-    if: (github.event_name == 'push' || inputs.include_arm64) && needs.engine.outputs.artifact-id-arm64 != ''
+    if: (github.event_name == 'push' || inputs.include_arm64) && needs.engine.outputs.artifact-id-arm64 != '' && needs.engine.outputs.native-reused-arm64 != 'true'
     runs-on: windows-11-arm
     timeout-minutes: 30
     permissions:

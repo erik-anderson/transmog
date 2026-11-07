@@ -90,10 +90,14 @@ def consumer_inputs(root):
     return {name: engine.digest(root / name) for name in sorted(names)}
 
 
-def context(directory, root=ROOT):
-    # This remains a fresh check of the actual native runner, even on a reuse hit.
-    if "host: " + TARGET not in engine.raw_tools()["rustc"].splitlines():
+def context(directory, root=ROOT, *, native=True):
+    # Producers may check an existing proof on x64. Only native verification can
+    # create a fresh proof; all later application consumers recheck their own SDK.
+    rustc = engine.raw_tools()["rustc"].splitlines()
+    if native and "host: " + TARGET not in rustc:
         raise ValueError("The V8 consumer check requires native ARM64 Rust")
+    if not native and not any("host: " + target in rustc for target in engine.TARGETS):
+        raise ValueError("The V8 proof lookup requires a supported Windows Rust host")
     manifest = engine.validate(directory, TARGET, root)
     return {"schema": 1, "command": COMMAND, "manifest": manifest,
             "inputs": consumer_inputs(root), "consumerAbi": engine.abi(TARGET, root)}
@@ -169,10 +173,10 @@ def reusable(expected, key):
     return None
 
 
-def verify(directory, report_path, *, use_cache=True, root=ROOT):
+def verify(directory, report_path, *, use_cache=True, root=ROOT, probe=False):
     report_path = Path(report_path)
     report_path.unlink(missing_ok=True)
-    expected = context(directory, root)
+    expected = context(directory, root, native=not probe)
     key = engine.encoded_digest(expected)
     if output := os.environ.get("GITHUB_OUTPUT"):
         with Path(output).open("a", encoding="utf-8") as stream:
@@ -182,7 +186,14 @@ def verify(directory, report_path, *, use_cache=True, root=ROOT):
         try:
             origin = reusable(expected, key)
         except (RuntimeError, URLError, TimeoutError, KeyError, TypeError, ValueError):
-            print("Prior native V8 evidence is unavailable; running the native check.", flush=True)
+            print("Prior native V8 evidence is unavailable; fresh native verification is required.", flush=True)
+    if probe:
+        if output := os.environ.get("GITHUB_OUTPUT"):
+            with Path(output).open("a", encoding="utf-8") as stream:
+                stream.write(f"reused-arm64={str(origin is not None).lower()}\n")
+        if origin is None:
+            print("ARM64 V8: no matching native proof; the native verification job is required.", flush=True)
+            return None
     if origin is None:
         environment = dict(os.environ, TRANSMOG_V8_ARTIFACT=str(Path(directory).resolve()))
         subprocess.run(COMMAND, cwd=root, env=environment, check=True)
@@ -190,15 +201,18 @@ def verify(directory, report_path, *, use_cache=True, root=ROOT):
               "RunAttempt": int(os.environ["GITHUB_RUN_ATTEMPT"]), "Target": TARGET,
               "ArtifactId": os.environ["V8_ARTIFACT_ID"], "EngineKey": expected["manifest"]["key"],
               "CargoAbiVerified": True, "ValidationKey": key, "Context": expected,
-              "ValidationMode": "reused" if origin else "fresh", "ValidationOrigin": origin}
+              "ValidationMode": "reused" if origin else "fresh", "ValidationOrigin": origin,
+              "NativeRunnerSkipped": probe}
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     message = (f"reused successful native Cargo check from run {origin['RunId']}, artifact {origin['ArtifactId']}"
                if origin else "fresh native Cargo check passed")
-    print("ARM64 V8: " + message + "; current engine hashes, SDK and consumer context verified.", flush=True)
+    suffix = ("; native verification runner skipped; producer engine hashes, SDK and consumer context verified."
+              if probe else "; current engine hashes, SDK and consumer context verified.")
+    print("ARM64 V8: " + message + suffix, flush=True)
     if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
         with Path(summary).open("a", encoding="utf-8") as stream:
-            stream.write("\n### ARM64 V8 consumer: " + message + ".\n")
+            stream.write("\n### ARM64 V8 consumer: " + message + suffix + "\n")
     return report
 
 
@@ -207,8 +221,9 @@ def main():
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--no-reuse", action="store_true")
+    parser.add_argument("--probe", action="store_true", help="Verify an existing proof on a producer; never run Cargo")
     args = parser.parse_args()
-    verify(args.directory, args.report, use_cache=not args.no_reuse)
+    verify(args.directory, args.report, use_cache=not args.no_reuse, probe=args.probe)
 
 
 if __name__ == "__main__":

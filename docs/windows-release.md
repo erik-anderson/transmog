@@ -101,14 +101,18 @@ Every Cargo consumer verifies that manifest and its target/features/ABI before
 linking. A mismatch fails closed; it never falls back to an unplanned cold build.
 A native ARM64 consumer verifies the cross-built engine's SDK and COFF target,
 then runs the real Cargo ABI-reuse path before engine preparation succeeds.
-Later runs can reuse that Cargo smoke check's immutable successful report. Each
-native runner still verifies the current engine bytes, SDK and compiler identity.
+Later runs can reuse that Cargo smoke check's immutable successful report. The
+x64 engine producer checks for a matching proof before allocating a native runner;
+a verified match skips the standalone ARM64 verification job and its tool setup.
+The producer still verifies current engine bytes, SDK and compiler identity.
 Reuse additionally requires an identical engine manifest, consumer ABI, locked
 dependencies, local consumer sources and verification tooling. The report's
 artifact digest, source, branch, workflow and successful native job are checked
 through GitHub; a missing, expired, mismatched or unavailable report runs the
-original Cargo check. Native consumer jobs queue by branch so a release can reuse
-the preceding prewarm proof. Summaries state whether the check was fresh or reused.
+original native job and Cargo check. Native consumer jobs queue by branch and
+recheck for newly available evidence before Cargo, so overlapping first-time
+prewarm and release runs also avoid duplicate smoke checks. Summaries distinguish
+a fresh check, reused Cargo verification and an entirely skipped native runner.
 Full native application validation and installer qualification still run on every
 release; `use_cache: false` also disables consumer-report reuse.
 Rust application targets, unsigned payloads and signed outputs are not cached.
