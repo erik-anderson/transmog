@@ -194,13 +194,34 @@ class CompiledTransferTests(unittest.TestCase):
     def test_original_binaries_symbols_ui_engine_and_prior_attempt_survive_transfer(self):
         os.environ["GITHUB_RUN_ATTEMPT"] = "2"
         build = compiled.restore(self.bundle, cross.ARM64, "101", root=self.consumer)
-        self.assertEqual(Path(build["BuildDirectory"]), self.bundle / "binaries")
+        self.assertEqual(Path(build["BuildDirectory"]), (self.bundle / "binaries").resolve())
+        self.assertTrue(Path(build["BuildDirectory"]).samefile(self.bundle / "binaries"))
         self.assertEqual((self.consumer / "apps/desktop/ui/dist/index.html").read_text(), "compiled UI")
         proof = json.loads((self.consumer / "artifacts/windows-build/evidence/compiled-build.json").read_text())
         self.assertEqual(proof["Manifest"]["Gate"]["RunAttempt"], "1")
         self.assertEqual(proof["ArtifactId"], "101")
         for name in (*compiled.BINARIES, *compiled.PDBS):
             self.assertEqual((self.bundle / "binaries" / name).read_bytes(), (self.producer / "binaries" / name).read_bytes())
+
+    @unittest.skipUnless(os.name == "nt", "Windows short paths required")
+    def test_short_windows_checkout_alias_restores_the_same_canonical_directory(self):
+        import ctypes
+        from ctypes import wintypes
+        short_path = ctypes.windll.kernel32.GetShortPathNameW
+        short_path.argtypes = (wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD)
+        short_path.restype = wintypes.DWORD
+        buffer = ctypes.create_unicode_buffer(32768)
+        count = short_path(str(self.bundle), buffer, len(buffer))
+        self.assertGreater(count, 0)
+        self.assertLess(count, len(buffer))
+        alias = Path(buffer.value)
+        expected = (self.bundle / "binaries").resolve()
+        if alias / "binaries" == expected:
+            self.skipTest("This volume has no distinct short path alias")
+        self.assertTrue(alias.samefile(self.bundle))
+        build = compiled.restore(alias, cross.ARM64, "101", root=self.consumer)
+        self.assertEqual(Path(build["BuildDirectory"]), expected)
+        self.assertTrue(Path(build["BuildDirectory"]).samefile(alias / "binaries"))
 
     def test_tampered_bytes_and_wrong_architecture_are_rejected_before_restoring(self):
         binary = self.bundle / "binaries/transmog.exe"
