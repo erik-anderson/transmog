@@ -22,6 +22,7 @@ jobs:
     uses: ./.github/workflows/prepare-windows-v8.yml
     permissions:
       contents: read
+      actions: read
     with:
       include_arm64: false
       use_cache: ${{ inputs.use_cache }}

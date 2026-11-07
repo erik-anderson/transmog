@@ -47,7 +47,7 @@ if ($bundleConfig.bundle.windows.webviewInstallMode.type -ne 'skip') {
 }
 
 if (-not $BundleOnly) {
-    . (Join-Path $PSScriptRoot 'dev-env.ps1')
+    . (Join-Path $PSScriptRoot 'dev-env.ps1') -Target $Target
 
 Push-Location (Join-Path $desktopRoot 'ui')
 try {

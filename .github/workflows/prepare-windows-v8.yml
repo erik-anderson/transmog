@@ -11,6 +11,7 @@ on:
       - 'scripts/setup-windows-ci.ps1'
       - 'scripts/repo_tools.py'
       - 'scripts/v8_artifact.py'
+      - 'scripts/v8_consumer.py'
       - 'scripts/windows_cross.py'
       - 'scripts/cache-v8.py'
       - 'scripts/v8_native.py'
@@ -164,6 +165,14 @@ jobs:
     if: (github.event_name == 'push' || inputs.include_arm64) && needs.engine.outputs.artifact-id-arm64 != ''
     runs-on: windows-11-arm
     timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    # Wait for a preceding proof to become a successful immutable artifact.
+    concurrency:
+      group: windows-v8-native-consumer-${{ github.ref }}
+      cancel-in-progress: false
+      queue: max
     env:
       CARGO_INCREMENTAL: '0'
     steps:
@@ -181,22 +190,24 @@ jobs:
         with:
           artifact-ids: ${{ needs.engine.outputs.artifact-id-arm64 }}
           path: artifacts/v8-engine
-      - name: Verify SDK, target objects and Cargo ABI with a native consumer
+      - name: Verify current SDK and engine, reuse or run the native Cargo check
+        id: consumer
         timeout-minutes: 12
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          V8_ARTIFACT_ID: ${{ needs.engine.outputs.artifact-id-arm64 }}
+          ALLOW_REUSE: ${{ github.event_name == 'push' || inputs.use_cache }}
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           . ./scripts/dev-env.ps1
           python ./scripts/dev-env.py --check
-          python ./scripts/v8_artifact.py verify --target aarch64-pc-windows-msvc --directory artifacts/v8-engine
-          $env:TRANSMOG_V8_ARTIFACT = (Resolve-Path artifacts/v8-engine).Path
-          cargo check --locked -p transmog-js-runtime --target aarch64-pc-windows-msvc
-          $engine = Get-Content -Raw artifacts/v8-engine/manifest.json | ConvertFrom-Json
-          @{ Commit=$env:GITHUB_SHA; RunId=$env:GITHUB_RUN_ID; Target='aarch64-pc-windows-msvc'; ArtifactId='${{ needs.engine.outputs.artifact-id-arm64 }}'; EngineKey=$engine.key; CargoAbiVerified=$true } | ConvertTo-Json | Set-Content -LiteralPath artifacts/v8-native-consumer.json -Encoding utf8NoBOM
+          $reuseArguments = if ($env:ALLOW_REUSE -eq 'true') { @() } else { @('--no-reuse') }
+          python ./scripts/v8_consumer.py --directory artifacts/v8-engine --report artifacts/v8-native-consumer.json @reuseArguments
       - name: Retain native consumer identity and diagnostics
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: windows-v8-arm64-consumer-${{ github.run_attempt }}
+          name: windows-v8-arm64-consumer-${{ steps.consumer.outputs.key || 'failed' }}-${{ github.run_attempt }}
           path: |
             artifacts/v8-engine/manifest.json
             artifacts/native-tools-cache-checkpoint.json

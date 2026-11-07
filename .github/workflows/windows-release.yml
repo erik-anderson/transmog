@@ -96,6 +96,7 @@ jobs:
     uses: ./.github/workflows/prepare-windows-v8.yml
     permissions:
       contents: read
+      actions: read
 
   frontend:
     name: UI and browser acceptance (${{ matrix.arch }})
