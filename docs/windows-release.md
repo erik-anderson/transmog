@@ -106,6 +106,15 @@ and records its result and duration. Diagnostic uploads run even after a failed
 or timed-out step. These budgets leave room beyond the observed warm timings;
 the next hosted cold/warm run must confirm actual headroom on both architectures.
 
+V8 producers for the same target and branch queue without cancelling one another,
+so a release can restore the engine prepared by an earlier prewarm run. Checkpoint
+steps look for an exact key before attempting an upload, then confirm availability
+separately. Their summaries distinguish restored checkpoints, a checkpoint saved
+by another producer, availability after an upload attempt, and explicitly disabled
+caching. An unavailable checkpoint fails with retained JSON evidence instead of
+reporting a successful cache save. Native tool archives use the same reporting.
+The verified engine artifact is still retained if only the cache checkpoint fails.
+
 An aggregation job downloads each producer by its immutable artifact ID and
 requires all eight successful gates from the exact source, run and target.
 Successful producers from an earlier attempt of that same run may be reused

@@ -55,6 +55,11 @@ jobs:
       fail-fast: false
       matrix:
         include: ${{ fromJSON((github.event_name == 'push' || inputs.include_arm64) && '[{"arch":"x64","target":"x86_64-pc-windows-msvc","runner":"windows-2025"},{"arch":"arm64","target":"aarch64-pc-windows-msvc","runner":"windows-11-arm"}]' || '[{"arch":"x64","target":"x86_64-pc-windows-msvc","runner":"windows-2025"}]') }}
+    concurrency:
+      group: windows-v8-${{ github.ref }}-${{ matrix.target }}
+      cancel-in-progress: false
+      # Keep waiting releases when later pushes queue more prewarm work.
+      queue: max
     runs-on: ${{ matrix.runner }}
     # Cold native compilation gets its own budget; ordinary release jobs stay <=120m.
     timeout-minutes: 240
@@ -98,6 +103,7 @@ jobs:
           python ./scripts/dev-env.py --check
           python ./scripts/cache-v8.py --target ${{ matrix.target }} --export artifacts/v8-engine --verbose
       - name: Verify prepared engine and report cold or warm timing
+        id: prepared
         timeout-minutes: 2
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
@@ -107,15 +113,19 @@ jobs:
           $hit = '${{ steps.engine.outputs.cache-hit }}' -eq 'true'
           @{ Target='${{ matrix.target }}'; CacheHit=$hit; DurationSeconds=$seconds; Key='${{ steps.identity.outputs.key }}'; Commit=$env:GITHUB_SHA; RunId=$env:GITHUB_RUN_ID } | ConvertTo-Json | Set-Content -Encoding utf8NoBOM artifacts/v8-preparation.json
           "### V8 ${{ matrix.arch }}: cache hit = $hit, preparation = $seconds seconds" | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
-      # This checkpoint is independent of every later application/test job.
-      - name: Save verified V8 immediately
+      # Recheck after compilation before uploading, then confirm availability.
+      - name: Confirm prepared V8 cache checkpoint
         timeout-minutes: 3
-        if: (github.event_name == 'push' || inputs.use_cache) && steps.engine.outputs.cache-hit != 'true'
-        uses: actions/cache/save@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
+        uses: ./.github/actions/cache-checkpoint
         with:
+          label: V8 ${{ matrix.arch }}
           path: artifacts/v8-engine
-          key: ${{ steps.engine.outputs.cache-primary-key }}
+          key: windows-v8-v1-${{ matrix.target }}-${{ steps.identity.outputs.key }}
+          restored: ${{ steps.engine.outputs.cache-hit }}
+          enabled: ${{ github.event_name == 'push' || inputs.use_cache }}
+          report: artifacts/v8-cache-checkpoint.json
       - name: Upload immutable engine for this run
+        if: always() && steps.prepared.conclusion == 'success'
         timeout-minutes: 3
         id: payload
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -137,6 +147,8 @@ jobs:
           include-hidden-files: true
           path: |
             artifacts/v8-preparation.json
+            artifacts/v8-cache-checkpoint.json
+            artifacts/native-tools-cache-checkpoint.json
             artifacts/v8-engine/manifest.json
             target/native-v8/**/args.gn
             target/native-v8/**/.ninja_log

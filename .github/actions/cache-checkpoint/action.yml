@@ -1,0 +1,64 @@
+name: Cache checkpoint
+description: Skip duplicate uploads and confirm that the exact cache key is available
+inputs:
+  label:
+    description: Human-readable checkpoint name
+    required: true
+  path:
+    description: Same cache paths used by the original restore
+    required: true
+  key:
+    description: Exact primary cache key
+    required: true
+  restored:
+    description: Whether the original restore found the exact key
+    default: 'false'
+  enabled:
+    description: Whether this run should use the cache
+    default: 'true'
+  report:
+    description: JSON evidence path
+    required: true
+outputs:
+  status:
+    description: disabled, reused, available, or unavailable
+    value: ${{ steps.report.outputs.status }}
+runs:
+  using: composite
+  steps:
+    - name: Check for a checkpoint published by another producer
+      id: existing
+      if: inputs.enabled == 'true' && inputs.restored != 'true'
+      uses: actions/cache/restore@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
+      with:
+        path: ${{ inputs.path }}
+        key: ${{ inputs.key }}
+        lookup-only: true
+    - name: Attempt cache upload only when absent
+      if: inputs.enabled == 'true' && inputs.restored != 'true' && steps.existing.outputs.cache-hit != 'true'
+      uses: actions/cache/save@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
+      with:
+        path: ${{ inputs.path }}
+        key: ${{ inputs.key }}
+    - name: Confirm exact cache availability
+      id: confirmed
+      if: inputs.enabled == 'true'
+      uses: actions/cache/restore@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
+      with:
+        path: ${{ inputs.path }}
+        key: ${{ inputs.key }}
+        lookup-only: true
+    - name: Report checkpoint outcome
+      id: report
+      shell: pwsh
+      env:
+        CHECKPOINT_LABEL: ${{ inputs.label }}
+        CHECKPOINT_KEY: ${{ inputs.key }}
+        CHECKPOINT_ENABLED: ${{ inputs.enabled }}
+        CHECKPOINT_RESTORED: ${{ inputs.restored }}
+        CHECKPOINT_EXISTING: ${{ steps.existing.outputs.cache-hit }}
+        CHECKPOINT_AVAILABLE: ${{ steps.confirmed.outputs.cache-hit }}
+        CHECKPOINT_REPORT: ${{ inputs.report }}
+      run: |
+        $PSNativeCommandUseErrorActionPreference = $true
+        python ./scripts/cache-checkpoint.py

@@ -32,13 +32,16 @@ runs:
         $hostTarget = (rustc -vV | Select-String '^host: ').ToString().Substring(6)
         if ($hostTarget -cne '${{ inputs.target }}') { throw 'Release tests require the native Rust host toolchain.' }
         ./scripts/setup-release-validation-tools.ps1
-    - name: Save verified native tool archives immediately
-      if: inputs.use-cache == 'true' && steps.native.outputs.cache-hit != 'true'
-      uses: actions/cache/save@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
+    - name: Confirm native tool archive cache checkpoint
+      if: inputs.use-cache == 'true'
+      uses: ./.github/actions/cache-checkpoint
       with:
+        label: Native tool archives
         path: .tools/downloads
         key: ${{ steps.native.outputs.cache-primary-key }}
-    - name: Restore Cargo dependency downloads
+        restored: ${{ steps.native.outputs.cache-hit }}
+        report: artifacts/native-tools-cache-checkpoint.json
+    - name: Restore Cargo downloads with best-effort cache saving
       if: inputs.use-cache == 'true'
       uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
       with:

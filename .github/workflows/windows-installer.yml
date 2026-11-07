@@ -87,6 +87,7 @@ jobs:
         with:
           name: windows-build-measurements-${{ github.run_number }}-${{ github.run_attempt }}
           path: |
+            artifacts/native-tools-cache-checkpoint.json
             artifacts/windows-ci/build-metrics.json
             artifacts/windows-ci/build-summary.md
             artifacts/windows-ci/tool-versions.txt
