@@ -22,6 +22,8 @@ export function installDebuggerWorkspaceFixture() {
       policy: "none",
       skipPauses: false,
       pauseNext: false,
+      pauseTarget: "any",
+      pausePending: false,
       actions: [],
       info: {
         session: "workspace-worker",
@@ -70,10 +72,14 @@ export function installDebuggerWorkspaceFixture() {
       ...(debug.extraFiles ?? []),
     ];
     const view = () => ({
+      canOpenScripts: debug.canOpenScripts ?? true,
+      pauseTarget: debug.pauseTarget,
+      pausePending: debug.pausePending,
+      scratch: debug.scratch ? { info: debug.scratch.info } : null,
       skipPauses: debug.skipPauses,
       open: debug.open,
       files,
-      targets: debug.open ? [debug.info, ...(debug.extraTargets ?? [])] : [],
+      targets: debug.open && !debug.noWorkers ? [debug.info, ...(debug.extraTargets ?? [])] : [],
       breakpoints: debug.points,
       viewState: debug.viewState ?? null,
       layout: debug.layout,
@@ -119,6 +125,7 @@ export function installDebuggerWorkspaceFixture() {
         truncated: false,
       };
       debug.pauseNext = false;
+      debug.pausePending = false;
       delete debug.pauseLine;
       emit(event);
       debug.paused = debug.events.at(-1);
@@ -136,9 +143,63 @@ export function installDebuggerWorkspaceFixture() {
     if (command === "workspace_skip_pauses") {
       debug.skipPauses = args.skip;
       if (args.skip) debug.pauseNext = false;
+      if (args.skip) debug.pausePending = false;
+      return;
+    }
+    if (command === "workspace_pause_next") {
+      debug.pauseTarget = args.target;
+      debug.pausePending = args.enabled;
+      await globalThis.__debuggerWorkspaceCommand("workspace_debug_command", {
+        session: debug.info.session,
+        action: { kind: "pause-next", enabled: args.enabled },
+      });
+      return;
+    }
+    if (command === "scratch_console") {
+      debug.scratch ??= {
+        info: {
+          session: `scratch-${(debug.scratchGeneration = (debug.scratchGeneration ?? 0) + 1)}`,
+          label: "Scratch",
+          mode: "Scratch",
+          artifact: "scratch",
+          source: "",
+        },
+        events: [],
+        value: undefined,
+      };
+      const info = structuredClone(debug.scratch.info);
+      if (debug.holdScratchStart) {
+        debug.holdScratchStart = false;
+        await new Promise((resolve) => {
+          debug.finishScratchStart = resolve;
+        });
+        delete debug.finishScratchStart;
+      }
+      return { info };
+    }
+    if (command === "reset_scratch_console") {
+      if (debug.rejectScratchReset) throw new Error("Scratch reset failed");
+      if (args.session && args.session !== debug.scratch?.info.session)
+        throw new Error("Scratch context changed");
+      if (debug.holdScratchReset) {
+        debug.holdScratchReset = false;
+        await new Promise((resolve) => {
+          debug.finishScratchReset = resolve;
+        });
+        delete debug.finishScratchReset;
+      }
+      debug.scratch = null;
+      return;
+    }
+    if (command === "debugger_open_scripts") {
+      state.emitNative("debugger-open-scripts", null);
       return;
     }
     if (command === "debugger_seen") return debug.seen;
+    if (command === "debugger_view_state") {
+      debug.viewState = structuredClone(args.viewState);
+      return;
+    }
     if (command === "debugger_layout") {
       if (args.layout) debug.layout = args.layout;
       return structuredClone(debug.layout);
@@ -195,7 +256,7 @@ export function installDebuggerWorkspaceFixture() {
         });
       }
       debug.open = args.placement !== "closed";
-      debug.viewState = args.viewState;
+      debug.viewState = args.viewState ?? debug.viewState;
       const shell = document.querySelector("app-shell");
       if (debug.recreateSurface && debug.open) {
         shell.debuggerPlacement = "closed";
@@ -242,6 +303,29 @@ export function installDebuggerWorkspaceFixture() {
         emit({ kind: "sources", sources: [], breakpoints: [binding(point)] });
       }
       return structuredClone(debug.points);
+    }
+    if (command === "workspace_debug_session" && args.session === debug.scratch?.info.session) {
+      return {
+        info: debug.scratch.info,
+        request: null,
+        outcome: null,
+        stream: {
+          valueGeneration: 0,
+          skipPauses: false,
+          pauseNext: false,
+          active: false,
+          paused: null,
+          closed: false,
+          exceptions: "none",
+          cursor: debug.scratch.events.length,
+          omitted: false,
+          logs: [],
+          inventory: { sources: [], breakpoints: [] },
+          events: debug.scratch.events.slice(args.after ?? 0),
+          sessionRemainingMs: 0,
+          pauseRemainingMs: null,
+        },
+      };
     }
     if (command === "workspace_debug_session")
       return {
@@ -299,7 +383,55 @@ export function installDebuggerWorkspaceFixture() {
     if (command === "workspace_debug_command") {
       const request = ++debug.request;
       const action = args.action;
+      if (action.kind === "evaluate" && action.expression === "failNewCommand")
+        throw new Error("New command failed");
+      if (args.session === debug.scratch?.info.session) {
+        debug.scratchActions ??= [];
+        debug.scratchActions.push(structuredClone(action));
+        if (action.kind === "evaluate") {
+          if (action.expression === "globalThis.scratchValue = 41") debug.scratch.value = 41;
+          const display =
+            action.expression === "scratchValue + 1"
+              ? String(debug.scratch.value + 1)
+              : action.expression === "typeof scratchValue"
+                ? typeof debug.scratch.value
+                : String(debug.scratch.value ?? 7);
+          debug.scratch.events.push({
+            session: args.session,
+            invocation: 0,
+            request,
+            valueGeneration: 0,
+            event: {
+              kind: "evaluated",
+              pause: 0,
+              thrown: false,
+              value: {
+                kind: "number",
+                display,
+                handle: null,
+                truncated: false,
+              },
+            },
+          });
+          if (debug.holdScratchEvaluation) {
+            debug.holdScratchEvaluation = false;
+            await new Promise((resolve, reject) => {
+              debug.finishScratchEvaluation = resolve;
+              debug.rejectScratchEvaluation = () => reject(new Error("Retired Scratch reply"));
+            });
+            delete debug.finishScratchEvaluation;
+          }
+        }
+        return request;
+      }
       debug.actions.push(structuredClone(action));
+      if (action.kind === "evaluate" && debug.holdWorkerEvaluation) {
+        debug.holdWorkerEvaluation = false;
+        await new Promise((resolve) => {
+          debug.finishWorkerEvaluation = resolve;
+        });
+        delete debug.finishWorkerEvaluation;
+      }
       if (action.kind === "pause-next") {
         debug.pauseNext = action.enabled;
         emit(

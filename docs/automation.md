@@ -889,13 +889,20 @@ them. Click beside a line number to toggle a breakpoint; right-click for a
 condition or to disable it. A filled red circle means a worker has bound the
 breakpoint; an outline is pending.
 
+Opening without a remembered source shows a starting panel rather than choosing
+an installed extension file. **Use Scratch** focuses Console; **Open Scripts**
+opens the main window's script editor when that window is available. Browsing a
+source never activates it.
+
 The open workspace catches `debugger;` statements and attaches to newly created
 workers before initialization. Use **Dock** to move it beside Traffic or into a
 separate window. Moving preserves execution and the console draft.
 The dock position, pane sizes and visibility return when reopened during the app
-session. **View** shows or hides Sources, Inspector and Console; **Escape** toggles
-the Console. Drag pane dividers to resize them. Compact docks show code, Sources
-or Inspector one at a time so the editor remains usable.
+session. **View** shows or hides Sources, Inspector and Console, with a checkmark
+beside each visible pane; choosing a pane closes the menu. **Escape** toggles the
+Console. Drag pane dividers to resize them. Compact docks show Code, Sources or
+Inspector one at a time, and the checkmark follows the visible pane. Console
+visibility stays independent.
 
 Use **Ctrl+P** to open a source and **Ctrl+Shift+F** to search saved and installed
 sources without activating them. Append `:line` or `:line:column` to a file name,
@@ -905,10 +912,23 @@ moves through source history. The Sources tree groups files into package folders
 and marks the selected file.
 
 Switch between mapped TypeScript and running JavaScript when a verified source
-map is available. The Console runs JavaScript in the selected paused frame, or
-in the selected worker's global context when idle. Commands can change that
-worker's state. Scope/property inspection stays inert; conditions reject side
-effects. An invalid condition pauses with an explanation.
+map is available. Console's **Run in** choice selects **Scratch** or the selected
+worker. Worker commands run in the selected paused frame, or its global context
+when idle, and can change that worker's state. A live pause reveals its source
+and stack while preserving a Scratch command destination. Output filters change
+which records are shown independently of where commands run.
+
+Scratch is an empty JavaScript context available before any script runs. Its
+variables, draft and command history survive debugger close/reopen and docking
+changes during the owning main or capture window's lifetime. Each window has its
+own Scratch context. **Reset scratch** appears only while Scratch is selected;
+it cancels outstanding Scratch work and clears its variables, preserving output,
+history and the typed draft. Earlier object results keep their readable summaries
+but expire for expansion. **Clear output** clears Console output without clearing
+variables. Worker **Restart** remains a separate control.
+
+Scope/property inspection stays inert; conditions reject side effects. An invalid
+condition pauses with an explanation.
 
 Right-click selected source to add it to Watch or evaluate it in Console
 (**Ctrl+Shift+E**). Watches can be edited in place and return when the debugger is
@@ -933,6 +953,13 @@ Continue uses F8 or `Ctrl+\` (also F5); step over F10, into F11,
 out Shift+F11, and Stop Shift+F5.
 Shortcuts work throughout the debugger, including Monaco and selectors. Hover or
 focus an icon for its action and shortcut.
+
+While running or idle, F8 arms or cancels **Pause next callback**. **Pause in**
+chooses a worker or **Any script or extension**, independently of Console's
+destination. Any works before workers exist and remains available afterward.
+Each arm pauses one callback in this window; attachment and Scratch commands do
+not consume it. The target choice stays selected after continuing, ready to arm
+again. Closing cancels outstanding pause requests while remembering the target.
 
 **Restart** aborts the selected worker. For script tests, it uses the current
 draft and test input; for applied scripts, it restarts the applied build. For

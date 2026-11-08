@@ -210,11 +210,24 @@ summary {
 }
 .console > header {
   font-size: 0.75rem;
+  flex-wrap: wrap;
 }
-.console > header span {
+.console > header .spacer {
   flex: 1;
   color: var(--muted);
 }
+.console-context, .pause-target { display: flex; align-items: center; gap: .35rem; min-width: 0; }
+.console-context select { max-width: min(22rem, 100%); min-width: 0; }
+.pause-target { font-size: .75rem; }
+.pause-target select { max-width: 17rem; min-width: 0; }
+.console-hint { margin: .2rem .5rem; font-size: .75rem; }
+.source-pane > .editor, .starting-panel { grid-row: 3; grid-column: 1; min-height: 0; }
+.editor[hidden] { display: none; }
+.starting-panel { overflow: auto; padding: 1rem; }
+.starting-panel h2 { font-size: 1rem; margin: 0 0 .5rem; }
+.starting-panel p { max-width: 44rem; }
+.starting-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
+.source-loading { grid-row: 3; grid-column: 1; z-index: 1; align-self: start; margin: .5rem; background: var(--panel); }
 .console-output {
   overflow: auto;
   padding: 0.25rem 0.5rem;
@@ -264,6 +277,21 @@ summary {
 .view-trigger { anchor-name: --debugger-view; }
 #debugger-placement { position-anchor: --debugger-dock; }
 #debugger-view { position-anchor: --debugger-view; }
+#debugger-view button {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.view-check {
+  flex: 0 0 1rem;
+  text-align: center;
+}
+#debugger-view button[aria-pressed="false"] .view-check {
+  visibility: hidden;
+}
+#debugger-view kbd {
+  margin-inline-start: auto;
+}
 @supports (position-area: block-end) {
   .placement {
     inset: auto;
@@ -763,6 +791,7 @@ textarea {
   max-width: 9rem;
   min-width: 0;
 }
+.console > header .console-context select { max-width: min(24rem, 100%); }
 .command small,
 .command summary {
   color: var(--muted);

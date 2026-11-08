@@ -1,6 +1,9 @@
 //! Native ownership and source inventory for the dockable debugger.
+mod console;
+mod pausing;
 mod projections;
 use crate::{AppError, Application, DebugConfiguration, DebugSessionInfo, ErrorCategory};
+pub use console::ScratchContext;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -11,9 +14,14 @@ use transmog_script_diagnostics::debugger::{ExceptionPolicy, SourceBreakpoint};
 
 pub(crate) const OWNER: &str = "debugger-workspace";
 #[derive(Clone, Default)]
-pub(crate) struct Workspace(Arc<Mutex<State>>);
+pub(crate) struct Workspace(Arc<Mutex<State>>, Arc<Mutex<console::Scratch>>);
 #[derive(Default)]
 struct State {
+    pause_target: String,
+    pause_any: bool,
+    pause_claim: Option<String>,
+    pause_claim_request: u64,
+    pause_revision: u64,
     skip_pauses: bool,
     controls: BTreeMap<String, bool>,
     policies: BTreeMap<String, ExceptionPolicy>,
@@ -74,6 +82,12 @@ pub struct DebuggerFile {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DebuggerWorkspaceView {
+    /// Persistent choice of callback target; "any" includes future workers.
+    pub pause_target: String,
+    /// An outstanding callback pause in the owning window.
+    pub pause_pending: bool,
+    /// Current independent Scratch runtime, when it has been used.
+    pub scratch: Option<ScratchContext>,
     /// Temporary suppression shared by current and future workers of this workspace.
     pub skip_pauses: bool,
     /// Most recent explicit fixture/attachment selection.
@@ -161,7 +175,7 @@ impl Workspace {
                 }
             }
         }
-        Self(Arc::new(Mutex::new(state)))
+        Self(Arc::new(Mutex::new(state)), Arc::default())
     }
     pub(crate) fn is_open(&self) -> bool {
         self.0
@@ -426,7 +440,11 @@ impl Application {
         id: &str,
         after: u64,
     ) -> Result<crate::DebugSessionView, AppError> {
-        self.debug_session(OWNER, id, after)
+        if self.debuggers.owned(console::SCRATCH_OWNER, id).is_ok() {
+            self.debug_session(console::SCRATCH_OWNER, id, after)
+        } else {
+            self.debug_session(OWNER, id, after)
+        }
     }
     /// Resolves a request only while this exact native pause is still current.
     /// # Errors
@@ -451,6 +469,9 @@ impl Application {
         id: &str,
         action: transmog_script_diagnostics::debugger::DebugAction,
     ) -> Result<u64, AppError> {
+        if self.debuggers.owned(console::SCRATCH_OWNER, id).is_ok() {
+            return self.scratch_command(id, action);
+        }
         let policy =
             if let transmog_script_diagnostics::debugger::DebugAction::Exceptions { policy } =
                 &action
@@ -489,6 +510,11 @@ impl Application {
                 return Err(invalid("Open the debugger before changing pause settings"));
             }
             state.skip_pauses = skip;
+            if skip {
+                state.pause_any = false;
+                state.pause_revision = state.pause_revision.wrapping_add(1);
+                state.pause_claim = None;
+            }
         }
         self.apply_workspace_breakpoints()
     }
@@ -497,6 +523,8 @@ impl Application {
     /// Rejects unavailable ownership, invalid input or a failed native operation.
     pub fn open_debugger_workspace(&self) -> Result<DebuggerWorkspaceView, AppError> {
         self.debugger_catalog()?;
+        self.debuggers
+            .callback_gate(self.debugger_workspace.callback_gate());
         let epoch = {
             let mut state = self
                 .debugger_workspace
@@ -577,6 +605,9 @@ impl Application {
                 .lock()
                 .map_err(|_| invalid("Debugger unavailable"))?;
             state.open = false;
+            state.pause_any = false;
+            state.pause_claim = None;
+            state.pause_revision = state.pause_revision.wrapping_add(1);
             state.skip_pauses = false;
             state.controls.clear();
             state.focus = None;
@@ -646,6 +677,18 @@ impl Application {
             .controls
             .retain(|session, _| retained.contains(session));
         Ok(DebuggerWorkspaceView {
+            pause_target: if state.pause_target.is_empty() {
+                "any".into()
+            } else {
+                state.pause_target.clone()
+            },
+            pause_pending: Workspace::pause_pending(&mut state, &self.debuggers),
+            scratch: self
+                .debugger_workspace
+                .1
+                .try_lock()
+                .ok()
+                .and_then(|scratch| scratch.view()),
             skip_pauses: state.skip_pauses,
             focus: state.focus.clone(),
             theme: self.product_state().preferences.theme,

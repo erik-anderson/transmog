@@ -34,12 +34,6 @@ export async function checkNativeDebuggerWorkspace({
     element.scriptForm.elements.namedItem("scriptMethod").value = "";
     element.markScriptChanged();
   });
-  await editor.getByRole("button", { name: /^Save & (?:apply|enable)$/ }).click();
-  await wait(
-    () => editor.evaluate((element) => !element.scriptBusy && !element.scriptUnapplied),
-    "applied workspace fixture",
-  );
-  await page.evaluate(async () => document.querySelector("app-shell").activateView("traffic"));
   await page.keyboard.press("F12");
   let detached;
   await wait(() => {
@@ -51,18 +45,63 @@ export async function checkNativeDebuggerWorkspace({
   }, "detached window");
   const surface = detached.locator("debugger-workspace");
   await wait(
+    () => surface.evaluate((element) => !element.debuggerTransition).catch(() => false),
+    "empty debugger ready",
+  );
+  assert.equal(await surface.evaluate((element) => element.debuggerTargets.length), 0);
+  await surface.getByRole("button", { name: "Pause next callback (F8)", exact: true }).click();
+  await surface.getByRole("button", { name: "Cancel callback pause (F8)", exact: true }).waitFor();
+  await editor.getByRole("button", { name: /^Save & (?:apply|enable)$/ }).click();
+  await wait(
+    () => editor.evaluate((element) => !element.scriptBusy && !element.scriptUnapplied),
+    "applied workspace fixture",
+  );
+  await page.evaluate(async () => document.querySelector("app-shell").activateView("traffic"));
+  const checkView = async (panel, window, label) => {
+    await panel.getByRole("button", { name: "View", exact: true }).click();
+    const menu = panel.locator("#debugger-view");
+    for (const [name, selector] of [
+      ["Code", ".source-pane"],
+      ["Sources", ".sources"],
+      ["Inspector", ".variables"],
+      ["Console Esc", ".console"],
+    ]) {
+      const item = menu.getByRole("button", { name, exact: true });
+      if (!(await item.count())) continue;
+      const visible = await panel.locator(selector).isVisible();
+      assert.equal(await item.getAttribute("aria-pressed"), String(visible), name);
+      assert.equal(await item.locator(".view-check").isVisible(), visible, name);
+    }
+    await window.screenshot({ path: resolve(output, `debugger-view-${label}-native.png`) });
+    await menu.getByRole("button").first().press("Escape");
+    assert.equal(await menu.isVisible(), false);
+  };
+  await wait(
     () =>
       surface
-        .evaluate(
-          (element) =>
-            !element.debuggerTransition && !!element.editor && element.debuggerTargets.length > 0,
-        )
+        .evaluate((element) => !element.debuggerTransition && element.debuggerTargets.length > 0)
         .catch(() => false),
     "attached editor",
   );
+  await checkView(surface, detached, "window");
+  await surface
+    .getByRole("combobox", { name: "Console context", exact: true })
+    .selectOption("worker");
+  assert.equal(
+    await surface.getByRole("button", { name: "Reset scratch", exact: true }).count(),
+    0,
+  );
+  await assert.rejects(() =>
+    surface.evaluate((element) =>
+      window.__TAURI_INTERNALS__.invoke("reset_scratch_console", {
+        session: element.debuggerTarget,
+      }),
+    ),
+  );
   await assert.rejects(() => invoke("debugger_workspace"));
   for (let callback = 0; callback < 2; callback++) {
-    await surface.getByRole("button", { name: "Pause next callback (F8)", exact: true }).click();
+    if (callback > 0)
+      await surface.getByRole("button", { name: "Pause next callback (F8)", exact: true }).click();
     await wait(
       () =>
         surface.evaluate(
@@ -89,6 +128,10 @@ export async function checkNativeDebuggerWorkspace({
       throw new Error(`${error.message}: ${JSON.stringify(outcome)}`);
     }
     await surface.locator(".status").getByText("next callback", { exact: true }).waitFor();
+    assert.equal(
+      await surface.getByRole("combobox", { name: "Pause target", exact: true }).inputValue(),
+      "any",
+    );
     await surface.getByRole("button", { name: "Continue (F8)", exact: true }).click();
     assert.equal((await response).status, 200);
     await wait(
@@ -297,7 +340,7 @@ export async function checkNativeDebuggerWorkspace({
     .getByText("workspace callback", { exact: true })
     .first()
     .waitFor();
-  await surface.getByRole("button", { name: "Clear", exact: true }).click();
+  await surface.getByRole("button", { name: "Clear output", exact: true }).click();
   await prompt.fill("Array.from({length:150},(_,i)=>({i}))");
   await surface.getByRole("button", { name: "Run", exact: true }).click();
   const arrayResult = surface.locator(".command").filter({ hasText: "› Array.from" });
@@ -315,7 +358,7 @@ export async function checkNativeDebuggerWorkspace({
   await surface.getByRole("textbox", { name: "Immediate expression" }).fill("preserved draft");
   await surface.getByRole("textbox", { name: "Immediate expression" }).press("ArrowUp");
   await surface
-    .getByRole("combobox", { name: "Console workers", exact: true })
+    .getByRole("combobox", { name: "Console output", exact: true })
     .selectOption("selected");
   await surface.getByRole("combobox", { name: "Console level", exact: true }).selectOption("warn");
   await page.evaluate(() => {
@@ -400,7 +443,7 @@ export async function checkNativeDebuggerWorkspace({
     "preserved draft",
   );
   assert.equal(
-    await dock.getByRole("combobox", { name: "Console workers", exact: true }).inputValue(),
+    await dock.getByRole("combobox", { name: "Console output", exact: true }).inputValue(),
     "selected",
   );
   assert.equal(
@@ -577,6 +620,7 @@ export async function checkNativeDebuggerWorkspace({
   const minimum = await dock.boundingBox();
   const limit = await outerDivider.boundingBox();
   await page.screenshot({ path: resolve(output, "debugger-right-minimum-native.png") });
+  await checkView(dock, page, "compact");
   const limitX = limit.x + limit.width / 2,
     limitY = limit.y + limit.height / 2;
   await page.mouse.move(limitX, limitY);

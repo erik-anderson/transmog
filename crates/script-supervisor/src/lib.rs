@@ -27,6 +27,8 @@ pub use transmog_script_diagnostics::supervision::{
 };
 type Output = ReplyReader<BufReader<ChildStdout>, ScriptHostReply>;
 mod debugging;
+mod scratch;
+pub use scratch::ScratchRunner;
 
 /// Maximum applied script revisions in one registry.
 pub const MAX_ACTIVE_SCRIPT_HOSTS: usize = 32;

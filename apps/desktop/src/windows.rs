@@ -2748,6 +2748,7 @@ pub fn run() {
                 debugger_workspace::debugger_workspace,
                 debugger_workspace::debugger_layout,
                 debugger_workspace::debugger_watches,
+                debugger_workspace::debugger_view_state,
                 debugger_workspace::debugger_file,
             debugger_workspace::debugger_breakpoint_positions,
                 debugger_workspace::workspace_breakpoints,
@@ -2755,6 +2756,10 @@ pub fn run() {
                 debugger_workspace::workspace_debug_request,
                 debugger_workspace::workspace_debug_command,
                 debugger_workspace::workspace_skip_pauses,
+                debugger_workspace::workspace_pause_next,
+                debugger_workspace::scratch_console,
+                debugger_workspace::reset_scratch_console,
+                debugger_workspace::debugger_open_scripts,
                 debugger_workspace::workspace_restart,
                 response_assets,
                 inspect_response_asset,
@@ -2950,6 +2955,7 @@ pub fn run() {
                 portable_cases::release(window.label());
                 if window.label() == "main" {
                     let state = window.state::<DesktopState>();
+                    state.application.release_scratch_console();
                     state.application.reset_visualizer_document();
                     state.application.set_visualizers_visible(false);
                     close_guard.store(false, Ordering::Release);
@@ -2961,7 +2967,7 @@ pub fn run() {
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .remove(window.label());
-                    if let Some(viewer) = removed { viewer.application.release_debuggers(window.label());viewer.application.deactivate_visualizers(); if viewer.review.is_none(){viewer.application.cancel_composer_requests();} }
+                    if let Some(viewer) = removed { viewer.application.release_debuggers(window.label());viewer.application.release_scratch_console();viewer.application.deactivate_visualizers(); if viewer.review.is_none(){viewer.application.cancel_composer_requests();} }
                 }
             }
             if window.label() == "main"

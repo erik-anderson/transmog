@@ -4409,6 +4409,11 @@ await page.addInitScript(
           case "workspace_debug_session":
           case "workspace_debug_request":
           case "workspace_skip_pauses":
+          case "workspace_pause_next":
+          case "scratch_console":
+          case "debugger_view_state":
+          case "reset_scratch_console":
+          case "debugger_open_scripts":
           case "workspace_debug_command":
             return globalThis.__debuggerWorkspaceCommand(command, args);
           case "start_debug_test":

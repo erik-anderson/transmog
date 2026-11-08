@@ -4,10 +4,35 @@ import { resolve } from "node:path";
 export async function checkDebuggerNavigation(page, workspace, root) {
   const editor = async () => workspace.evaluate((element) => element.editor.focus());
   const source = () => workspace.evaluate((element) => element.debuggerSourceLabel);
-  const view = async (name) => {
+  const view = async (name, keyboard = false) => {
     await workspace.getByRole("button", { name: "View", exact: true }).click();
-    await workspace.getByRole("button", { name, exact: true }).click();
+    const item = workspace.getByRole("button", { name, exact: true });
+    if (keyboard) await item.press("Enter");
+    else await item.click();
+    assert.equal(await workspace.locator("#debugger-view").isVisible(), false);
   };
+  const checkView = async (expected, screenshot) => {
+    const trigger = workspace.getByRole("button", { name: "View", exact: true });
+    await trigger.press("Enter");
+    const menu = workspace.locator("#debugger-view");
+    for (const [name, shown] of Object.entries(expected)) {
+      const item = menu.getByRole("button", { name, exact: true });
+      assert.equal(await item.getAttribute("aria-pressed"), String(shown), name);
+      assert.equal(await item.locator(".view-check").isVisible(), shown, name);
+    }
+    if (screenshot) {
+      await page.screenshot({
+        path: resolve(root, `../../../target/ui-check/debugger-view-${screenshot}.png`),
+      });
+    }
+    await menu.getByRole("button").first().press("Escape");
+    assert.equal(await menu.isVisible(), false);
+    assert.equal(
+      await trigger.evaluate((element) => element.getRootNode().activeElement === element),
+      true,
+    );
+  };
+  await checkView({ Sources: true, Inspector: true, "Console Esc": true }, "wide");
   const before = await page.evaluate(
     () => globalThis.__workspaceFixture.workspaceDebug.actions.length,
   );
@@ -166,7 +191,8 @@ export async function checkDebuggerNavigation(page, workspace, root) {
   await workspace.getByRole("button", { name: "Close sources", exact: true }).click();
   await sources.waitFor({ state: "hidden" });
   assert.equal(await workspace.evaluate((element) => element.editor.hasTextFocus()), true);
-  await view("Sources");
+  await checkView({ Sources: false, Inspector: true, "Console Esc": true }, "sources-hidden");
+  await view("Sources", true);
   await sources.waitFor();
   await editor();
   await page.keyboard.press("Escape");
@@ -174,6 +200,7 @@ export async function checkDebuggerNavigation(page, workspace, root) {
   await page.keyboard.press("Escape");
   await workspace.getByRole("textbox", { name: "Immediate expression" }).waitFor();
   await workspace.getByRole("button", { name: "Hide console (Escape)", exact: true }).click();
+  await checkView({ Sources: true, Inspector: true, "Console Esc": false });
   await view("Console Esc");
 
   await page.setViewportSize({ width: 800, height: 600 });
@@ -186,10 +213,22 @@ export async function checkDebuggerNavigation(page, workspace, root) {
   );
   await view("Sources");
   await sources.waitFor();
+  await checkView({ Code: false, Sources: true, Inspector: false, "Console Esc": true });
   await workspace.getByRole("button", { name: "main.ts Loaded", exact: true }).click();
   await workspace.locator(".source-pane").waitFor();
+  await checkView({ Code: true, Sources: false, Inspector: false, "Console Esc": true });
   await view("Inspector");
   await workspace.locator(".variables").waitFor();
+  await checkView(
+    { Code: false, Sources: false, Inspector: true, "Console Esc": true },
+    "compact-800",
+  );
+  await page.emulateMedia({ forcedColors: "active" });
+  await checkView(
+    { Code: false, Sources: false, Inspector: true, "Console Esc": true },
+    "forced-colors-800",
+  );
+  await page.emulateMedia({ forcedColors: "none" });
   await workspace.getByRole("button", { name: "View", exact: true }).click();
   await workspace
     .locator("#debugger-view")

@@ -174,12 +174,21 @@ when changing the experience.
   Preserve debugger placement and pane choices through close/reopen. Keep source
   navigation searchable without activating workers, and let compact docks switch
   panes instead of squeezing the editor between fixed sidebars.
+  Pane menus mark actual visibility, including the active pane in compact docks,
+  and expose the same state to assistive technology.
   Keep the call stack visible and scopes independently expandable. Browse properties
   in scrollable trees, with expandable ranges for large collections. Automatic
   previews and watches reject side effects; property inspection and completion
   never run getters or proxy traps. Explicit Console commands may change the worker.
   Expire values when their execution scope changes, and keep ordinary Console
   output readable with technical identifiers behind details.
+  Keep Console's execution destination separate from output filters and callback
+  pause targeting. A live pause preserves an explicitly chosen Scratch destination.
+  Each owning window retains its Scratch heap through debugger dismissal and moves;
+  Reset scratch appears only for Scratch and preserves the transcript, history and
+  draft. Clear output changes presentation rather than runtime state. Any-worker
+  callback targeting stays available before and after attachments; each arm has one
+  callback winner, with cancellation and the remembered target kept distinct.
 - Keep inspection and repair available when a saved configuration becomes invalid.
   Preserve authored choices and explain recovery instead of silently substituting
   a configuration with different trust, privacy or authorization consequences.

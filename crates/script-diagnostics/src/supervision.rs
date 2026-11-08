@@ -18,6 +18,8 @@ mod tests;
 const HISTORY_BYTES: usize = 128 * 1024;
 type Writer = Arc<dyn Fn(DebugCommand) -> bool + Send + Sync>;
 type Stopper = Arc<dyn Fn() + Send + Sync>;
+/// Native admission hook shared by workers of one debugger workspace.
+pub type CallbackGate = Arc<dyn Fn(&Session) -> Result<(), &'static str> + Send + Sync>;
 
 /// Independent cumulative pause clock. Only authenticated native transitions update it.
 #[derive(Default)]
@@ -220,6 +222,7 @@ pub struct Session {
     created: Instant,
     state: Mutex<State>,
     clock: Arc<PauseClock>,
+    callback: Mutex<Option<CallbackGate>>,
 }
 /// Cursor-qualified bounded local evidence. Never persist or expose this through MCP.
 #[derive(Serialize)]
@@ -300,6 +303,7 @@ impl Session {
             options,
             created: Instant::now(),
             clock: Arc::default(),
+            callback: Mutex::default(),
             state: Mutex::new(State {
                 controls: ExecutionControls {
                     skip_pauses,
@@ -583,6 +587,16 @@ impl Session {
     /// # Errors
     /// Rejects ended ownership and independently stops an unresponsive detach.
     pub fn begin_ready(&self, invocation: u64) -> Result<bool, &'static str> {
+        if invocation != 0 {
+            let gate = self
+                .callback
+                .lock()
+                .map_err(|_| "Debugger unavailable")?
+                .clone();
+            if let Some(gate) = gate {
+                gate(self)?;
+            }
+        }
         let started = Instant::now();
         loop {
             {
@@ -634,6 +648,43 @@ impl Session {
             if started.elapsed() >= Duration::from_secs(1) {
                 self.stop("Debugger attachment timed out");
                 return Err("Debugger attachment timed out");
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+    /// Installs native callback admission without retaining this session in the hook.
+    pub fn on_callback(&self, gate: CallbackGate) {
+        *self
+            .callback
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(gate);
+    }
+    /// Whether a native control is still awaiting its authenticated reply.
+    pub fn control_pending(&self, request: u64) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .pending
+            .contains_key(&request)
+    }
+    /// Waits for an explicitly scheduled control to reach its idle engine.
+    /// # Errors
+    /// Stops an unresponsive control channel rather than executing an unarmed callback.
+    pub fn wait_control(&self, request: u64) -> Result<(), &'static str> {
+        let start = Instant::now();
+        loop {
+            {
+                let state = self.state.lock().map_err(|_| "Debugger unavailable")?;
+                if state.connection.closed() {
+                    return Err("Debugger attachment ended");
+                }
+                if !state.pending.contains_key(&request) {
+                    return Ok(());
+                }
+            }
+            if start.elapsed() >= Duration::from_secs(1) {
+                self.stop("Callback pause could not be scheduled");
+                return Err("Callback pause could not be scheduled");
             }
             std::thread::sleep(Duration::from_millis(2));
         }

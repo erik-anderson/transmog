@@ -231,6 +231,22 @@ pub(crate) type DebugFactory = Arc<
 >;
 
 impl ScriptRegistry {
+    pub(crate) fn host_config(&self) -> Result<ScriptHostConfig, AppError> {
+        Ok(ScriptHostConfig {
+            executable: self
+                .host
+                .as_deref()
+                .ok_or_else(|| {
+                    AppError::new(
+                        ErrorCategory::Unavailable,
+                        "Packaged script host is unavailable",
+                        true,
+                    )
+                })?
+                .clone(),
+            isolation: IsolationPolicy::RequireSandbox,
+        })
+    }
     pub(crate) fn debug_generation(&self) -> u64 {
         self.active
             .read()

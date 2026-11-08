@@ -7,8 +7,12 @@ import { checkDebuggerDocking } from "./check-debugger-docking.mjs";
 import { checkDebuggerInspection } from "./check-debugger-inspection.mjs";
 import { checkDebuggerControls } from "./check-debugger-controls.mjs";
 import { checkDebuggerAuthoring } from "./check-debugger-authoring.mjs";
+import { checkDebuggerStartup } from "./check-debugger-startup.mjs";
 
 export async function checkDebuggerWorkspace(page, root) {
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.workspaceDebug.noWorkers = true;
+  });
   const shortcut = page.getByRole("button", { name: "Debugger", exact: true });
   assert.equal(await shortcut.count(), 0, "The top shortcut starts hidden");
   await page.locator("app-shell a[data-view='automation']").click();
@@ -26,6 +30,7 @@ export async function checkDebuggerWorkspace(page, root) {
     .getByRole("button", { name: "Open debugger for live traffic", exact: true })
     .click();
   const workspace = page.locator("debugger-workspace");
+  await checkDebuggerStartup(page, workspace, root);
   await workspace.locator(".monaco-editor").waitFor();
   await shortcut.waitFor();
   await checkDebuggerNavigation(page, workspace, root);
@@ -84,6 +89,7 @@ export async function checkDebuggerWorkspace(page, root) {
   );
   const gutter = await workspace.evaluate((element) => {
     const editor = element.editor;
+    editor.setScrollTop(0);
     const bounds = editor.getDomNode().getBoundingClientRect();
     const layout = editor.getLayoutInfo();
     const position = editor.getScrolledVisiblePosition({ lineNumber: 2, column: 1 });
@@ -171,17 +177,22 @@ export async function checkDebuggerWorkspace(page, root) {
   await workspace.getByRole("button", { name: "main.js Loaded", exact: true }).click();
   await workspace.locator(".debug-execution-line").waitFor();
   await checkMappedRepresentations(page, workspace, root);
+  const commandsBeforeIme = await workspace.evaluate((element) => element.debuggerConsole.length);
   await workspace.getByRole("textbox", { name: "Immediate expression" }).fill("value");
   await workspace
     .getByRole("textbox", { name: "Immediate expression" })
     .dispatchEvent("keydown", { key: "Enter", isComposing: true });
   assert.equal(
     await workspace.evaluate((element) => element.debuggerConsole.length),
-    0,
+    commandsBeforeIme,
     "Finishing IME composition must not execute the console command",
   );
   await workspace.getByRole("button", { name: "Run", exact: true }).click();
-  await workspace.locator(".command > pre").filter({ hasText: "42" }).waitFor();
+  await workspace
+    .locator(".console-output .command")
+    .last()
+    .getByText("42", { exact: true })
+    .waitFor();
   await checkDebuggerInspection(page, workspace, root);
   await checkDebuggerAuthoring(page, workspace, root);
   await checkDebuggerControls(page, workspace, root);

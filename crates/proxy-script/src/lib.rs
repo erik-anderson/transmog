@@ -65,7 +65,7 @@ pub const SCRIPT_API_REVISION: u32 = 4;
 /// Maximum accepted source length.
 pub const MAX_SCRIPT_SOURCE_BYTES: usize = 1024 * 1024;
 /// Version of the private host/supervisor wire protocol.
-pub const SCRIPT_HOST_PROTOCOL_VERSION: u32 = 10;
+pub const SCRIPT_HOST_PROTOCOL_VERSION: u32 = 11;
 /// Maximum one-way host protocol frame, including JavaScript source.
 pub const MAX_SCRIPT_HOST_FRAME_BYTES: usize = 68 * 1024 * 1024;
 
@@ -77,6 +77,15 @@ pub struct ScriptHostToken(pub [u8; 32]);
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "message", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum ScriptHostRequest {
+    /// Starts an empty Console context without a script or callback registration.
+    InitializeScratch {
+        /// Private protocol revision.
+        protocol_version: u32,
+        /// Per-process authentication token.
+        token: ScriptHostToken,
+        /// Explicit owner of the Console context.
+        debug: debugger::DebugOptions,
+    },
     /// Initializes the one-script process exactly once.
     Initialize {
         /// Wire protocol revision.

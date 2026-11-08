@@ -107,7 +107,10 @@ pub struct DebugRequest {
     pub url: String,
 }
 #[derive(Clone, Default)]
-pub(crate) struct Debuggers(Arc<Mutex<BTreeMap<String, Arc<Run>>>>);
+pub(crate) struct Debuggers(
+    Arc<Mutex<BTreeMap<String, Arc<Run>>>>,
+    Arc<Mutex<Option<transmog_script_diagnostics::supervision::CallbackGate>>>,
+);
 pub(crate) struct Run {
     persistent: bool,
     owner: String,
@@ -122,6 +125,15 @@ pub(crate) struct Run {
         Mutex<Option<tokio::sync::oneshot::Receiver<Result<crate::VisualizerView, AppError>>>>,
 }
 impl Debuggers {
+    pub(crate) fn callback_gate(
+        &self,
+        gate: transmog_script_diagnostics::supervision::CallbackGate,
+    ) {
+        *self
+            .1
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(gate);
+    }
     pub(crate) fn create(
         &self,
         owner: &str,
@@ -132,6 +144,7 @@ impl Debuggers {
         if owner.is_empty() || owner.len() > 128 {
             return Err(invalid("Debugger owner unavailable"));
         }
+        // Validate original requests before translation can reduce their size.
         if !transmog_script_diagnostics::debugger::valid_breakpoints(&configuration.breakpoints) {
             return Err(invalid("Invalid source breakpoints"));
         }
@@ -181,11 +194,8 @@ impl Debuggers {
             exceptions: configuration.exceptions,
             breakpoints: translate(&configuration.breakpoints, map.as_deref()),
         };
-        // Validate the original requests too; translation cannot hide a client flood.
-        if !transmog_script_diagnostics::debugger::valid_breakpoints(&configuration.breakpoints) {
-            return Err(invalid("Invalid source breakpoints"));
-        }
         let session = Session::new(options).map_err(invalid)?;
+        self.configure_callback(owner, &session)?;
         let run = Arc::new(Run {
             persistent: configuration.persistent,
             owner: owner.into(),
@@ -231,6 +241,18 @@ impl Debuggers {
         runs.insert(run.info.session.clone(), Arc::clone(&run));
         owners.push(Arc::downgrade(&run));
         Ok(run)
+    }
+    fn configure_callback(&self, owner: &str, session: &Session) -> Result<(), AppError> {
+        if owner == crate::debugger_workspace::OWNER
+            && let Some(gate) = self
+                .1
+                .lock()
+                .map_err(|_| invalid("Debugger unavailable"))?
+                .clone()
+        {
+            session.on_callback(gate);
+        }
+        Ok(())
     }
     pub(crate) fn owned(&self, owner: &str, id: &str) -> Result<Arc<Run>, AppError> {
         self.0

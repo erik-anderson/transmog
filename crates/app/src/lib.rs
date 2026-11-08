@@ -57,7 +57,9 @@ mod response_assets;
 mod response_file;
 mod response_filename;
 mod scripts;
-pub use debugger_workspace::{DebuggerFile, DebuggerWorkspaceView, WorkspaceBreakpoint};
+pub use debugger_workspace::{
+    DebuggerFile, DebuggerWorkspaceView, ScratchContext, WorkspaceBreakpoint,
+};
 mod search;
 mod sessions;
 mod streams;

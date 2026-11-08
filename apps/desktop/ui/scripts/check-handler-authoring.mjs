@@ -352,7 +352,10 @@ export async function checkHandlerAuthoring(page, scripts, root) {
   const recoveredJavaScript =
     'import {pass} from "transmog:api"; export function onRequestHead() { return pass(); }';
   await scripts.getByRole("button", { name: "TypeScript source options", exact: true }).click();
-  await scripts.getByRole("button", { name: "Edit JavaScript", exact: true }).click();
+  await scripts
+    .getByLabel("Source options", { exact: true })
+    .getByRole("button", { name: "Edit JavaScript", exact: true })
+    .click();
   await scripts.locator(".handler-trigger:enabled").waitFor();
   await scripts.evaluate(
     (editor, source) => editor.sourceEditor.setValue(source),

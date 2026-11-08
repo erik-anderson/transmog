@@ -66,7 +66,7 @@ export async function checkDebuggerConsole(page, workspace) {
     ),
     ["First synchronous log", "Second synchronous log"],
   );
-  await workspace.getByRole("button", { name: "Clear", exact: true }).click();
+  await workspace.getByRole("button", { name: "Clear output", exact: true }).click();
   await page.evaluate(() =>
     globalThis.__workspaceFixture.workspaceDebug.logs[0].records.push({
       sequence: 3,
@@ -83,7 +83,7 @@ export async function checkDebuggerConsole(page, workspace) {
   await workspace.getByRole("button", { name: "Run", exact: true }).click();
   await workspace.locator(".command > pre").filter({ hasText: "42" }).waitFor();
   await workspace
-    .getByRole("combobox", { name: "Console workers", exact: true })
+    .getByRole("combobox", { name: "Console output", exact: true })
     .selectOption("selected");
   await workspace
     .getByRole("combobox", { name: "Console level", exact: true })
@@ -117,7 +117,7 @@ export async function checkDebuggerConsole(page, workspace) {
   await prompt.press("ArrowDown");
   assert.equal(await prompt.inputValue(), "history draft");
   assert.equal(
-    await workspace.getByRole("combobox", { name: "Console workers", exact: true }).inputValue(),
+    await workspace.getByRole("combobox", { name: "Console output", exact: true }).inputValue(),
     "selected",
   );
   assert.equal(
@@ -132,7 +132,7 @@ export async function checkDebuggerConsole(page, workspace) {
     globalThis.__workspaceFixture.workspaceDebug.logs[0].dropped = 4;
   });
   await workspace.getByText("4 console records omitted", { exact: true }).waitFor();
-  await workspace.getByRole("button", { name: "Clear", exact: true }).click();
+  await workspace.getByRole("button", { name: "Clear output", exact: true }).click();
   await page.evaluate(() => {
     const run = globalThis.__workspaceFixture.workspaceDebug.logs[0];
     run.dropped = 7;
@@ -211,6 +211,6 @@ export async function checkDebuggerConsole(page, workspace) {
     debug.logs = logs;
   }, logs);
   await workspace
-    .getByRole("combobox", { name: "Console workers", exact: true })
+    .getByRole("combobox", { name: "Console output", exact: true })
     .selectOption("all");
 }

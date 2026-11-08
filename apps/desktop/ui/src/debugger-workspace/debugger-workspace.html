@@ -20,7 +20,7 @@
           type="button"
           class="secondary debug-icon-button"
           aria-label="{{debuggerPauseButton}}"
-          ?disabled="{{debuggerClosed || debuggerControlSubmitting}}"
+          ?disabled="{{!debuggerPauseTargetAvailable || debuggerControlSubmitting}}"
           ?data-scheduled="{{debuggerPauseNext}}"
           @click="{togglePause()}"
         >
@@ -34,6 +34,13 @@
           ></span
         ></span
       >
+      <label class="pause-target">Pause in
+        <select aria-label="Pause target" value="{{debuggerPauseTarget}}" ?disabled="{{debuggerControlSubmitting}}" @change="{pauseTargetChanged(e)}">
+          <option value="any">Any script or extension</option>
+          <if condition="!debuggerPauseTargetAvailable"><option value="{{debuggerPauseTarget}}" disabled>Selected worker ended</option></if>
+          <for each="target in debuggerWorkerOptions"><if condition="target.state != 'Ended'"><option value="{{target.session}}">{{target.label}} · {{target.state}}</option></if></for>
+        </select>
+      </label>
       <span class="debug-tool"
         ><button
           type="button"
@@ -134,24 +141,32 @@
       <button type="button" w-ref="{viewMenuButton}" class="secondary view-trigger" popovertarget="debugger-view">View</button>
       <div id="debugger-view" class="placement" popover="auto">
         <button type="button" @click="{openNavigation(false)}" popovertarget="debugger-view" popovertargetaction="hide">
-          Open source… <kbd>Ctrl+P</kbd>
+          <span class="view-check" aria-hidden="true"></span>Open source… <kbd>Ctrl+P</kbd>
         </button>
         <button type="button" @click="{openNavigation(true)}" popovertarget="debugger-view" popovertargetaction="hide">
-          Search sources… <kbd>Ctrl+Shift+F</kbd>
+          <span class="view-check" aria-hidden="true"></span>Search sources… <kbd>Ctrl+Shift+F</kbd>
         </button>
         <if condition="debuggerCompact"
-          ><button type="button" @click="{showCode()}" popovertarget="debugger-view" popovertargetaction="hide">
-            Code
+          ><button type="button" aria-pressed="{{debuggerCompactPressed.source}}" @click="{showCode()}" popovertarget="debugger-view" popovertargetaction="hide">
+            <span class="view-check" aria-hidden="true">✓</span>Code
+          </button>
+          <button type="button" aria-pressed="{{debuggerCompactPressed.sources}}" @click="{toggleSidebar('sources')}" popovertarget="debugger-view" popovertargetaction="hide">
+            <span class="view-check" aria-hidden="true">✓</span>Sources
+          </button>
+          <button type="button" aria-pressed="{{debuggerCompactPressed.inspector}}" @click="{toggleSidebar('inspector')}" popovertarget="debugger-view" popovertargetaction="hide">
+            <span class="view-check" aria-hidden="true">✓</span>Inspector
           </button></if
         >
-        <button type="button" @click="{toggleSidebar('sources')}" popovertarget="debugger-view" popovertargetaction="hide">
-          Sources
-        </button>
-        <button type="button" @click="{toggleSidebar('inspector')}" popovertarget="debugger-view" popovertargetaction="hide">
-          Inspector
-        </button>
-        <button type="button" @click="{toggleConsole()}" popovertarget="debugger-view" popovertargetaction="hide">
-          Console <kbd>Esc</kbd>
+        <if condition="!debuggerCompact">
+          <button type="button" aria-pressed="{{debuggerSourcesVisible}}" @click="{toggleSidebar('sources')}" popovertarget="debugger-view" popovertargetaction="hide">
+            <span class="view-check" aria-hidden="true">✓</span>Sources
+          </button>
+          <button type="button" aria-pressed="{{debuggerInspectorVisible}}" @click="{toggleSidebar('inspector')}" popovertarget="debugger-view" popovertargetaction="hide">
+            <span class="view-check" aria-hidden="true">✓</span>Inspector
+          </button>
+        </if>
+        <button type="button" aria-pressed="{{debuggerConsoleVisible}}" @click="{toggleConsole()}" popovertarget="debugger-view" popovertargetaction="hide">
+          <span class="view-check" aria-hidden="true">✓</span>Console <kbd>Esc</kbd>
         </button>
       </div>
       <button type="button" w-ref="{dockMenuButton}" class="secondary dock-trigger" popovertarget="debugger-placement">Dock</button>
@@ -200,10 +215,11 @@
         >Worker
         <select
           aria-label="Debugger worker"
+          ?disabled="{{!debuggerWorkerOptions.length}}"
           value="{{debuggerTarget}}"
           @change="{targetChanged(e)}"
         >
-          <option value="" ?selected="{{!debuggerTarget}}">Select a worker</option>
+          <option value="" ?selected="{{!debuggerTarget}}">No script running</option>
           <for each="target in debuggerWorkerOptions"
             ><option key="{{target.session}}" value="{{target.session}}" ?selected="{{target.session == debuggerTarget}}">
               {{target.mode}} · {{target.label}} · {{target.state}}
@@ -418,7 +434,15 @@
             ></for
           >
         </nav>
-        <div w-ref="{sourceHost}" class="editor"></div>
+        <div w-ref="{sourceHost}" class="editor" ?hidden="{{!debuggerTabs.length && !debuggerSourceLoading}}"></div>
+        <if condition="debuggerSourceLoading"><p class="source-loading" role="status">Loading source…</p></if>
+        <if condition="!debuggerTabs.length && !debuggerSourceLoading"><section class="starting-panel" aria-label="Start debugging">
+          <h2>Ready to debug</h2>
+          <p>Use Console as a JavaScript scratch space, or open a source to set breakpoints.</p>
+          <div class="starting-actions"><button type="button" @click="{focusScratch()}">Use Scratch</button><if condition="debuggerCanOpenScripts"><button type="button" class="secondary" @click="{openScripts()}">Open Scripts</button></if><button type="button" class="secondary" @click="{openNavigation(false)}">Open source…</button></div>
+          <if condition="debuggerCanOpenScripts"><p>For live debugging, arm Pause next callback, then trigger traffic matching an enabled script or use a visualizer. In Scripts, choose Debug → Run sandbox test in debugger to test a draft.</p></if>
+          <if condition="!debuggerCanOpenScripts"><p>For live debugging, arm Pause next callback, then use a visualizer.</p></if>
+        </section></if>
       </section>
       <pane-divider
         class="inspector-divider"
@@ -575,14 +599,20 @@
       @wheel="{consoleInteracted()}"
     >
       <header>
-        <strong>Console</strong><span>{{debuggerScope}}</span
-        ><select
-          aria-label="Console workers"
+        <strong>Console</strong>
+        <label class="console-context">Run in
+          <select aria-label="Console context" value="{{debuggerConsoleContext}}" @change="{consoleContextChanged(e)}">
+            <option value="scratch">Scratch</option><option value="worker">{{debuggerConsoleWorkerLabel}}</option>
+          </select>
+        </label>
+        <span class="spacer"></span>
+        <select
+          aria-label="Console output"
           value="{{debuggerConsoleFilter}}"
           @change="{consoleFilter(e)}"
         >
-          <option value="all">All workers</option>
-          <option value="selected">Selected worker</option></select
+          <option value="all">All contexts</option>
+          <option value="selected">Current context</option></select
         ><select
           aria-label="Console level"
           value="{{debuggerConsoleLevel}}"
@@ -594,8 +624,9 @@
           <option value="error">Error</option>
           <option value="debug">Debug</option>
           <option value="trace">Trace</option></select
-        ><button type="button" class="secondary" @click="{clearConsole()}">Clear</button
-        ><button
+        ><button type="button" class="secondary" @click="{clearConsole()}">Clear output</button>
+        <if condition="debuggerConsoleContext == 'scratch'"><button type="button" class="secondary" title="Clear Scratch variables; keep output and history" ?disabled="{{debuggerScratchBusy}}" @click="{resetScratch()}">Reset scratch</button></if>
+        <button
           type="button"
           class="secondary"
           aria-label="Hide console (Escape)"
@@ -643,6 +674,7 @@
         >
       </div>
       <div class="console-entry">
+        <if condition="debuggerConsoleHint"><p class="console-hint" role="status">{{debuggerConsoleHint}}</p></if>
         <if condition="debuggerCompletions.length"
           ><div
             class="completions"
@@ -681,7 +713,7 @@
           ></textarea
           ><button
             type="submit"
-            ?disabled="{{debuggerClosed || debuggerSubmitting || !debuggerTarget || !debuggerInput}}"
+            ?disabled="{{!debuggerConsoleAvailable || debuggerSubmitting || !debuggerInput}}"
           >
             Run
           </button>

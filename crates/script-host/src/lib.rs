@@ -88,15 +88,20 @@ fn run_stream(
     let Input::Message(first) = input.read_input()? else {
         return Err("Initialization required".into());
     };
-    let ScriptHostRequest::Initialize {
-        protocol_version,
-        token,
-        manifest,
-        javascript,
-        debug,
-    } = first
-    else {
-        return Err("script host must be initialized first".to_owned());
+    let (protocol_version, token, manifest, javascript, debug) = match first {
+        ScriptHostRequest::Initialize {
+            protocol_version,
+            token,
+            manifest,
+            javascript,
+            debug,
+        } => (protocol_version, token, Some(manifest), javascript, debug),
+        ScriptHostRequest::InitializeScratch {
+            protocol_version,
+            token,
+            debug,
+        } => (protocol_version, token, None, String::new(), Some(debug)),
+        _ => return Err("script host must be initialized first".to_owned()),
     };
     if protocol_version != SCRIPT_HOST_PROTOCOL_VERSION {
         return Err("script host protocol version is unsupported".to_owned());
@@ -109,25 +114,26 @@ fn run_stream(
         None
     };
     let logs = output.clone();
-    let mut runtime = match ScriptRuntime::new_debug(
-        &manifest,
-        javascript,
-        move |request_id, event| {
-            let control = matches!(event, transmog_script::ConsoleEvent::End { .. });
-            let reply = ScriptHostReply::Console {
-                protocol_version: SCRIPT_HOST_PROTOCOL_VERSION,
-                token,
-                request_id,
-                event,
-            };
-            if control {
-                logs.event(reply)
-            } else {
-                logs.log(reply)
-            }
-        },
-        attachment,
-    ) {
+    let sink = move |request_id, event| {
+        let control = matches!(event, transmog_script::ConsoleEvent::End { .. });
+        let reply = ScriptHostReply::Console {
+            protocol_version: SCRIPT_HOST_PROTOCOL_VERSION,
+            token,
+            request_id,
+            event,
+        };
+        if control {
+            logs.event(reply)
+        } else {
+            logs.log(reply)
+        }
+    };
+    let initialized = if let Some(manifest) = manifest {
+        ScriptRuntime::new_debug(&manifest, javascript, sink, attachment)
+    } else {
+        ScriptRuntime::scratch(sink, attachment)
+    };
+    let mut runtime = match initialized {
         Ok(runtime) => runtime,
         Err(failure) => {
             let reply = ScriptHostReply::Fatal {
@@ -270,10 +276,28 @@ fn attach(runtime: &mut Runtime, attachment: DebugAttachment) -> Result<(), Stri
 
 struct ScriptRuntime {
     runtime: Runtime,
-    manifest: ScriptManifest,
+    manifest: Option<ScriptManifest>,
 }
 
 impl ScriptRuntime {
+    fn scratch(
+        sink: impl Fn(u64, transmog_script::ConsoleEvent) -> bool + 'static,
+        attachment: Option<DebugAttachment>,
+    ) -> Result<Self, ScriptFailure> {
+        let mut runtime = Runtime::new(1024 * 1024, 64 * 1024 * 1024)
+            .map_err(|error| failure(ScriptFailureCategory::Unavailable, &error.to_string()))?;
+        runtime
+            .enable_console(sink)
+            .map_err(|error| failure(ScriptFailureCategory::Unavailable, &error.to_string()))?;
+        if let Some(attachment) = attachment {
+            attach(&mut runtime, attachment)
+                .map_err(|_| failure(ScriptFailureCategory::Unavailable, "Scratch unavailable"))?;
+        }
+        Ok(Self {
+            runtime,
+            manifest: None,
+        })
+    }
     #[cfg(test)]
     fn new(
         manifest: &ScriptManifest,
@@ -340,18 +364,24 @@ impl ScriptRuntime {
         initialized?;
         Ok(Self {
             runtime,
-            manifest: manifest.clone(),
+            manifest: Some(manifest.clone()),
         })
     }
 
     fn invoke(&mut self, mut invocation: ScriptInvocation) -> Result<ScriptResult, ScriptFailure> {
-        if !self.manifest.handlers.contains(&invocation.context.handler) {
+        let manifest = self.manifest.as_ref().ok_or_else(|| {
+            failure(
+                ScriptFailureCategory::Protocol,
+                "Scratch has no traffic callbacks",
+            )
+        })?;
+        if !manifest.handlers.contains(&invocation.context.handler) {
             return Err(failure(
                 ScriptFailureCategory::Protocol,
                 "invocation requested an undeclared handler",
             ));
         }
-        let request = transmog_script::prepare_invocation(&self.manifest, &mut invocation)?;
+        let request = transmog_script::prepare_invocation(manifest, &mut invocation)?;
         let phase = invocation.context.handler;
         let handler = phase.export_name();
         let json = serde_json::to_string(&invocation)
@@ -364,9 +394,7 @@ impl ScriptRuntime {
             .execute_string(
                 "transmog:invoke",
                 &source,
-                self.manifest.limits.max_output_bytes * 4
-                    + self.manifest.limits.max_log_bytes
-                    + 256 * 1024,
+                manifest.limits.max_output_bytes * 4 + manifest.limits.max_log_bytes + 256 * 1024,
             )
             .map_err(|error| {
                 let category = match error.kind {
@@ -378,8 +406,8 @@ impl ScriptRuntime {
             })?;
         let result = serde_json::from_str(&output)
             .map_err(|error| failure(ScriptFailureCategory::InvalidAction, &error.to_string()))?;
-        transmog_script::validate_result(&self.manifest, phase, &request, &result)?;
-        transmog_script::validate_stream_result(&self.manifest, &invocation, &result)?;
+        transmog_script::validate_result(manifest, phase, &request, &result)?;
+        transmog_script::validate_stream_result(manifest, &invocation, &result)?;
         Ok(result)
     }
 }

@@ -67,6 +67,7 @@ export class AppShell extends WebUIElement {
   private debuggerNativeShortcut?: UnlistenFn;
   private debuggerAccessError?: UnlistenFn;
   private debuggerRequestListener?: UnlistenFn;
+  private debuggerScriptsListener?: UnlistenFn;
   private debuggerToggling = false;
   private debuggerTogglePending = false;
   debuggerDock!: DebuggerWorkspace;
@@ -144,6 +145,14 @@ export class AppShell extends WebUIElement {
         return;
       }
       this.debuggerRequestListener = requests;
+      const scripts = await listen("debugger-open-scripts", () => {
+        void this.openDebuggerScripts();
+      });
+      if (!this.isConnected) {
+        scripts();
+        return;
+      }
+      this.debuggerScriptsListener = scripts;
       const seen = await invoke<boolean>("debugger_seen");
       if (this.isConnected) {
         this.debuggerSeen ||= seen;
@@ -153,6 +162,11 @@ export class AppShell extends WebUIElement {
     }
   }
   comparison!: ComparisonWorkspace;
+  private async openDebuggerScripts(): Promise<void> {
+    if (await this.activateView("automation")) {
+      await this.automation.showAutomationSection("scripts");
+    }
+  }
   onComparison(event: CustomEvent<ComparisonOpen>): void {
     event.stopPropagation();
     void this.comparison.open(event.detail);
@@ -1240,6 +1254,7 @@ export class AppShell extends WebUIElement {
     this.debuggerNativeShortcut?.();
     this.debuggerAccessError?.();
     this.debuggerRequestListener?.();
+    this.debuggerScriptsListener?.();
     document.removeEventListener("keydown", this.debuggerShortcut, true);
     this.removeEventListener("keydown", this.inspectorShortcut, true);
     document.removeEventListener("keydown", this.shortcutListener);

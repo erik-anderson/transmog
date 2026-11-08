@@ -50,6 +50,13 @@ async function paused(panel, after = 0) {
     "native engine pause",
     20000,
   );
+  await panel
+    .getByRole("combobox", { name: "Console context", exact: true })
+    .selectOption("worker");
+  await waitFor(
+    () => panel.evaluate((element) => element.debuggerConsoleAvailable),
+    "live Console context",
+  );
   return panel.evaluate((element) => element.pause);
 }
 async function continueExecution(panel) {
@@ -73,12 +80,26 @@ async function surface() {
     "debugger window",
     20000,
   );
-  await panel.locator(".monaco-editor").waitFor();
   await waitFor(() => panel.evaluate((element) => !element.debuggerTransition), "ready debugger");
+  if (await panel.evaluate((element) => element.debuggerTargets.length > 0)) {
+    await panel
+      .getByRole("combobox", { name: "Console context", exact: true })
+      .selectOption("worker");
+  }
   return panel;
 }
 async function closeDebugger(panel) {
   await panel.getByRole("button", { name: "Close debugger and continue execution" }).click();
+}
+async function scratchRun(panel, expression, expected) {
+  const prompt = panel.getByRole("textbox", { name: "Immediate expression", exact: true });
+  await prompt.fill(expression);
+  await prompt.press("Enter");
+  await panel
+    .locator(".console-output .command")
+    .last()
+    .getByText(expected, { exact: true })
+    .waitFor();
 }
 const invoke = (command, args = {}) =>
   page.evaluate(
@@ -161,14 +182,74 @@ try {
     ),
   );
   const initialDebugger = await surface();
+  assert.equal(
+    await initialDebugger
+      .getByRole("combobox", { name: "Console context", exact: true })
+      .inputValue(),
+    "scratch",
+  );
+  assert.equal(await initialDebugger.getByRole("tab").count(), 0);
+  await scratchRun(initialDebugger, "globalThis.scratchValue = 41", "41");
+  await scratchRun(initialDebugger, "scratchValue + 1", "42");
+  await initialDebugger.getByRole("button", { name: "Clear output", exact: true }).click();
+  await scratchRun(initialDebugger, "scratchValue", "41");
+  evidence.beforeFirstRun = await initialDebugger.evaluate((element) => ({
+    workers: element.debuggerTargets.length,
+    status: element.debuggerStatus,
+    consoleContext: element.debuggerConsoleContext,
+    selectedSources: element.debuggerTabs.length,
+    consoleDraft: element.debuggerInput,
+  }));
+  await initialDebugger.page().screenshot({
+    path: resolve(argument("--output"), "debugger-before-first-run-native.png"),
+  });
   await debuggerButton.waitFor();
-  await initialDebugger.evaluate((element) => element.editor.focus());
-  await initialDebugger.page().keyboard.press("F12");
+  await initialDebugger
+    .getByRole("textbox", { name: "Immediate expression", exact: true })
+    .fill("Keep Scratch across reopen;");
+  try {
+    await initialDebugger.page().keyboard.press("F12");
+  } catch (error) {
+    // WebView2 can close the target before Playwright sends the key release.
+    if (!initialDebugger.page().isClosed()) throw error;
+  }
   await waitFor(() => initialDebugger.page().isClosed(), "F12 closes the debugger window");
   await debuggerButton.waitFor();
   await editor.getByRole("button", { name: "Debug", exact: true }).click();
   await editor.getByRole("button", { name: "Open debugger for live traffic", exact: true }).click();
   const liveDebugger = await surface();
+  assert.equal(
+    await liveDebugger.getByRole("combobox", { name: "Console context", exact: true }).inputValue(),
+    "scratch",
+  );
+  const reopenedPrompt = liveDebugger.getByRole("textbox", {
+    name: "Immediate expression",
+    exact: true,
+  });
+  assert.equal(await reopenedPrompt.inputValue(), "Keep Scratch across reopen;");
+  await reopenedPrompt.press("ArrowUp");
+  assert.equal(await reopenedPrompt.inputValue(), "scratchValue");
+  await reopenedPrompt.press("ArrowDown");
+  assert.equal(await reopenedPrompt.inputValue(), "Keep Scratch across reopen;");
+  await scratchRun(liveDebugger, "scratchValue + 1", "42");
+  const scratchPrompt = liveDebugger.getByRole("textbox", {
+    name: "Immediate expression",
+    exact: true,
+  });
+  await scratchPrompt.fill("Preserve this Scratch draft;");
+  await liveDebugger.getByRole("button", { name: "Reset scratch", exact: true }).click();
+  await liveDebugger.getByText("Scratch reset", { exact: true }).waitFor();
+  assert.equal(await scratchPrompt.inputValue(), "Preserve this Scratch draft;");
+  await scratchRun(liveDebugger, "typeof scratchValue === 'undefined'", "true");
+  evidence.scratch = {
+    usableBeforeScripts: true,
+    variablesPersist: true,
+    clearKeepsVariables: true,
+    closeReopenKeepsVariables: true,
+    closeReopenKeepsDraftAndHistory: true,
+    resetKeepsDraft: true,
+    resetClearsVariables: true,
+  };
   await closeDebugger(liveDebugger);
   await waitFor(() => liveDebugger.page().isClosed(), "live debugger closes");
   await editor.evaluate((element) =>
@@ -421,6 +502,10 @@ try {
                       paused: element.debuggerPaused,
                       pauseNext: element.debuggerPauseNext,
                       closed: element.debuggerClosed,
+                      consoleContext: element.debuggerConsoleContext,
+                      consoleAvailable: element.debuggerConsoleAvailable,
+                      consoleSubmitting: element.debuggerSubmitting,
+                      consoleRows: element.debuggerConsole,
                       session: element.debuggerTarget
                         ? await window.__TAURI_INTERNALS__
                             .invoke("workspace_debug_session", {

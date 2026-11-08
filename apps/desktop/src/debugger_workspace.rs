@@ -35,6 +35,8 @@ pub(super) struct DebuggerWindows(
     Mutex<HashMap<String, Entry>>,
     AtomicBool,
     Mutex<HashMap<String, Presentation>>,
+    // Session-only drafts and transcript; never written to layout preferences.
+    Mutex<HashMap<String, serde_json::Value>>,
 );
 struct Entry {
     paused: std::collections::BTreeSet<String>,
@@ -67,6 +69,7 @@ pub(super) struct ReadyView {
     view_state: serde_json::Value,
     layout: DebuggerLayout,
     watches: Vec<String>,
+    can_open_scripts: bool,
 }
 impl DebuggerWindows {
     fn owner(&self, surface: &str) -> String {
@@ -86,6 +89,7 @@ impl DebuggerWindows {
     }
     pub fn forget_layout(&self, label: &str) {
         self.2.lock().unwrap().remove(label);
+        self.3.lock().unwrap().remove(label);
     }
     fn placement(&self, owner: &str) -> String {
         self.2
@@ -207,6 +211,7 @@ pub(super) fn command_allowed(command: &str) -> bool {
             | "debugger_seen"
             | "debugger_layout"
             | "debugger_watches"
+            | "debugger_view_state"
             | "acknowledge_debugger"
             | "debugger_workspace"
             | "debugger_file"
@@ -216,6 +221,10 @@ pub(super) fn command_allowed(command: &str) -> bool {
             | "workspace_debug_request"
             | "workspace_debug_command"
             | "workspace_skip_pauses"
+            | "workspace_pause_next"
+            | "scratch_console"
+            | "reset_scratch_console"
+            | "debugger_open_scripts"
             | "workspace_restart"
     )
 }
@@ -352,16 +361,20 @@ pub(super) async fn place_debugger(
     if !["window", "bottom", "right", "closed"].contains(&placement.as_str()) {
         return Err("Unknown debugger placement".into());
     }
-    let view_state = view_state.unwrap_or(serde_json::Value::Null);
-    if serde_json::to_vec(&view_state)
-        .map_err(|e| e.to_string())?
-        .len()
-        > 2 * 1024 * 1024
-    {
-        return Err("Debugger view state is too large".into());
-    }
+    let supplied_state = view_state.is_some();
+    let mut view_state = view_state.unwrap_or(serde_json::Value::Null);
+    validate_view_state(&view_state)?;
     let windows = app.state::<DebuggerWindows>();
     let owner = windows.owner(window.label());
+    if !supplied_state {
+        view_state = windows
+            .3
+            .lock()
+            .unwrap()
+            .get(&owner)
+            .cloned()
+            .unwrap_or_default();
+    }
     let application = if window.label().starts_with("debugger-") {
         controlled(&window, placement == "closed")?
     } else {
@@ -383,6 +396,9 @@ pub(super) async fn place_debugger(
             |entry| entry.surface.clone(),
         );
     if placement == "closed" {
+        if supplied_state {
+            windows.3.lock().unwrap().insert(owner.clone(), view_state);
+        }
         return close_debugger(&windows, &owner, &window, &app, &application);
     }
     let destination = if placement == "window" {
@@ -604,6 +620,7 @@ pub(super) async fn acknowledge_debugger(
         let _ = old.destroy();
     }
     Ok(ReadyView {
+        can_open_scripts: window.app_handle().get_webview_window("main").is_some(),
         workspace,
         view_state,
         layout: debugger_layout(None, window.clone())?,
@@ -616,11 +633,35 @@ pub(super) fn debugger_workspace(window: tauri::WebviewWindow) -> Result<ReadyVi
         .debugger_workspace()
         .map_err(|e| e.message)?;
     Ok(ReadyView {
+        can_open_scripts: window.app_handle().get_webview_window("main").is_some(),
         workspace,
         view_state: serde_json::Value::Null,
         layout: debugger_layout(None, window.clone())?,
         watches: debugger_watches(None, window)?,
     })
+}
+/// Keeps bounded presentation state across every native close path.
+fn validate_view_state(view_state: &serde_json::Value) -> Result<(), String> {
+    if serde_json::to_vec(view_state)
+        .map_err(|e| e.to_string())?
+        .len()
+        > 2 * 1024 * 1024
+    {
+        return Err("Debugger view state is too large".into());
+    }
+    Ok(())
+}
+#[tauri::command]
+pub(super) fn debugger_view_state(
+    view_state: serde_json::Value,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    validate_view_state(&view_state)?;
+    let windows = window.state::<DebuggerWindows>();
+    let entries = windows.0.lock().unwrap();
+    let owner = presentation_owner(&entries, window.label(), false)?;
+    windows.3.lock().unwrap().insert(owner, view_state);
+    Ok(())
 }
 #[tauri::command]
 pub(super) fn debugger_layout(
@@ -840,6 +881,72 @@ pub(super) fn workspace_skip_pauses(
     controlled(&window, false)?
         .set_workspace_skip_pauses(skip)
         .map_err(|error| error.message)
+}
+
+#[tauri::command]
+pub(super) async fn workspace_pause_next(
+    target: String,
+    enabled: bool,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    let application = controlled(&window, false)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        application
+            .set_workspace_pause_next(&target, enabled)
+            .map_err(|e| e.message)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+pub(super) async fn scratch_console(
+    window: tauri::WebviewWindow,
+) -> Result<transmog_app::ScratchContext, String> {
+    let application = controlled(&window, false)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        application.scratch_console().map_err(|e| e.message)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+pub(super) async fn reset_scratch_console(
+    session: Option<String>,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    let application = controlled(&window, false)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        application
+            .reset_scratch_console(session.as_deref())
+            .map_err(|e| e.message)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+pub(super) fn debugger_open_scripts(window: tauri::WebviewWindow) -> Result<(), String> {
+    controlled(&window, false)?;
+    let windows = window.state::<DebuggerWindows>();
+    let entries = windows.0.lock().unwrap();
+    if !entries
+        .values()
+        .any(|entry| entry.surface == window.label())
+    {
+        return Err("Debugger surface is unavailable".into());
+    }
+    drop(entries);
+    let parent = window
+        .app_handle()
+        .get_webview_window("main")
+        .ok_or("Open Scripts from the main window")?;
+    parent
+        .show()
+        .and_then(|()| parent.set_focus())
+        .map_err(|e| e.to_string())?;
+    window
+        .app_handle()
+        .emit_to(parent.label(), "debugger-open-scripts", ())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 export async function checkDebuggerProperties(page, workspace, root) {
   const prompt = workspace.getByRole("textbox", { name: "Immediate expression", exact: true });
   const showSample = async () => {
-    await workspace.getByRole("button", { name: "Clear", exact: true }).click();
+    await workspace.getByRole("button", { name: "Clear output", exact: true }).click();
     await prompt.fill("sample");
     await workspace.getByRole("button", { name: "Run", exact: true }).click();
     const result = workspace
@@ -163,6 +163,6 @@ export async function checkDebuggerProperties(page, workspace, root) {
       delete globalThis.__workspaceFixture.workspaceDebug.propertyInventory;
       delete globalThis.__workspaceFixture.workspaceDebug.rejectPropertyRead;
     });
-    await workspace.getByRole("button", { name: "Clear", exact: true }).click();
+    await workspace.getByRole("button", { name: "Clear output", exact: true }).click();
   }
 }

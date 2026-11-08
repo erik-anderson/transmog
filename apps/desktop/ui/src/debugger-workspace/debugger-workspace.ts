@@ -52,6 +52,10 @@ interface DebuggerLayout {
   consoleVisible: boolean;
 }
 interface View {
+  canOpenScripts?: boolean;
+  scratch?: { info: DebugSessionInfo } | null;
+  pauseTarget?: string;
+  pausePending?: boolean;
   skipPauses?: boolean;
   focus?: string | null;
   theme?: string;
@@ -64,6 +68,8 @@ interface View {
   watches?: string[];
 }
 interface SavedView {
+  consoleContext?: string;
+  consoleDrafts?: Array<[string, { input: string; history: ConsoleHistoryState }]>;
   consoleHistory?: ConsoleHistoryState;
   consoleLevel?: string;
   consoleFilter?: string;
@@ -93,6 +99,7 @@ interface SavedView {
   historyIndex?: number;
 }
 interface ConsoleRow {
+  context?: string;
   generation?: number;
   id: number;
   input: string;
@@ -140,6 +147,20 @@ export class DebuggerWorkspace extends WebUIElement {
   @observable debuggerInspectorShare = "22%";
   @observable debuggerCompact = false;
   @observable debuggerCompactPane = "source";
+  @observable debuggerCompactPressed: Record<string, boolean> = {
+    source: true,
+    sources: false,
+    inspector: false,
+  };
+  debuggerCompactPaneChanged(): void {
+    // ARIA attributes need serialized values rather than template conditions.
+    this.debuggerCompactPressed = Object.fromEntries(
+      Object.keys(this.debuggerCompactPressed).map((pane) => [
+        pane,
+        pane === this.debuggerCompactPane,
+      ]),
+    );
+  }
   @observable debuggerNavigationTitle = "Open source";
   @observable debuggerNavigationQuery = "";
   @observable debuggerNavigationStatus = "";
@@ -160,6 +181,21 @@ export class DebuggerWorkspace extends WebUIElement {
   @observable debuggerWorkerOptions: Array<DebugSessionInfo & { state: string }> = [];
   @observable debuggerSkipPauses = false;
   @observable debuggerPauseNext = false;
+  @observable debuggerPauseTarget = "any";
+  @observable debuggerPauseTargetAvailable = true;
+  @observable debuggerConsoleContext = "scratch";
+  @observable debuggerConsoleAvailable = true;
+  @observable debuggerConsoleHint = "";
+  @observable debuggerConsoleWorkerLabel = "Selected worker";
+  @observable debuggerScratchBusy = false;
+  private scratch: DebugSessionInfo | null = null;
+  private consoleRevision = 0;
+  private scratchEpoch = 0;
+  private evaluationRevision = 0;
+  private evaluationContext: string | null = null;
+  private retiredScratch = new Set<string>();
+  private consoleDrafts = new Map<string, { input: string; history: ConsoleHistoryState }>();
+  private scratchOperation: Promise<unknown> | null = null;
   @observable debuggerControlSubmitting = false;
   @observable debuggerPauseButton = "Pause next callback (F8)";
   @observable debuggerPauseIcon = "pause";
@@ -170,6 +206,8 @@ export class DebuggerWorkspace extends WebUIElement {
   @observable debuggerConditionTitle = "Breakpoint condition";
   @observable debuggerTarget = "";
   @observable debuggerSourceLabel = "Select a source";
+  @observable debuggerSourceLoading = false;
+  @observable debuggerCanOpenScripts = false;
   @observable debuggerStatus = "Attaching debugger…";
   @observable debuggerPaused = false;
   @observable debuggerClosed = true;
@@ -364,8 +402,9 @@ export class DebuggerWorkspace extends WebUIElement {
     if (selected) {
       this.shadowRoot?.getElementById(`source-tab-${selected.key}`)?.focus();
     } else {
-      this.editor?.focus();
+      this.viewMenuButton.focus();
     }
+    this.rememberView();
   }
   async tabsKey(event: KeyboardEvent): Promise<void> {
     if (
@@ -549,6 +588,200 @@ export class DebuggerWorkspace extends WebUIElement {
       frame: this.debuggerPaused ? this.debuggerFrame : null,
     };
   }
+  private consoleScope(): InspectionScope {
+    return this.debuggerConsoleContext === "scratch"
+      ? {
+          session: this.scratch?.session ?? "",
+          pause: 0,
+          frame: null,
+          generation: this.views.get(this.scratch?.session ?? "")?.stream.valueGeneration ?? 0,
+        }
+      : this.inspectionScope();
+  }
+  private updateConsoleState(): void {
+    const target = this.debuggerTargets.find((target) => target.session === this.debuggerTarget);
+    const stream = this.views.get(this.debuggerTarget)?.stream;
+    this.debuggerConsoleWorkerLabel = target
+      ? `${target.label} · ${stream?.closed ? "ended" : this.debuggerPaused ? "selected frame" : "global"}`
+      : "No script running";
+    if (this.debuggerConsoleContext === "scratch") {
+      const ended = !!this.scratch && !!this.views.get(this.scratch.session)?.stream.closed;
+      this.debuggerConsoleAvailable = !ended && !this.debuggerScratchBusy;
+      this.debuggerConsoleHint = this.debuggerScratchBusy
+        ? "Resetting Scratch…"
+        : ended
+          ? "Scratch ended. Choose Reset scratch to start fresh."
+          : "";
+    } else {
+      this.debuggerConsoleAvailable = !!target && !!stream && !stream.closed;
+      this.debuggerConsoleHint = !target
+        ? "Choose Scratch or run a script to use Console."
+        : stream?.closed
+          ? "This worker ended. Choose Scratch or another worker."
+          : "";
+    }
+  }
+  consoleContextChanged(event: Event): void {
+    this.consoleDrafts.set(this.debuggerConsoleContext, {
+      input: this.debuggerInput,
+      history: this.commandHistory.snapshot(),
+    });
+    this.debuggerConsoleContext = (event.target as HTMLSelectElement).value;
+    const draft = this.consoleDrafts.get(this.debuggerConsoleContext);
+    this.debuggerInput = draft?.input ?? "";
+    this.commandHistory.restore(draft?.history ?? { entries: [], index: 0, draft: "" });
+    this.closeCompletions();
+    this.updateConsoleState();
+    this.updateConsoleFeed();
+    this.rememberView();
+  }
+  async openScripts(): Promise<void> {
+    try {
+      await invoke("debugger_open_scripts");
+    } catch (error) {
+      this.debuggerError = describeError(error);
+    }
+  }
+  focusScratch(): void {
+    if (this.debuggerConsoleContext !== "scratch") {
+      this.consoleDrafts.set(this.debuggerConsoleContext, {
+        input: this.debuggerInput,
+        history: this.commandHistory.snapshot(),
+      });
+      this.debuggerConsoleContext = "scratch";
+      const saved = this.consoleDrafts.get("scratch");
+      this.debuggerInput = saved?.input ?? "";
+      this.commandHistory.restore(saved?.history ?? { entries: [], index: 0, draft: "" });
+    }
+    this.debuggerConsoleVisible = true;
+    this.closeCompletions();
+    this.updateConsoleState();
+    this.$flushUpdates();
+    this.consolePrompt.focus();
+    void this.saveLayout();
+    this.rememberView();
+  }
+  private async ensureScratch(): Promise<DebugSessionInfo> {
+    if (this.scratch && !this.views.get(this.scratch.session)?.stream.closed) {
+      return this.scratch;
+    }
+    const revision = this.consoleRevision;
+    const result = await invoke<{ info: DebugSessionInfo }>("scratch_console");
+    if (!this.isConnected || revision !== this.consoleRevision) {
+      throw new Error("Scratch context changed");
+    }
+    this.scratch = result.info;
+    const view = await invoke<DebugSessionView>("workspace_debug_session", {
+      session: result.info.session,
+      after: 0,
+    });
+    if (!this.isConnected || revision !== this.consoleRevision) {
+      throw new Error("Scratch context changed");
+    }
+    this.views.set(result.info.session, view);
+    return result.info;
+  }
+  private retireScratch(session: string): void {
+    this.retiredScratch.add(session);
+    while (this.retiredScratch.size > 32) {
+      this.retiredScratch.delete(this.retiredScratch.values().next().value!);
+    }
+    if (this.scratch?.session === session) {
+      this.scratch = null;
+    }
+  }
+  async resetScratch(): Promise<void> {
+    if (this.debuggerConsoleContext !== "scratch" || this.debuggerScratchBusy) {
+      return;
+    }
+    const focus = this.activeElement();
+    ++this.consoleRevision;
+    if (this.evaluationContext === "scratch") {
+      ++this.evaluationRevision;
+      this.evaluationContext = null;
+      this.debuggerSubmitting = false;
+      this.evaluationSubmission = null;
+    }
+    this.debuggerScratchBusy = true;
+    this.closeCompletions();
+    const previous = this.scratch?.session;
+    const pendingRows = new Set(
+      this.debuggerConsole
+        .filter((row) => row.session === previous && row.output === "Running…")
+        .map((row) => row.id),
+    );
+    this.updateConsoleState();
+    const operation = invoke("reset_scratch_console", { session: previous ?? null });
+    this.scratchOperation = operation;
+    try {
+      await operation;
+      if (!this.isConnected) {
+        return;
+      }
+      ++this.scratchEpoch;
+      if (previous) {
+        this.retireScratch(previous);
+        this.views.delete(previous);
+        this.cursors.delete(previous);
+        this.eventCursors.delete(previous);
+        for (const [key] of this.requests) {
+          if (key.startsWith(`${previous}/`)) {
+            this.requests.delete(key);
+          }
+        }
+      }
+      this.scratch = null;
+      this.inspection.expire();
+      this.debuggerConsole = this.debuggerConsole.map((row) =>
+        pendingRows.has(row.id)
+          ? { ...row, output: "Cancelled by Reset scratch", thrown: false }
+          : row,
+      );
+      this.debuggerConsole = [
+        ...this.debuggerConsole,
+        {
+          id: ++this.serial,
+          input: "",
+          output: "Scratch reset",
+          thrown: false,
+          time: Date.now(),
+          label: "Scratch",
+          context: "scratch",
+        },
+      ];
+      this.trimConsole();
+      this.inspectionChanged();
+      if (this.debuggerConsoleContext === "scratch") {
+        this.debuggerError = "";
+      }
+    } catch (error) {
+      const confirmedRows = new Set(this.requests.values());
+      this.debuggerConsole = this.debuggerConsole.map((row) =>
+        pendingRows.has(row.id) && !confirmedRows.has(row.id)
+          ? { ...row, output: "Command reply unavailable after reset failed", thrown: false }
+          : row,
+      );
+      this.updateConsoleFeed();
+      if (this.isConnected && this.debuggerConsoleContext === "scratch") {
+        this.debuggerError = describeError(error);
+      }
+    } finally {
+      if (this.scratchOperation === operation) {
+        this.scratchOperation = null;
+      }
+      this.debuggerScratchBusy = false;
+      this.updateConsoleState();
+      this.rememberView();
+      this.$flushUpdates();
+      if (
+        this.isConnected &&
+        this.debuggerConsoleContext === "scratch" &&
+        this.activeElement() === focus
+      ) {
+        this.consolePrompt.focus();
+      }
+    }
+  }
   private validInspection(scope: InspectionScope): boolean {
     const stream = this.views.get(scope.session)?.stream;
     const event = stream?.paused?.event;
@@ -613,6 +846,7 @@ export class DebuggerWorkspace extends WebUIElement {
   }
   watchInput(event: Event): void {
     this.debuggerWatchInput = (event.target as HTMLInputElement).value;
+    this.rememberView();
   }
   async addWatch(event: Event): Promise<void> {
     event.preventDefault();
@@ -620,6 +854,7 @@ export class DebuggerWorkspace extends WebUIElement {
     if (await this.addWatchExpression(draft.trim())) {
       if (this.debuggerWatchInput === draft) {
         this.debuggerWatchInput = "";
+        this.rememberView();
       }
     }
   }
@@ -676,6 +911,7 @@ export class DebuggerWorkspace extends WebUIElement {
         return false;
       } finally {
         this.debuggerWatchSaving = false;
+        this.rememberView();
       }
     })();
     return this.watchEdit;
@@ -697,6 +933,7 @@ export class DebuggerWorkspace extends WebUIElement {
     }
     this.debuggerWatchEditing = id;
     this.debuggerWatchDraft = watch.expression;
+    this.rememberView();
     this.$flushUpdates();
     const input = this.shadowRoot?.querySelector<HTMLTextAreaElement>(".watch-edit textarea");
     input?.focus();
@@ -704,6 +941,7 @@ export class DebuggerWorkspace extends WebUIElement {
   }
   editWatchInput(event: Event): void {
     this.debuggerWatchDraft = (event.target as HTMLTextAreaElement).value;
+    this.rememberView();
   }
   cancelWatchEdit(): void {
     if (this.debuggerWatchSaving) {
@@ -712,6 +950,7 @@ export class DebuggerWorkspace extends WebUIElement {
     const id = this.debuggerWatchEditing;
     this.debuggerWatchEditing = 0;
     this.debuggerWatchDraft = "";
+    this.rememberView();
     this.$flushUpdates();
     this.shadowRoot?.querySelector<HTMLButtonElement>(`[data-watch-edit="${id}"]`)?.focus();
   }
@@ -911,7 +1150,7 @@ export class DebuggerWorkspace extends WebUIElement {
       this.debuggerCompletions = [];
       return;
     }
-    const scope = this.inspectionScope();
+    const scope = this.consoleScope();
     const event = await this.inspection.request(
       { kind: "complete", expression: match[0], pause: scope.pause, frame: scope.frame },
       scope,
@@ -920,8 +1159,8 @@ export class DebuggerWorkspace extends WebUIElement {
       generation !== this.completionGeneration ||
       input !== this.debuggerInput ||
       end !== this.consolePrompt.selectionStart ||
-      scope.session !== this.debuggerTarget ||
-      scope.frame !== this.inspectionScope().frame
+      scope.session !== this.consoleScope().session ||
+      scope.frame !== this.consoleScope().frame
     ) {
       return;
     }
@@ -950,6 +1189,7 @@ export class DebuggerWorkspace extends WebUIElement {
       this.completionStart + name.length,
       this.completionStart + name.length,
     );
+    this.rememberView();
   }
   completionMouse(event: MouseEvent): void {
     event.preventDefault();
@@ -1054,8 +1294,10 @@ export class DebuggerWorkspace extends WebUIElement {
       this.sourceGroups.set(group.key, !details.open);
     }
   }
-  sourceGroupToggled(group: { key: string }, event: Event): void {
-    this.sourceGroups.set(group.key, (event.target as HTMLDetailsElement).open);
+  sourceGroupToggled(group: SourceNode, event: Event): void {
+    group.open = (event.target as HTMLDetailsElement).open;
+    this.sourceGroups.set(group.key, group.open);
+    this.rememberView();
   }
   private points: Point[] = [];
   private positions = new Map<number, SourceLocation>();
@@ -1098,6 +1340,107 @@ export class DebuggerWorkspace extends WebUIElement {
     this.addEventListener("keydown", this.shortcutListener, true);
     void this.start();
   }
+  private editorStartup: Promise<void> | null = null;
+  private async ensureEditor(): Promise<void> {
+    if (this.editor) {
+      return;
+    }
+    this.editorStartup ??= this.createEditor();
+    try {
+      await this.editorStartup;
+    } finally {
+      if (!this.editor) {
+        this.editorStartup = null;
+      }
+    }
+  }
+  private async createEditor(): Promise<void> {
+    const version = this.generation;
+    const { monaco } = await loadMonaco();
+    await waitForStyles(this.sourceStyles);
+    if (!this.isConnected || version !== this.generation) {
+      return;
+    }
+    this.monaco = monaco;
+    this.editor = monaco.editor.create(this.sourceHost, {
+      readOnly: true,
+      renderValidationDecorations: "off",
+      automaticLayout: true,
+      glyphMargin: true,
+      minimap: { enabled: false },
+      ariaLabel: "Debugger source",
+      theme:
+        this.theme === "dark" ||
+        (this.theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches)
+          ? "vs-dark"
+          : "vs",
+      tabFocusMode: true,
+    });
+    this.decorations = this.editor.createDecorationsCollection();
+    this.continueContext = this.editor.createContextKey("debuggerCanContinue", false);
+    this.installHover();
+    this.editor.onMouseDown((event) => {
+      if (
+        (event.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN ||
+          event.target.type === monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS) &&
+        event.event.leftButton &&
+        event.target.position
+      ) {
+        void this.toggle(event.target.position.lineNumber);
+      }
+    });
+    this.editor.onContextMenu((event) => {
+      if (
+        event.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN ||
+        event.target.type === monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS
+      ) {
+        if (event.target.position) {
+          this.editor?.setPosition(event.target.position);
+        }
+        this.editor?.focus();
+        void this.editor?.getAction("editor.action.showContextMenu")?.run();
+      }
+    });
+    for (const [id, label, run] of [
+      ["breakpoint", "Toggle breakpoint", () => this.toggle(this.line())],
+      ["condition", "Add or edit conditional breakpoint", () => this.condition(this.line())],
+      ["logpoint", "Add or edit logpoint", () => this.condition(this.line(), "log")],
+      ["disable", "Enable or disable breakpoint", () => this.disable(this.line())],
+    ] as const) {
+      this.addEditorAction({
+        id: `debugger.${id}`,
+        label,
+        contextMenuGroupId: "debugger",
+        run: () => {
+          void run();
+        },
+      });
+    }
+    this.addEditorAction({
+      id: "debugger.continueTo",
+      label: "Continue to here",
+      contextMenuGroupId: "debugger",
+      precondition: "debuggerCanContinue",
+      run: () => {
+        void this.continueTo(this.line());
+      },
+    });
+    this.addEditorAction({
+      id: "debugger.watchSelection",
+      label: "Add selection to Watch",
+      contextMenuGroupId: "debugger.inspection",
+      precondition: "editorHasSelection",
+      run: () => this.watchSelection(),
+    });
+    this.addEditorAction({
+      id: "debugger.evaluateSelection",
+      label: "Evaluate selection in Console",
+      contextMenuGroupId: "debugger.inspection",
+      precondition: "editorHasSelection",
+      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyE],
+      run: () => this.evaluateSelection(),
+    });
+  }
   private async start(): Promise<void> {
     const version = ++this.generation;
     const focus = this.activeElement();
@@ -1116,86 +1459,6 @@ export class DebuggerWorkspace extends WebUIElement {
       }
       this.apply(view);
       this.applyLayout(view.layout);
-      const { monaco } = await loadMonaco();
-      await waitForStyles(this.sourceStyles);
-      if (!this.isConnected || version !== this.generation) {
-        return;
-      }
-      this.monaco = monaco;
-      this.editor = monaco.editor.create(this.sourceHost, {
-        readOnly: true,
-        renderValidationDecorations: "off",
-        automaticLayout: true,
-        glyphMargin: true,
-        minimap: { enabled: false },
-        ariaLabel: "Debugger source",
-        theme: matchMedia("(prefers-color-scheme: dark)").matches ? "vs-dark" : "vs",
-        tabFocusMode: true,
-      });
-      this.decorations = this.editor.createDecorationsCollection();
-      this.continueContext = this.editor.createContextKey("debuggerCanContinue", false);
-      this.installHover();
-      this.editor.onMouseDown((event) => {
-        if (
-          (event.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN ||
-            event.target.type === monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS) &&
-          event.event.leftButton &&
-          event.target.position
-        ) {
-          void this.toggle(event.target.position.lineNumber);
-        }
-      });
-      this.editor.onContextMenu((event) => {
-        if (
-          event.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN ||
-          event.target.type === monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS
-        ) {
-          if (event.target.position) {
-            this.editor?.setPosition(event.target.position);
-          }
-          this.editor?.focus();
-          void this.editor?.getAction("editor.action.showContextMenu")?.run();
-        }
-      });
-      for (const [id, label, run] of [
-        ["breakpoint", "Toggle breakpoint", () => this.toggle(this.line())],
-        ["condition", "Add or edit conditional breakpoint", () => this.condition(this.line())],
-        ["logpoint", "Add or edit logpoint", () => this.condition(this.line(), "log")],
-        ["disable", "Enable or disable breakpoint", () => this.disable(this.line())],
-      ] as const) {
-        this.addEditorAction({
-          id: `debugger.${id}`,
-          label,
-          contextMenuGroupId: "debugger",
-          run: () => {
-            void run();
-          },
-        });
-      }
-      this.addEditorAction({
-        id: "debugger.continueTo",
-        label: "Continue to here",
-        contextMenuGroupId: "debugger",
-        precondition: "debuggerCanContinue",
-        run: () => {
-          void this.continueTo(this.line());
-        },
-      });
-      this.addEditorAction({
-        id: "debugger.watchSelection",
-        label: "Add selection to Watch",
-        contextMenuGroupId: "debugger.inspection",
-        precondition: "editorHasSelection",
-        run: () => this.watchSelection(),
-      });
-      this.addEditorAction({
-        id: "debugger.evaluateSelection",
-        label: "Evaluate selection in Console",
-        contextMenuGroupId: "debugger.inspection",
-        precondition: "editorHasSelection",
-        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyE],
-        run: () => this.evaluateSelection(),
-      });
       const ready = await invoke<View>("acknowledge_debugger");
       if (!this.isConnected || version !== this.generation) {
         return;
@@ -1218,18 +1481,28 @@ export class DebuggerWorkspace extends WebUIElement {
         this.debuggerFrame = saved.frame;
         this.restoreFrame = saved.frame;
         this.requests = new Map(saved.requests ?? []);
+        const retainedSessions = new Set([
+          ...ready.targets.map((target) => target.session),
+          ...(ready.scratch ? [ready.scratch.info.session] : []),
+        ]);
+        const pendingRows = new Set([...this.requests.values()]);
         this.lastFocus = saved.focus ?? null;
         this.debuggerInput = saved.input;
+        this.debuggerConsoleContext = saved.consoleContext ?? "worker";
+        this.consoleDrafts = new Map(saved.consoleDrafts ?? []);
         this.pendingConsoleValues = saved.console.filter(
           (row) => row.value?.value.handle && !row.value.expired,
         );
         this.debuggerConsole = saved.console.map((row) =>
-          row.value
-            ? {
-                ...row,
-                value: { ...row.value, expired: true, expanded: false, rows: [], loading: false },
-              }
-            : row,
+          row.output === "Running…" &&
+          (!row.session || !retainedSessions.has(row.session) || !pendingRows.has(row.id))
+            ? { ...row, output: "Command reply unavailable after closing debugger", thrown: false }
+            : row.value
+              ? {
+                  ...row,
+                  value: { ...row.value, expired: true, expanded: false, rows: [], loading: false },
+                }
+              : row,
         );
         this.pendingValueLeases = saved.valueLeases ?? [];
         this.logpointRows = saved.logpoints ?? [];
@@ -1269,12 +1542,12 @@ export class DebuggerWorkspace extends WebUIElement {
         }
         this.pendingConsoleScroll = saved.scroll ?? 0;
       }
-      const first =
-        this.files.find(
-          (file) => file.id === ready.viewState?.file && file.artifact === ready.viewState.artifact,
-        ) ??
-        this.files.find((file) => file.language === "typescript") ??
-        this.files[0];
+      if (!ready.viewState) {
+        this.debuggerConsoleContext = ready.targets.length ? "worker" : "scratch";
+      }
+      const first = this.files.find(
+        (file) => file.id === ready.viewState?.file && file.artifact === ready.viewState.artifact,
+      );
       if (first) {
         await this.openFile(first);
       }
@@ -1296,12 +1569,26 @@ export class DebuggerWorkspace extends WebUIElement {
         this.debuggerTransition = "";
         this.$flushUpdates();
         if (restoreFocus) {
-          this.editor?.focus();
+          if (this.editor) {
+            this.editor.focus();
+          } else if (this.debuggerConsoleVisible) {
+            this.consolePrompt.focus();
+          } else {
+            this.viewMenuButton.focus();
+          }
         }
       }
     }
   }
   private apply(view: View): void {
+    this.debuggerCanOpenScripts = view.canOpenScripts ?? false;
+    if (!this.debuggerScratchBusy) {
+      this.scratch =
+        view.scratch && !this.retiredScratch.has(view.scratch.info.session)
+          ? view.scratch.info
+          : null;
+    }
+    this.debuggerPauseTarget = view.pauseTarget ?? "any";
     this.debuggerSkipPauses = view.skipPauses ?? false;
     if (view.focus && view.focus !== this.lastFocus) {
       this.lastFocus = view.focus;
@@ -1341,6 +1628,7 @@ export class DebuggerWorkspace extends WebUIElement {
     }
     this.busy = true;
     const generation = this.generation;
+    const consoleRevision = this.consoleRevision;
     const pointRevision = this.pointEditRevision;
     const consoleScroll = this.consoleOutput.scrollTop;
     const follow =
@@ -1351,8 +1639,16 @@ export class DebuggerWorkspace extends WebUIElement {
     try {
       const workspace = await invoke<View>("debugger_workspace");
       const breakpointKey = JSON.stringify(workspace.breakpoints);
+      const targets = [
+        ...workspace.targets,
+        ...(!this.debuggerScratchBusy &&
+        workspace.scratch &&
+        !this.retiredScratch.has(workspace.scratch.info.session)
+          ? [workspace.scratch.info]
+          : []),
+      ];
       const replies = await Promise.all(
-        workspace.targets.map(async (target) => ({
+        targets.map(async (target) => ({
           target,
           view: await invoke<DebugSessionView>("workspace_debug_session", {
             session: target.session,
@@ -1365,6 +1661,7 @@ export class DebuggerWorkspace extends WebUIElement {
       if (
         !this.isConnected ||
         generation !== this.generation ||
+        consoleRevision !== this.consoleRevision ||
         pointRevision !== this.pointEditRevision ||
         this.debuggerSubmitting ||
         this.debuggerControlSubmitting ||
@@ -1641,7 +1938,10 @@ export class DebuggerWorkspace extends WebUIElement {
       this.inspection.expire();
       this.inspectionChanged();
       for (const id of this.views.keys()) {
-        if (!workspace.targets.some((target) => target.session === id)) {
+        if (
+          !targets.some((target) => target.session === id) &&
+          !(this.debuggerScratchBusy && id === this.scratch?.session)
+        ) {
           this.views.delete(id);
           this.cursors.delete(id);
           this.eventCursors.delete(id);
@@ -1663,7 +1963,7 @@ export class DebuggerWorkspace extends WebUIElement {
             : this.views.get(this.debuggerTarget)?.stream.active
               ? "Running · breakpoints armed"
               : "Idle · breakpoints armed"
-          : "Waiting for a worker";
+          : "Ready · waiting for script execution";
         this.debuggerScope = this.views.get(this.debuggerTarget)?.stream.closed
           ? "Worker ended"
           : "Global";
@@ -1682,7 +1982,8 @@ export class DebuggerWorkspace extends WebUIElement {
         : "";
       this.debuggerRequestUrl = request?.url ?? "";
       if (this.pauseControl?.session !== this.debuggerTarget || this.debuggerClosed) {
-        this.debuggerPauseNext = !this.debuggerClosed && (selectedStream?.pauseNext ?? false);
+        this.debuggerPauseNext =
+          workspace.pausePending ?? (!this.debuggerClosed && (selectedStream?.pauseNext ?? false));
       }
       this.debuggerPauseButton = this.debuggerPaused
         ? "Continue (F8)"
@@ -1705,6 +2006,10 @@ export class DebuggerWorkspace extends WebUIElement {
                   : "Idle",
         };
       });
+      this.debuggerPauseTargetAvailable =
+        this.debuggerPauseTarget === "any" ||
+        (!!this.views.get(this.debuggerPauseTarget) &&
+          !this.views.get(this.debuggerPauseTarget)!.stream.closed);
       if (!this.debuggerPaused && !this.debuggerClosed) {
         this.debuggerStatus = this.debuggerPauseNext
           ? "Pause scheduled for next callback"
@@ -1713,6 +2018,13 @@ export class DebuggerWorkspace extends WebUIElement {
             ? "Updating pause settings…"
             : `${selectedStream?.active ? "Running" : "Idle"} · ${this.debuggerSkipPauses ? "pauses skipped" : "breakpoints armed"}`;
       }
+      if (!this.debuggerPaused && this.debuggerPauseNext) {
+        this.debuggerStatus =
+          this.debuggerPauseTarget === "any"
+            ? "Waiting for next callback · any script or extension"
+            : "Pause scheduled for next callback";
+      }
+      this.updateConsoleState();
       const outcome = this.views.get(this.debuggerTarget)?.outcome;
       this.debuggerSummary = outcome?.summary ?? "";
       this.debuggerResult =
@@ -1736,6 +2048,7 @@ export class DebuggerWorkspace extends WebUIElement {
       } else if (follow && this.consoleOutput.scrollTop === consoleScroll) {
         this.consoleOutput.scrollTop = this.consoleOutput.scrollHeight;
       }
+      this.rememberView();
     } catch (error) {
       if (this.isConnected) {
         this.debuggerError = describeError(error);
@@ -1763,6 +2076,15 @@ export class DebuggerWorkspace extends WebUIElement {
     const generation = ++this.sourceGeneration;
     try {
       const text = await invoke<string>("debugger_file", { id: file.id, artifact: file.artifact });
+      if (!this.isConnected || generation !== this.sourceGeneration) {
+        return false;
+      }
+      if (!this.editor) {
+        this.debuggerCompactPane = "source";
+        this.debuggerSourceLoading = true;
+        this.$flushUpdates();
+      }
+      await this.ensureEditor();
       if (
         !this.isConnected ||
         generation !== this.sourceGeneration ||
@@ -1817,12 +2139,18 @@ export class DebuggerWorkspace extends WebUIElement {
       this.shadowRoot
         ?.getElementById(`source-tab-${key}`)
         ?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      this.rememberView();
       return true;
     } catch (error) {
       if (this.isConnected && generation === this.sourceGeneration) {
         this.debuggerError = describeError(error);
       }
       return false;
+    } finally {
+      if (this.isConnected && generation === this.sourceGeneration) {
+        this.debuggerSourceLoading = false;
+        this.$flushUpdates();
+      }
     }
   }
   async switchRepresentation(event: Event): Promise<void> {
@@ -1999,6 +2327,7 @@ export class DebuggerWorkspace extends WebUIElement {
     this.diagnostics?.clearLogs();
     this.consoleLogs.clear(this.views.values());
     this.updateConsoleFeed();
+    this.rememberView();
   }
   consoleInteracted(): void {
     this.pendingConsoleScroll = null;
@@ -2010,6 +2339,7 @@ export class DebuggerWorkspace extends WebUIElement {
       this.debuggerConsoleFilter = (event.target as HTMLSelectElement).value;
     }
     this.updateConsoleFeed();
+    this.rememberView();
   }
   async consoleSource(row: ConsoleRow): Promise<void> {
     if (row.source) {
@@ -2068,7 +2398,9 @@ export class DebuggerWorkspace extends WebUIElement {
     this.debuggerFeed = [...logs, ...this.logpointRows, ...this.debuggerConsole]
       .filter(
         (row) =>
-          (this.debuggerConsoleFilter === "all" || row.session === this.debuggerTarget) &&
+          (this.debuggerConsoleFilter === "all" ||
+            row.session === this.consoleScope().session ||
+            (this.debuggerConsoleContext === "scratch" && row.context === "scratch")) &&
           (this.debuggerConsoleLevel === "all" ||
             !row.level ||
             row.level === this.debuggerConsoleLevel),
@@ -2122,10 +2454,9 @@ export class DebuggerWorkspace extends WebUIElement {
       await this.resume("continue");
       return;
     }
-    if (this.debuggerClosed || this.debuggerControlSubmitting) {
+    if (!this.debuggerPauseTargetAvailable || this.debuggerControlSubmitting) {
       return;
     }
-    const session = this.debuggerTarget;
     const enabled = !this.debuggerPauseNext;
     this.debuggerControlSubmitting = true;
     try {
@@ -2133,13 +2464,22 @@ export class DebuggerWorkspace extends WebUIElement {
         await invoke("workspace_skip_pauses", { skip: false });
         this.debuggerSkipPauses = false;
       }
-      const request = await this.action({ kind: "pause-next", enabled }, session);
-      if (request !== undefined) {
-        this.pauseControl = { session, request, enabled };
-        if (session === this.debuggerTarget) {
-          this.debuggerPauseNext = enabled;
-        }
-      }
+      await invoke("workspace_pause_next", { target: this.debuggerPauseTarget, enabled });
+      this.debuggerPauseNext = enabled;
+    } catch (error) {
+      this.debuggerError = describeError(error);
+    } finally {
+      this.debuggerControlSubmitting = false;
+    }
+    await this.refresh();
+  }
+  async pauseTargetChanged(event: Event): Promise<void> {
+    const target = (event.target as HTMLSelectElement).value;
+    this.debuggerControlSubmitting = true;
+    try {
+      await invoke("workspace_pause_next", { target, enabled: false });
+      this.debuggerPauseTarget = target;
+      this.debuggerPauseNext = false;
     } catch (error) {
       this.debuggerError = describeError(error);
     } finally {
@@ -2468,6 +2808,7 @@ export class DebuggerWorkspace extends WebUIElement {
   consoleInput(event: Event): void {
     this.debuggerInput = (event.target as HTMLTextAreaElement).value;
     this.commandHistory.reset();
+    this.rememberView();
     this.closeCompletions();
     window.clearTimeout(this.completionTimer);
     this.completionTimer = window.setTimeout(() => {
@@ -2529,6 +2870,7 @@ export class DebuggerWorkspace extends WebUIElement {
         );
         this.$flushUpdates();
         prompt.setSelectionRange(prompt.value.length, prompt.value.length);
+        this.rememberView();
         return;
       }
     }
@@ -2540,16 +2882,71 @@ export class DebuggerWorkspace extends WebUIElement {
   async evaluate(expression?: string): Promise<void> {
     const draft = this.debuggerInput;
     const input = (expression ?? draft).trim();
-    if (!input || !this.debuggerTarget || this.debuggerClosed || this.debuggerSubmitting) {
+    if (!input || !this.debuggerConsoleAvailable || this.debuggerSubmitting) {
       return;
     }
-    const session = this.debuggerTarget;
+    const context = this.debuggerConsoleContext;
+    const revision = this.consoleRevision;
+    const scratchEpoch = this.scratchEpoch;
+    const submission = ++this.evaluationRevision;
+    this.evaluationContext = context;
+    this.debuggerSubmitting = true;
+    if (context === "scratch") {
+      const operation = this.ensureScratch();
+      this.scratchOperation = operation;
+      try {
+        await operation;
+      } catch (error) {
+        if (this.isConnected && revision === this.consoleRevision) {
+          this.debuggerError = describeError(error);
+        }
+        if (submission === this.evaluationRevision) {
+          this.debuggerSubmitting = false;
+          this.evaluationContext = null;
+        }
+        if (this.scratchOperation === operation) {
+          this.scratchOperation = null;
+        }
+        return;
+      }
+      if (this.scratchOperation === operation) {
+        this.scratchOperation = null;
+      }
+    }
+    if (!this.isConnected || revision !== this.consoleRevision) {
+      if (submission === this.evaluationRevision) {
+        this.debuggerSubmitting = false;
+        this.evaluationContext = null;
+      }
+      return;
+    }
+    const scope =
+      context === "scratch"
+        ? {
+            session: this.scratch!.session,
+            pause: 0,
+            frame: null,
+          }
+        : this.inspectionScope();
+    const session = scope.session;
     const generation = this.generation;
     const id = ++this.serial;
     this.pendingConsoleScroll = null;
     this.debuggerSubmitting = true;
     this.closeCompletions();
-    this.commandHistory.add(input, { preserveNavigation: expression !== undefined });
+    const history =
+      this.debuggerConsoleContext === context ? this.commandHistory : new ConsoleHistory();
+    const savedDraft = this.consoleDrafts.get(context);
+    if (history !== this.commandHistory) {
+      history.restore(savedDraft?.history ?? { entries: [], index: 0, draft: "" });
+    }
+    history.add(input, { preserveNavigation: expression !== undefined });
+    if (history !== this.commandHistory) {
+      this.consoleDrafts.set(context, {
+        input: savedDraft?.input ?? draft,
+        history: history.snapshot(),
+      });
+    }
     this.debuggerConsole = [
       ...this.debuggerConsole,
       {
@@ -2558,25 +2955,33 @@ export class DebuggerWorkspace extends WebUIElement {
         output: "Running…",
         thrown: false,
         session,
-        pause: this.pause,
+        pause: scope.pause,
+        label: context === "scratch" ? "Scratch" : this.debuggerConsoleWorkerLabel,
+        context,
         time: Date.now(),
       },
     ];
     this.trimConsole();
     this.$flushUpdates();
     this.consoleOutput.scrollTop = this.consoleOutput.scrollHeight;
+    let operation: Promise<number> | null = null;
     try {
-      this.evaluationSubmission = this.action(
-        {
+      operation = invoke<number>("workspace_debug_command", {
+        action: {
           kind: "evaluate",
           expression: input,
-          pause: this.pause,
-          frame: this.debuggerPaused ? this.debuggerFrame : null,
+          pause: scope.pause,
+          frame: scope.frame,
         },
         session,
-      );
-      const request = await this.evaluationSubmission;
-      if (!this.isConnected || generation !== this.generation) {
+      });
+      this.evaluationSubmission = operation;
+      const request = await operation;
+      if (
+        !this.isConnected ||
+        generation !== this.generation ||
+        (context === "scratch" && scratchEpoch !== this.scratchEpoch)
+      ) {
         return;
       }
       if (request === undefined) {
@@ -2585,16 +2990,135 @@ export class DebuggerWorkspace extends WebUIElement {
         );
         return;
       }
+      if (
+        this.debuggerConsoleContext === context &&
+        (context !== "scratch" || revision === this.consoleRevision)
+      ) {
+        this.debuggerError = "";
+      }
       if (this.debuggerConsole.some((row) => row.id === id)) {
         this.requests.set(`${session}/${request}`, id);
       }
-      if (expression === undefined && this.debuggerInput === draft) {
+      if (
+        expression === undefined &&
+        (context !== "scratch" || revision === this.consoleRevision) &&
+        this.debuggerConsoleContext === context &&
+        this.debuggerInput === draft
+      ) {
         this.debuggerInput = "";
+      } else if (
+        expression === undefined &&
+        this.debuggerConsoleContext !== context &&
+        (context !== "scratch" || revision === this.consoleRevision)
+      ) {
+        const saved = this.consoleDrafts.get(context);
+        if (saved?.input === draft) {
+          this.consoleDrafts.set(context, { ...saved, input: "" });
+        }
+      }
+    } catch (error) {
+      if (
+        this.isConnected &&
+        generation === this.generation &&
+        (context !== "scratch" || scratchEpoch === this.scratchEpoch)
+      ) {
+        const message = describeError(error);
+        this.debuggerConsole = this.debuggerConsole.map((row) =>
+          row.id === id ? { ...row, output: message, thrown: true } : row,
+        );
+        if (
+          this.debuggerConsoleContext === context &&
+          (context !== "scratch" || revision === this.consoleRevision)
+        ) {
+          this.debuggerError = message;
+        }
       }
     } finally {
-      this.evaluationSubmission = null;
-      this.debuggerSubmitting = false;
+      if (this.evaluationSubmission === operation) {
+        this.evaluationSubmission = null;
+      }
+      if (submission === this.evaluationRevision) {
+        this.debuggerSubmitting = false;
+        this.evaluationContext = null;
+      }
+      this.rememberView();
     }
+  }
+  private snapshotView(): SavedView {
+    this.trimConsole();
+    if (this.selected) {
+      this.states.set(
+        `${this.selected.id}@${this.selected.artifact}`,
+        this.editor?.saveViewState() ?? null,
+      );
+    }
+    return {
+      consoleContext: this.debuggerConsoleContext,
+      consoleDrafts: [...this.consoleDrafts],
+      valueLeases: this.inspection.leases(),
+      logpoints: this.logpointRows,
+      eventCursors: [...this.eventCursors],
+      watches: this.debuggerWatches.map((watch) => watch.expression),
+      watchInput: this.debuggerWatchInput,
+      watchEdit: this.debuggerWatchEditing
+        ? {
+            expression:
+              this.debuggerWatches.find((watch) => watch.id === this.debuggerWatchEditing)
+                ?.expression ?? "",
+            draft: this.debuggerWatchDraft,
+          }
+        : undefined,
+      consoleHistory: this.commandHistory.snapshot(),
+      consoleFilter: this.debuggerConsoleFilter,
+      consoleLevel: this.debuggerConsoleLevel,
+      clearedLogs: this.consoleLogs.snapshot(),
+      groups: [...this.sourceGroups],
+      split: this.debuggerConsoleSplit,
+      file: this.selected?.id,
+      artifact: this.selected?.artifact,
+      target: this.debuggerTarget,
+      focus: this.lastFocus,
+      requests: [...this.requests],
+      frame: this.debuggerFrame,
+      input: this.debuggerInput,
+      console: this.debuggerConsole.map((row) =>
+        row.value
+          ? {
+              ...row,
+              value: { ...row.value, expanded: false, rows: [], loading: false, issue: "" },
+            }
+          : row,
+      ),
+      states: [...this.states].slice(-64),
+      tabs: this.debuggerTabs.map((tab) => tab.key),
+      history: this.history,
+      historyIndex: this.historyIndex,
+      diagnostics: this.diagnostics?.saveView(),
+      scroll: this.consoleOutput.scrollTop,
+    };
+  }
+  private rememberedKey = "";
+  private rememberedView: Promise<void> = Promise.resolve();
+  private rememberView(): void {
+    if (!this.isConnected || this.debuggerTransition) {
+      return;
+    }
+    const viewState = this.snapshotView();
+    const key = JSON.stringify(viewState);
+    if (key === this.rememberedKey) {
+      return;
+    }
+    this.rememberedKey = key;
+    const generation = this.generation;
+    this.rememberedView = this.rememberedView
+      .then(async () => {
+        if (this.isConnected && generation === this.generation && !this.debuggerTransition) {
+          await invoke("debugger_view_state", { viewState });
+        }
+      })
+      .catch(() => {
+        this.rememberedKey = "";
+      });
   }
   async place(placement: string): Promise<void> {
     if (placement !== "closed" && this.debuggerTransition) {
@@ -2605,6 +3129,9 @@ export class DebuggerWorkspace extends WebUIElement {
     try {
       await this.pointEdits;
       await this.watchEdit;
+      if (this.scratchOperation) {
+        await this.scratchOperation.catch(() => {});
+      }
       if (placement !== "closed" && this.evaluationSubmission) {
         // Transfer the console only after its submission can be correlated.
         await this.evaluationSubmission;
@@ -2612,55 +3139,8 @@ export class DebuggerWorkspace extends WebUIElement {
           return;
         }
       }
-      this.trimConsole();
-      if (this.selected) {
-        this.states.set(
-          `${this.selected.id}@${this.selected.artifact}`,
-          this.editor?.saveViewState() ?? null,
-        );
-      }
-      const viewState: SavedView = {
-        valueLeases: this.inspection.leases(),
-        logpoints: this.logpointRows,
-        eventCursors: [...this.eventCursors],
-        watches: this.debuggerWatches.map((watch) => watch.expression),
-        watchInput: this.debuggerWatchInput,
-        watchEdit: this.debuggerWatchEditing
-          ? {
-              expression:
-                this.debuggerWatches.find((watch) => watch.id === this.debuggerWatchEditing)
-                  ?.expression ?? "",
-              draft: this.debuggerWatchDraft,
-            }
-          : undefined,
-        consoleHistory: this.commandHistory.snapshot(),
-        consoleFilter: this.debuggerConsoleFilter,
-        consoleLevel: this.debuggerConsoleLevel,
-        clearedLogs: this.consoleLogs.snapshot(),
-        groups: [...this.sourceGroups],
-        split: this.debuggerConsoleSplit,
-        file: this.selected?.id,
-        artifact: this.selected?.artifact,
-        target: this.debuggerTarget,
-        focus: this.lastFocus,
-        requests: [...this.requests],
-        frame: this.debuggerFrame,
-        input: this.debuggerInput,
-        console: this.debuggerConsole.map((row) =>
-          row.value
-            ? {
-                ...row,
-                value: { ...row.value, expanded: false, rows: [], loading: false, issue: "" },
-              }
-            : row,
-        ),
-        states: [...this.states].slice(-64),
-        tabs: this.debuggerTabs.map((tab) => tab.key),
-        history: this.history,
-        historyIndex: this.historyIndex,
-        diagnostics: this.diagnostics?.saveView(),
-        scroll: this.consoleOutput.scrollTop,
-      };
+      await this.rememberedView;
+      const viewState = this.snapshotView();
       await invoke("place_debugger", { placement, viewState });
     } catch (error) {
       this.debuggerTransition = "";
