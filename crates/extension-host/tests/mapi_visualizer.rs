@@ -50,6 +50,12 @@ async fn mapi_loose_folder_package_roundtrip_keeps_only_declared_runtime_files()
         let source = std::str::from_utf8(&original.files[path]).unwrap();
         assert!(!source.contains("__toCommonJS"), "CommonJS wrapper: {path}");
     }
+    for path in ["dist/runtime/body.js.map", "dist/runtime/headers.js.map"] {
+        assert!(
+            original.files.contains_key(path),
+            "Missing source map: {path}"
+        );
+    }
     let temporary = tempfile::tempdir().unwrap();
     let folder = temporary.path().join("source");
     std::fs::create_dir_all(&folder).unwrap();
@@ -82,7 +88,16 @@ async fn mapi_loose_folder_package_roundtrip_keeps_only_declared_runtime_files()
             registry.install(&archive).unwrap();
         }
         let snapshot = registry.snapshot("test.mapi.roundtrip").unwrap();
-        assert_eq!(snapshot.files.len(), 4);
+        assert_eq!(
+            snapshot.files.keys().collect::<Vec<_>>(),
+            original.files.keys().collect::<Vec<_>>()
+        );
+        for (path, bytes) in &original.files {
+            assert!(
+                snapshot.files[path].as_ref() == bytes.as_ref(),
+                "Changed declared runtime bytes: {path}"
+            );
+        }
         assert!(!snapshot.files.contains_key("author.ts"));
         let runner = Runner::start(
             &HostConfig {
