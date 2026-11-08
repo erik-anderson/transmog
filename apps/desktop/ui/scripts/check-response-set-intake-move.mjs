@@ -496,54 +496,69 @@ export async function checkResponseSetIntakeMove(page, root) {
     results.push({ pendingFailure: fails, newerDraftSaved: true });
   }
   // A detached draft keeps restrictions and actions that guided fields do not expose.
-  await setup(true);
-  const original = (await fixture()).rules[0];
-  await open("new");
-  await review();
-  await choose("discard");
-  await page.evaluate(() => (globalThis.__workspaceFixture.holdCommand = "collect_response_set"));
-  await dialog.getByRole("button", { name: "Move 1 rule", exact: true }).click();
-  await page.waitForFunction(() => !!globalThis.__workspaceFixture.finishHeldCommand);
-  await page.keyboard.press("Escape");
-  await body.fill("new advanced body");
-  await name.fill("Detached full rule");
-  await editor.locator('[name="method"]').selectOption("POST");
-  await editor
-    .getByLabel("Matching address", { exact: true })
-    .fill("https://move.invalid/move-edited?phase=one");
-  await editor.getByText("Request header conditions", { exact: true }).click();
-  await editor.locator('[name="requestHeaders"]').fill("X-Author: newer");
-  await page.evaluate(() => globalThis.__workspaceFixture.finishHeldCommand());
-  await idle();
-  assert.equal((await draft()).id, null);
-  await saveDraft();
-  const preserved = (await fixture()).rules.find(
-      (rule) => rule.displayName === "Detached full rule",
-    ),
-    expectedMatcher = {
-      ...original.matcher,
-      method: "POST",
-      url: { kind: "exact", value: "https://move.invalid/move-edited?phase=one" },
-      requestHeaders: [
-        {
-          name: "X-Author",
-          condition: { kind: "exact", value: [...new TextEncoder().encode("newer")] },
-        },
-        ...original.matcher.requestHeaders.filter((header) => header.condition.kind !== "exact"),
-      ],
-    };
-  assert.ok(preserved);
-  assert.notEqual(preserved.id, original.id);
-  assert.equal(preserved.revision, 1);
-  assert.equal(preserved.enabled, false);
-  assert.equal(await savedBody(preserved), "new advanced body");
-  assert.deepEqual(preserved.matcher, expectedMatcher);
-  assert.deepEqual(preserved.response, original.response);
-  assert.deepEqual(preserved.request, {
-    ...original.request,
-    responseAsset: preserved.request.responseAsset,
-  });
-  results.push({ detachedFullFidelity: true, rule: preserved });
+  for (const headersInitiallyOpen of [true, false]) {
+    await setup(true);
+    const original = (await fixture()).rules[0];
+    await open("new");
+    await review();
+    await choose("discard");
+    await page.evaluate(() => (globalThis.__workspaceFixture.holdCommand = "collect_response_set"));
+    await dialog.getByRole("button", { name: "Move 1 rule", exact: true }).click();
+    await page.waitForFunction(() => !!globalThis.__workspaceFixture.finishHeldCommand);
+    await page.keyboard.press("Escape");
+    await body.fill("new advanced body");
+    await name.fill("Detached full rule");
+    await editor.locator('[name="method"]').selectOption("POST");
+    await editor
+      .getByLabel("Matching address", { exact: true })
+      .fill("https://move.invalid/move-edited?phase=one");
+    await page.evaluate((open) => {
+      const workspace = document.querySelector("app-shell").automation;
+      workspace.requestHeadersOpen = open;
+      workspace.$flushUpdates();
+    }, headersInitiallyOpen);
+    const headers = editor.locator('[name="requestHeaders"]');
+    assert.equal(await headers.isVisible(), headersInitiallyOpen);
+    if (!(await headers.isVisible()))
+      await editor.getByText("Request header conditions", { exact: true }).click();
+    assert.equal(
+      await headers.isVisible(),
+      true,
+      "Request headers should be available for editing",
+    );
+    await headers.fill("X-Author: newer");
+    await page.evaluate(() => globalThis.__workspaceFixture.finishHeldCommand());
+    await idle();
+    assert.equal((await draft()).id, null);
+    await saveDraft();
+    const preserved = (await fixture()).rules.find(
+        (rule) => rule.displayName === "Detached full rule",
+      ),
+      expectedMatcher = {
+        ...original.matcher,
+        method: "POST",
+        url: { kind: "exact", value: "https://move.invalid/move-edited?phase=one" },
+        requestHeaders: [
+          {
+            name: "X-Author",
+            condition: { kind: "exact", value: [...new TextEncoder().encode("newer")] },
+          },
+          ...original.matcher.requestHeaders.filter((header) => header.condition.kind !== "exact"),
+        ],
+      };
+    assert.ok(preserved);
+    assert.notEqual(preserved.id, original.id);
+    assert.equal(preserved.revision, 1);
+    assert.equal(preserved.enabled, false);
+    assert.equal(await savedBody(preserved), "new advanced body");
+    assert.deepEqual(preserved.matcher, expectedMatcher);
+    assert.deepEqual(preserved.response, original.response);
+    assert.deepEqual(preserved.request, {
+      ...original.request,
+      responseAsset: preserved.request.responseAsset,
+    });
+    results.push({ detachedFullFidelity: true, headersInitiallyOpen, rule: preserved });
+  }
   await page.screenshot({ path: resolve(evidence, "round2-newer-source-saved.png") });
   await writeFile(
     resolve(evidence, "round2-move-results.json"),
