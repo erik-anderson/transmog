@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
 import { esbuildProjection } from "@microsoft/webui/projection.js";
 import { buildCredits } from "./scripts/build-credits.mjs";
+import { monacoCompletionLifecycle } from "./scripts/monaco-completion-lifecycle.mjs";
 
 const workingDirectory = fileURLToPath(new URL("./", import.meta.url));
 const outputDirectory = resolve(workingDirectory, "dist");
@@ -55,7 +56,7 @@ const client = await esbuild.build({
   },
   legalComments: "inline",
   loader: { ".ttf": "dataurl" },
-  plugins: [esbuildProjection()],
+  plugins: [esbuildProjection(), monacoCompletionLifecycle()],
 });
 
 const outputs = { ...client.metafile.outputs };
