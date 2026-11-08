@@ -7,6 +7,7 @@ import {
   ModuleResolutionKind,
   ScriptTarget,
   getTypeScriptWorker,
+  getJavaScriptWorker,
   typescriptDefaults,
   javascriptDefaults,
 } from "monaco-editor/languages/features/typescript/register";
@@ -16,6 +17,7 @@ export {
   ModuleResolutionKind,
   ScriptTarget,
   getTypeScriptWorker,
+  getJavaScriptWorker,
   monaco,
   typescriptDefaults,
   javascriptDefaults,

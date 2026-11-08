@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
 
+export async function testInSandbox(scripts) {
+  await scripts.getByRole("button", { name: "Debug", exact: true }).click();
+  await scripts.getByRole("button", { name: "Test in sandbox", exact: true }).click();
+  assert.equal(await scripts.locator("#script-debug-menu").isVisible(), false);
+}
+
 // Shared by browser fixtures and the isolated native WebView2 harness.
 export async function checkScriptApiReference(page, scripts, evidenceRoot) {
   const help = scripts.locator(".script-help-dialog");

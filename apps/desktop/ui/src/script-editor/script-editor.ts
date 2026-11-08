@@ -24,6 +24,7 @@ import type {
 import { describeError, optionalText, parseHeaderLines } from "../utilities.js";
 import {
   activeDraft,
+  authoringDraft,
   editingDraft,
   scriptFingerprint,
   scriptExecutionFingerprint,
@@ -32,6 +33,7 @@ import {
 import type { EditorSurface } from "../editor-surface/editor-surface.js";
 import type * as Monaco from "monaco-editor/editor/editor.api";
 import { loadMonaco, waitForStyles } from "../editor-runtime.js";
+import { handlers, handlerInsertion, type HandlerName, type ScriptAnalysis } from "./handlers.js";
 
 interface ScriptHelpSection {
   id: string;
@@ -45,15 +47,7 @@ interface ScriptHelp {
   failureCategories: string[];
   sections: ScriptHelpSection[];
 }
-const handlerContracts = [
-  ["onRequestHead", "RequestHeadHandler"],
-  ["onRequestBody", "RequestBodyHandler"],
-  ["onResponseHead", "ResponseHeadHandler"],
-  ["onResponseBody", "ResponseBodyHandler"],
-  ["onResponseChunk", "ResponseChunkHandler"],
-  ["onCompleted", "CompletedHandler"],
-  ["onFailed", "FailedHandler"],
-] as const;
+const handlerContracts = handlers.map((item) => [item.name, item.contract] as const);
 const handlerContractSource = [
   'import * as script from "./main";',
   'import type * as api from "transmog:api";',
@@ -101,6 +95,26 @@ interface ValidatedDraft {
 }
 
 export class ScriptEditor extends WorkspaceElement {
+  @observable newScriptDraft = true;
+  @observable sourceEmpty = true;
+  @observable handlerMenuOpen = false;
+  @observable handlerGroups: Array<{
+    label: string;
+    items: Array<{ name: HandlerName; label: string; action: string }>;
+  }> = [];
+  @observable handlerHint = "";
+  @observable handlerSetting = "";
+  handlerButton!: HTMLButtonElement;
+  handlerMenu!: HTMLDivElement;
+  sampleButton!: HTMLButtonElement;
+  private helpOpener: HTMLElement | null = null;
+  private sourceAnalysis: ScriptAnalysis | null = null;
+  private readonly analysisCache = new Map<string, ScriptAnalysis>();
+  private analyzedSource = "";
+  private analyzedLanguage = "";
+  private reviewHandlers: HandlerName[] = [];
+  private sourceEdited = false;
+  private choosingHandler = false;
   @attr theme = "system";
   @attr({ mode: "boolean" }) active = false;
   @observable selection: SelectedResponse | null = null;
@@ -153,7 +167,7 @@ export class ScriptEditor extends WorkspaceElement {
   private diagnosticsVersion = 0;
   @observable scriptBusy = false;
   @observable scriptReady = false;
-  @observable scriptDirty = true;
+  @observable scriptDirty = false;
   @observable scriptUnapplied = true;
   @observable scriptActive = false;
   @observable activeScriptText = "Paused";
@@ -179,7 +193,8 @@ export class ScriptEditor extends WorkspaceElement {
   @observable debugPolicy = "uncaught";
   private debuggerUnlisten: UnlistenFn | null = null;
   private readonly debugSessions = new Set<string>();
-  debugButton!: HTMLButtonElement;
+  debugMenuButton!: HTMLButtonElement;
+  debugMenu!: HTMLDivElement;
   @observable testMode = "callback";
   @observable testFailure = "Upstream";
   @observable scenarioOutcome = "response";
@@ -209,8 +224,8 @@ export class ScriptEditor extends WorkspaceElement {
   scriptTestLocal!: HTMLInputElement;
   scriptTestFailure!: HTMLSelectElement;
   scriptTestHandler!: HTMLSelectElement;
-  scriptMenu!: HTMLDivElement;
-  scriptMore!: HTMLButtonElement;
+  sourceMenu!: HTMLDivElement;
+  sourceButton!: HTMLButtonElement;
   monacoStyles!: HTMLLinkElement;
   scriptForm!: HTMLFormElement;
   scriptEditor!: HTMLDivElement;
@@ -240,7 +255,12 @@ export class ScriptEditor extends WorkspaceElement {
     this.themeChanged();
   };
 
-  openScriptHelp(): void {
+  openScriptHelp(sample = false): void {
+    this.helpOpener = sample ? this.sampleButton : this.scriptHelpButton;
+    if (sample) {
+      this.helpSearch = "Explore the API without changing traffic";
+      this.filterScriptHelp();
+    }
     this.scriptHelpDialog.showModal();
     this.syncApiReference();
     this.scriptHelpSearch.focus();
@@ -259,11 +279,17 @@ export class ScriptEditor extends WorkspaceElement {
   scriptHelpClosed(): void {
     this.disposeApiReference();
     if (this.active && this.isConnected) {
-      this.scriptHelpButton.focus();
+      const opener = this.helpOpener?.getClientRects().length
+        ? this.helpOpener
+        : this.scriptHelpButton;
+      opener.focus();
     }
   }
   searchScriptHelp(event: Event): void {
     this.helpSearch = (event.target as HTMLInputElement).value;
+    this.filterScriptHelp();
+  }
+  private filterScriptHelp(): void {
     const terms = this.helpSearch.toLocaleLowerCase().split(/\s+/).filter(Boolean);
     this.helpSections = this.allHelpSections.filter((section) => {
       const text = [
@@ -412,9 +438,25 @@ export class ScriptEditor extends WorkspaceElement {
       this.scriptUnapplied = true;
       return;
     }
+    const baseline = this.savedDraft ? authoringDraft(this.savedDraft) : this.initialDraft;
+    this.sourceEdited =
+      Boolean(baseline?.sourceEdited) ||
+      draft.source !== (baseline?.source ?? "") ||
+      (draft.retainedSource ?? "") !== (baseline?.retainedSource ?? "") ||
+      JSON.stringify(draft.javascriptHistory ?? []) !==
+        JSON.stringify(baseline?.javascriptHistory ?? []);
+    draft.sourceEdited = this.sourceEdited;
     this.draftScope = trafficScope(draft);
     const fingerprint = scriptFingerprint(draft);
-    this.scriptDirty = fingerprint !== this.savedFingerprint;
+    this.newScriptDraft = this.savedDraft === null;
+    this.sourceEmpty = !this.sourceEditor!.getValue().trim();
+    this.scriptDirty =
+      fingerprint !==
+      (this.savedDraft
+        ? this.savedFingerprint
+        : this.initialDraft
+          ? scriptFingerprint(this.initialDraft)
+          : fingerprint);
     this.scriptUnapplied = scriptExecutionFingerprint(draft) !== this.activeFingerprint;
     this.testHandlers = draft.handlers.map((name) => ({ name }));
     const selectedHandler = this.scriptTestHandler?.value;
@@ -454,8 +496,35 @@ export class ScriptEditor extends WorkspaceElement {
     this.statusKind = "progress";
     try {
       await operation();
+    } catch (error) {
+      this.scriptFailure("Script action could not complete", error);
     } finally {
       this.scriptBusy = false;
+    }
+  }
+  private async runHandlerScript(message: string, operation: () => Promise<void>): Promise<void> {
+    const version = this.editVersion;
+    const root = this.getRootNode() as ShadowRoot;
+    const focused = root.activeElement;
+    let missingHandler = false;
+    await this.runScript(message, async () => {
+      missingHandler = !(await this.requireHandler());
+      if (!this.current(version)) {
+        this.changedDuring("preparation");
+        return;
+      }
+      if (!missingHandler) {
+        await operation();
+      }
+    });
+    if (
+      missingHandler &&
+      this.active &&
+      this.current(version) &&
+      (!root.activeElement || root.activeElement === focused)
+    ) {
+      this.$flushUpdates();
+      this.handlerButton.focus();
     }
   }
   async saveScript(): Promise<void> {
@@ -473,6 +542,8 @@ export class ScriptEditor extends WorkspaceElement {
     this.feedback("Changes discarded. The applied script is unchanged.");
   }
   private applyDraft(draft: ScriptDraft): void {
+    draft = authoringDraft(draft);
+    this.sourceEdited = draft.sourceEdited ?? false;
     this.loadedDraft = structuredClone(draft);
     const set = (name: string, value: string | boolean) => {
       const input = this.scriptForm.elements.namedItem(name) as HTMLInputElement;
@@ -504,8 +575,8 @@ export class ScriptEditor extends WorkspaceElement {
     this.language = draft.language ?? "typescript";
     this.retainedSource = draft.retainedSource ?? null;
     this.setJavaScriptHistory(draft.javascriptHistory ?? []);
-    this.closeComparison();
     this.replaceSource(draft.source, this.language);
+    this.closeComparison();
     this.markScriptChanged();
   }
   async validateScript(event?: Event): Promise<void> {
@@ -514,20 +585,33 @@ export class ScriptEditor extends WorkspaceElement {
       return;
     }
     this.closeMenu();
-    await this.runScript("Validating current source and capabilities…", async () => {
+    await this.runHandlerScript("Validating current source and capabilities…", async () => {
       await this.validateDraft();
     });
   }
-  async testScript(): Promise<void> {
+  async testScript(event?: MouseEvent): Promise<void> {
     if (this.reviewingTypeScript) {
       return;
     }
-    await this.runScript("Checking source and running the sandbox…", () => this.testDraft());
+    if (event) {
+      this.closeMenu(this.debugMenu);
+    }
+    const testVersion = this.testVersion;
+    await this.runHandlerScript("Checking source and running the sandbox…", () =>
+      this.testDraft(false, testVersion),
+    );
   }
-  async debugTest(): Promise<void> {
-    await this.runScript("Checking source and starting debugger…", () => this.testDraft(true));
+  async debugTest(event?: MouseEvent): Promise<void> {
+    if (event) {
+      this.closeMenu(this.debugMenu);
+    }
+    const testVersion = this.testVersion;
+    await this.runHandlerScript("Checking source and starting debugger…", () =>
+      this.testDraft(true, testVersion),
+    );
   }
   async showDebugger(): Promise<void> {
+    this.closeMenu(this.debugMenu);
     try {
       await invoke("open_debugger");
     } catch (error) {
@@ -556,7 +640,7 @@ export class ScriptEditor extends WorkspaceElement {
     }
   }
   async activateScript(): Promise<void> {
-    await this.runScript("Validating and saving changes before activation…", () =>
+    await this.runHandlerScript("Validating and saving changes before activation…", () =>
       this.activateDraft(),
     );
   }
@@ -567,16 +651,16 @@ export class ScriptEditor extends WorkspaceElement {
     this.closeMenu();
     await this.runScript("Preparing comparison…", () => this.compareDraft());
   }
-  private closeMenu(): void {
-    if (this.scriptMenu?.matches(":popover-open")) {
-      this.scriptMenu.hidePopover();
-      this.scriptMore.focus();
+  private menuTrigger(menu: HTMLElement): HTMLButtonElement {
+    if (menu === this.handlerMenu) {
+      return this.handlerButton;
     }
+    return menu === this.debugMenu ? this.debugMenuButton : this.sourceButton;
   }
-  menuClosed(event: ToggleEvent): void {
-    const root = this.getRootNode() as Document | ShadowRoot;
-    if (event.newState === "closed" && this.scriptMenu.contains(root.activeElement)) {
-      this.scriptMore.focus();
+  private closeMenu(menu = this.sourceMenu): void {
+    if (menu?.matches(":popover-open")) {
+      menu.hidePopover();
+      this.menuTrigger(menu).focus();
     }
   }
   closeComparison(): void {
@@ -640,6 +724,9 @@ export class ScriptEditor extends WorkspaceElement {
       this.scheduleRuntimeRefresh();
     } else {
       this.scriptHelpDialog?.close();
+      this.handlerMenu?.hidePopover();
+      this.sourceMenu?.hidePopover();
+      this.debugMenu?.hidePopover();
       this.stopRuntimeRefresh();
     }
   }
@@ -771,7 +858,9 @@ export class ScriptEditor extends WorkspaceElement {
       declarations,
       `file:///transmog-script-api/v${help.apiRevision}.d.ts`,
     );
-    const draft = editingDraft(status);
+    const saved = editingDraft(status);
+    const draft = saved ? authoringDraft(saved) : undefined;
+    this.sourceEdited = draft?.sourceEdited ?? false;
     this.loadedDraft = draft ?? null;
     this.language = draft?.language ?? "typescript";
     this.retainedSource = draft?.retainedSource ?? null;
@@ -779,8 +868,7 @@ export class ScriptEditor extends WorkspaceElement {
     this.conflictVisible = false;
     this.sourceLabel = this.language === "typescript" ? "TypeScript source" : "JavaScript source";
     this.draftModel = this.monaco!.editor.createModel(
-      draft?.source ??
-        help.sections.find((section) => section.id === "examples")!.examples[0]!.code,
+      draft?.source ?? "",
       draft?.language ?? "typescript",
       this.monaco!.Uri.parse(
         `file:///transmog-scripts/draft/main.${draft?.language === "javascript" ? "js" : "ts"}`,
@@ -788,6 +876,7 @@ export class ScriptEditor extends WorkspaceElement {
     );
     this.sourceEditor = this.monaco!.editor.create(this.scriptEditor, {
       model: this.draftModel,
+      readOnly: true,
       automaticLayout: true,
       accessibilitySupport: "on",
       ariaLabel: `Traffic script ${this.language === "typescript" ? "TypeScript" : "JavaScript"} source`,
@@ -827,17 +916,20 @@ export class ScriptEditor extends WorkspaceElement {
       this.savedFingerprint = scriptFingerprint(draft);
     }
     this.sourceEditor.onDidChangeModelContent(() => this.markScriptChanged());
+    await this.refreshSourceAnalysis();
     this.scriptReady = true;
+    this.$flushUpdates();
     this.initialDraft = structuredClone(this.scriptDraft());
-    this.savedDraft = draft ? structuredClone(draft) : null;
+    this.savedDraft = saved ? structuredClone(saved) : null;
     this.$flushUpdates();
     this.renderScriptStatus(status);
     this.updateDraftState();
+    this.sourceEditor.updateOptions({ readOnly: false });
     void this.refreshAuthoringStatus();
     this.scheduleRuntimeRefresh();
     this.scriptText = draft
       ? "Ready to edit. Changes apply to new requests when saved and enabled."
-      : "Start with this example, then save and enable it for new requests.";
+      : "";
   }
   private async saveDraft(): Promise<void> {
     const version = this.editVersion;
@@ -921,8 +1013,13 @@ export class ScriptEditor extends WorkspaceElement {
       return null;
     }
   }
-  private async testDraft(debug = false): Promise<void> {
-    const testVersion = this.testVersion;
+  private async testDraft(debug: boolean, testVersion: number): Promise<void> {
+    if (testVersion !== this.testVersion) {
+      this.feedback(
+        "Sandbox input changed during preparation. Run the action again with the current input.",
+      );
+      return;
+    }
     const version = this.editVersion;
     this.testOutdated = Boolean(this.testResult);
     const input = {
@@ -1352,6 +1449,17 @@ export class ScriptEditor extends WorkspaceElement {
     return this.isConnected && this.diffViewModel === viewModel && this.diffVisible;
   }
   private async prepareDraft(): Promise<{ draft: ScriptDraft; generation: number }> {
+    const version = this.editVersion;
+    await this.refreshSourceAnalysis();
+    if (this.reviewingTypeScript) {
+      const analysis = await this.inspectSource(this.reviewJavascript, "javascript");
+      if (!this.current(version)) {
+        throw new Error(
+          "Source changed while preparing the draft. Try again with the current edits.",
+        );
+      }
+      this.reviewHandlers = analysis.handlers;
+    }
     const draft = this.scriptDraft();
     const status = await invoke<ScriptStatus>("script_status");
     this.requireSavedBaseline(status);
@@ -1480,7 +1588,7 @@ export class ScriptEditor extends WorkspaceElement {
     }
     const data = new FormData(this.scriptForm);
     const source = this.reviewingTypeScript ? this.reviewJavascript : this.sourceEditor.getValue();
-    const handlers = this.sourceHandlers(source);
+    const handlers = this.reviewingTypeScript ? this.reviewHandlers : this.sourceHandlers(source);
     const writeHeaders = [
       ...new Set(
         String(data.get("scriptHeaders") ?? "")
@@ -1493,6 +1601,7 @@ export class ScriptEditor extends WorkspaceElement {
       id: "user-script",
       revision: this.scriptRevision,
       source,
+      sourceEdited: this.sourceEdited,
       language: this.language,
       retainedSource: this.reviewingTypeScript ? this.sourceEditor.getValue() : this.retainedSource,
       javascriptHistory: [...this.javascriptHistory],
@@ -1573,18 +1682,225 @@ export class ScriptEditor extends WorkspaceElement {
     this.activeFingerprint = fingerprint;
     void this.refreshAuthoringStatus();
   }
-  private sourceHandlers(source: string): ScriptDraft["handlers"] {
-    return (
-      [
-        "onRequestHead",
-        "onRequestBody",
-        "onResponseHead",
-        "onResponseBody",
-        "onResponseChunk",
-        "onCompleted",
-        "onFailed",
-      ] as const
-    ).filter((handler) => new RegExp(`\\bexport\\s+function\\s+${handler}\\b`).test(source));
+  private sourceHandlers(source: string): HandlerName[] {
+    const language = this.reviewingTypeScript ? "typescript" : this.language;
+    return this.analysisCache.get(language + "\n" + source)?.handlers ?? [];
+  }
+  private async inspectSource(source: string, language: string): Promise<ScriptAnalysis> {
+    const { getTypeScriptWorker, getJavaScriptWorker } = await loadMonaco();
+    const getWorker =
+      this.draftModel!.getLanguageId() === "javascript" ? getJavaScriptWorker : getTypeScriptWorker;
+    const deadline = Date.now() + 5000;
+    for (;;) {
+      try {
+        const worker = await (await getWorker())(this.draftModel!.uri);
+        return await (
+          worker as typeof worker & {
+            inspectScript(source: string, language: string): Promise<ScriptAnalysis>;
+          }
+        ).inspectScript(source, language);
+      } catch (error) {
+        if (
+          !["TypeScript not registered!", "JavaScript not registered!"].includes(
+            describeError(error),
+          ) ||
+          Date.now() >= deadline
+        ) {
+          throw error;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+  }
+  private async refreshSourceAnalysis(): Promise<ScriptAnalysis> {
+    const model = this.draftModel!;
+    const source = model.getValue();
+    const language = model.getLanguageId();
+    if (
+      source === this.analyzedSource &&
+      language === this.analyzedLanguage &&
+      this.sourceAnalysis
+    ) {
+      return this.sourceAnalysis;
+    }
+    const version = model.getVersionId();
+    const key = language + "\n" + source;
+    const analysis = this.analysisCache.get(key) ?? (await this.inspectSource(source, language));
+    if (
+      model !== this.draftModel ||
+      model.isDisposed() ||
+      version !== model.getVersionId() ||
+      !this.isConnected
+    ) {
+      throw new Error("Source changed during handler analysis. Try again with the current draft.");
+    }
+    this.analyzedSource = source;
+    this.analyzedLanguage = language;
+    this.sourceAnalysis = analysis;
+    this.analysisCache.set(key, analysis);
+    if (this.analysisCache.size > 4) {
+      this.analysisCache.delete(this.analysisCache.keys().next().value!);
+    }
+    this.handlerGroups = ["Request", "Response", "Outcome"].map((label) => ({
+      label,
+      items: handlers
+        .filter((item) => item.group === label)
+        .map((item) => ({
+          name: item.name,
+          label: item.label,
+          action: analysis.locations.find((location) => location.name === item.name)!.action,
+        })),
+    }));
+    this.updateDraftState();
+    return analysis;
+  }
+  async toggleHandlers(): Promise<void> {
+    if (this.handlerMenu.matches(":popover-open")) {
+      this.handlerMenu.hidePopover();
+      return;
+    }
+    const version = this.editVersion;
+    const root = this.getRootNode() as ShadowRoot;
+    const priorFocus = root.activeElement;
+    try {
+      await this.refreshSourceAnalysis();
+      if (
+        !this.current(version) ||
+        root.activeElement !== priorFocus ||
+        !this.active ||
+        this.scriptBusy ||
+        this.reviewingTypeScript ||
+        this.conflictVisible
+      ) {
+        return;
+      }
+      this.handlerMenu.showPopover();
+      this.handlerMenu.querySelector<HTMLButtonElement>("button:enabled")?.focus();
+    } catch (error) {
+      if (this.current(version)) {
+        this.feedback(describeError(error));
+      }
+    }
+  }
+  menuToggled(event: ToggleEvent): void {
+    const menu = event.currentTarget as HTMLElement;
+    const open = menu.matches(":popover-open");
+    if (menu === this.handlerMenu) {
+      this.handlerMenuOpen = open;
+    }
+    const focused = (this.getRootNode() as ShadowRoot).activeElement;
+    const trigger = this.menuTrigger(menu);
+    if (open && focused === trigger) {
+      menu.querySelector<HTMLButtonElement>("button:enabled")?.focus();
+    } else if (!open && menu.contains(focused)) {
+      trigger.focus();
+    }
+  }
+  menuKeyboard(event: KeyboardEvent): void {
+    const menu = event.currentTarget as HTMLDivElement;
+    if (!menu.matches(":popover-open")) {
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      this.closeMenu(menu);
+    } else if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+      event.preventDefault();
+      const buttons = [...menu.querySelectorAll<HTMLButtonElement>("button:enabled")];
+      const index = buttons.indexOf(
+        (this.getRootNode() as ShadowRoot).activeElement as HTMLButtonElement,
+      );
+      const next =
+        event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? buttons.length - 1
+            : (index + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
+      buttons[next]?.focus();
+    }
+  }
+  async chooseHandler(name: HandlerName): Promise<void> {
+    if (
+      this.choosingHandler ||
+      this.scriptBusy ||
+      this.reviewingTypeScript ||
+      this.conflictVisible
+    ) {
+      return;
+    }
+    this.choosingHandler = true;
+    const version = this.editVersion;
+    try {
+      const analysis = await this.refreshSourceAnalysis();
+      if (!this.current(version) || !this.active) {
+        return;
+      }
+      const location = analysis.locations.find((item) => item.name === name)!;
+      const model = this.draftModel!;
+      this.handlerMenu.hidePopover();
+      if (location.action === "Add") {
+        const insertion = handlerInsertion(
+          model.getValue(),
+          this.language,
+          name,
+          analysis,
+          model.getEOL(),
+        );
+        const end = model.getPositionAt(model.getValueLength());
+        this.sourceEditor!.pushUndoStop();
+        this.sourceEditor!.executeEdits("add-handler", [
+          {
+            range: new this.monaco!.Range(end.lineNumber, end.column, end.lineNumber, end.column),
+            text: insertion.text,
+          },
+        ]);
+        this.sourceEditor!.pushUndoStop();
+        this.revealHandler(insertion.selectionOffset, insertion.selectionOffset + 5);
+        this.feedback("Added " + name + " to draft.");
+      } else {
+        this.revealHandler(location.start, location.end);
+        this.feedback(location.reason || "Showing existing handler " + name + ".");
+      }
+      const item = handlers.find((item) => item.name === name)!;
+      this.handlerHint = location.action === "Review" ? location.reason : item.hint;
+      this.handlerSetting = location.action === "Review" ? "" : item.setting;
+    } catch (error) {
+      if (this.current(version)) {
+        this.feedback(describeError(error));
+      }
+    } finally {
+      this.choosingHandler = false;
+    }
+  }
+  private revealHandler(start: number, end: number): void {
+    const from = this.draftModel!.getPositionAt(start),
+      to = this.draftModel!.getPositionAt(end);
+    this.sourceEditor!.setSelection(
+      new this.monaco!.Range(from.lineNumber, from.column, to.lineNumber, to.column),
+    );
+    void this.sourceEditor!.getAction("editor.unfold")?.run();
+    this.sourceEditor!.revealLineInCenter(from.lineNumber);
+    this.focusEditor();
+  }
+  showHandlerSetting(): void {
+    const surface = this.scriptEditor.closest("editor-surface") as EditorSurface;
+    if (surface.expanded) {
+      surface.toggle();
+    }
+    const details = this.scriptForm.closest("details")!;
+    details.open = true;
+    const input = this.scriptForm.elements.namedItem(this.handlerSetting) as HTMLInputElement;
+    input.scrollIntoView({ block: "nearest" });
+    input.focus();
+  }
+  private async requireHandler(): Promise<boolean> {
+    const analysis = await this.refreshSourceAnalysis();
+    if (analysis.handlers.length) {
+      return true;
+    }
+    this.feedback("Choose a handler from Handlers, or export a supported synchronous function.");
+    return false;
   }
   private replaceSource(source: string, language: ScriptLanguage): void {
     const old = this.draftModel;
@@ -1713,6 +2029,21 @@ export class ScriptEditor extends WorkspaceElement {
     if (!this.scriptReady) {
       return;
     }
+    try {
+      await this.refreshSourceAnalysis();
+    } catch (error) {
+      if (request === this.diagnosticsVersion && this.current(version)) {
+        this.authoringStatus = describeError(error);
+      }
+      return;
+    }
+    if (!this.current(version) || request !== this.diagnosticsVersion) {
+      return;
+    }
+    if (!this.sourceEditor!.getValue().trim()) {
+      this.authoringStatus = "";
+      return;
+    }
     if (this.language === "javascript" && !this.reviewingTypeScript) {
       this.authoringStatus =
         "Editing JavaScript. Retained TypeScript is used again only by your explicit choice.";
@@ -1747,9 +2078,7 @@ export class ScriptEditor extends WorkspaceElement {
         const build =
           status.built?.find((item) => item.manifest.id === "user-script") ??
           status.active.find((item) => item.manifest.id === "user-script");
-        const seed =
-          build?.javascript ??
-          'export function onRequestHead() { return { decision: { action: "continue" } }; }\n';
+        const seed = build?.javascript ?? "";
         const history =
           this.retainedSource && this.retainedSource !== seed
             ? this.rememberJavaScript(this.retainedSource)
@@ -1757,12 +2086,8 @@ export class ScriptEditor extends WorkspaceElement {
         this.setJavaScriptHistory(history);
         this.retainedSource = this.sourceEditor!.getValue();
         this.language = "javascript";
+        this.replaceSource(build?.javascript ?? "", "javascript");
         this.closeComparison();
-        this.replaceSource(
-          build?.javascript ??
-            'export function onRequestHead() { return { decision: { action: "continue" } }; }\n',
-          "javascript",
-        );
         this.feedback(
           build
             ? `Editing JavaScript from compiled build ${build.manifest.revision}${[...status.active, ...(status.paused ?? [])].some((item) => item.manifest.id === "user-script" && item.manifest.revision === build.manifest.revision && item.javascriptHash === build.javascriptHash) ? " (applied)" : " (not applied)"}. TypeScript edits and previous JavaScript drafts are retained. ${this.appliedBuildText}`
@@ -1783,10 +2108,11 @@ export class ScriptEditor extends WorkspaceElement {
     ) {
       return;
     }
+    this.reviewHandlers = this.sourceHandlers(this.sourceEditor!.getValue());
     this.reviewJavascript = this.sourceEditor!.getValue();
     this.reviewingTypeScript = true;
-    this.closeComparison();
     this.replaceSource(this.retainedSource, "typescript");
+    this.closeComparison();
     this.feedback(
       "Repair retained TypeScript if needed, then compare its generated JavaScript with your current JavaScript.",
     );
@@ -1797,8 +2123,8 @@ export class ScriptEditor extends WorkspaceElement {
     }
     this.retainedSource = this.sourceEditor!.getValue();
     this.reviewingTypeScript = false;
-    this.closeComparison();
     this.replaceSource(this.reviewJavascript, "javascript");
+    this.closeComparison();
     this.feedback("Continuing with JavaScript. TypeScript edits are retained.");
   }
   async compareTypeScriptOutput(): Promise<void> {
@@ -1817,7 +2143,7 @@ export class ScriptEditor extends WorkspaceElement {
             draft: {
               ...draft,
               source,
-              handlers: this.sourceHandlers(source),
+              handlers: (await this.inspectSource(source, "typescript")).handlers,
               language: "typescript",
               retainedSource: this.reviewJavascript,
             },
@@ -2016,7 +2342,7 @@ export class ScriptEditor extends WorkspaceElement {
       return;
     }
     this.savedDraft = structuredClone(this.conflictSaved);
-    this.savedFingerprint = scriptFingerprint(this.savedDraft);
+    this.savedFingerprint = scriptFingerprint(authoringDraft(this.savedDraft));
     this.conflictVisible = false;
     this.closeComparison();
     this.updateDraftState();
@@ -2028,7 +2354,7 @@ export class ScriptEditor extends WorkspaceElement {
     }
     this.previousConflictDraft = this.scriptDraft();
     this.savedDraft = structuredClone(this.conflictSaved);
-    this.savedFingerprint = scriptFingerprint(this.savedDraft);
+    this.savedFingerprint = scriptFingerprint(authoringDraft(this.savedDraft));
     this.conflictVisible = false;
     this.applyDraft(this.savedDraft);
     this.canUndoSavedLoad = true;
@@ -2083,8 +2409,8 @@ export class ScriptEditor extends WorkspaceElement {
         this.language === "typescript" ? this.sourceEditor!.getValue() : this.retainedSource;
       this.retainedSource = typescript;
       this.language = "javascript";
-      this.closeComparison();
       this.replaceSource(source, "javascript");
+      this.closeComparison();
       this.historyOpen = false;
       this.$flushUpdates();
       this.scriptEditor.scrollIntoView({ block: "nearest" });

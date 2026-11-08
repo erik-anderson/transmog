@@ -1,6 +1,6 @@
 <template shadowrootmode="open">
   <dialog w-ref="{surface}" open @cancel="{cancel(e)}" @close="{closed()}">
-    <header><strong>{{label}}</strong><button type="button" @click="{toggle()}"><if condition="expanded">Return to panel</if><if condition="!expanded">Expand editor</if></button></header>
+    <header><div class="editor-heading"><slot name="title"><strong>{{label}}</strong></slot><slot name="header-actions"></slot></div><button type="button" @click="{toggle()}"><if condition="expanded">Return to panel</if><if condition="!expanded">Expand editor</if></button></header>
     <div class="editor-actions"><slot name="actions"></slot></div>
     <div class="editor-content"><slot></slot></div>
     <slot name="feedback"></slot>

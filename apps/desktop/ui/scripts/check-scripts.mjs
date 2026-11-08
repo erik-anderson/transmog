@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
-import { checkScriptApiReference, checkScriptAuthoringLayout } from "./check-script-authoring.mjs";
+import {
+  checkScriptApiReference,
+  checkScriptAuthoringLayout,
+  testInSandbox,
+} from "./check-script-authoring.mjs";
 import { checkMonacoIcons } from "./check-monaco-icons.mjs";
+import { checkHandlerAuthoring } from "./check-handler-authoring.mjs";
 
 export async function checkScripts(page, root) {
   const scripts = page.locator("script-editor");
@@ -19,7 +24,16 @@ export async function checkScripts(page, root) {
     );
   const fixture = async (values) =>
     page.evaluate((values) => Object.assign(globalThis.__workspaceFixture, values), values);
+  await scripts.locator(".monaco-editor").first().waitFor();
+  assert.equal(
+    await scripts.evaluate(
+      (editor) => editor.scriptReady || editor.sourceEditor.getRawOptions().readOnly === true,
+    ),
+    true,
+    "Typing must wait for the initial source baseline and handler analysis",
+  );
   await waitIdle();
+  await checkHandlerAuthoring(page, scripts, root);
   assert.match(await scripts.locator(".script-scope").textContent(), /example.test/);
   const helpButton = scripts.getByRole("button", { name: "Open API docs", exact: true });
   const help = scripts.locator(".script-help-dialog");
@@ -270,10 +284,8 @@ export function onFailed() { return pass(); }
     await scripts.getByLabel("Method filter (optional)", { exact: true }).inputValue(),
     activated.prefilter.method ?? "",
   );
-  assert.equal(
-    await scripts.getByRole("button", { name: "Save draft", exact: true }).isDisabled(),
-    true,
-  );
+  // Restoring the saved model can finish handler analysis after the field values render.
+  await scripts.getByRole("button", { name: "Save draft", exact: true, disabled: true }).waitFor();
   assert.equal(
     await page.evaluate(() => globalThis.__workspaceFixture.activeScripts[0].source),
     activated.source,
@@ -335,7 +347,7 @@ export function onFailed() { return pass(); }
     .fill("https://sandbox.example.test:8443/users/42?ready=yes");
   await scripts.getByLabel("Method", { exact: true }).fill("PATCH");
   await scripts.getByLabel("Request headers", { exact: true }).fill("X-Test: yes");
-  await scripts.getByRole("button", { name: "Test in sandbox", exact: true }).click();
+  await testInSandbox(scripts);
   await waitIdle();
   assert.match(
     await scripts.locator(".script-test-result").textContent(),
@@ -374,7 +386,7 @@ export function onFailed() { return { decision: { action: "continue" as const } 
   await scripts.getByLabel("Response status", { exact: true }).fill("202");
   await scripts.getByLabel("Response headers", { exact: true }).fill("X-Fixture: completed");
   await scripts.getByLabel("Local response", { exact: true }).check();
-  await scripts.getByRole("button", { name: "Test in sandbox", exact: true }).click();
+  await testInSandbox(scripts);
   await waitIdle();
   assert.match(
     await scripts.locator(".script-test-result pre").textContent(),
@@ -383,7 +395,7 @@ export function onFailed() { return { decision: { action: "continue" as const } 
   await scripts.getByRole("combobox", { name: "Handler", exact: true }).selectOption("onFailed");
   await scripts.getByLabel("Failure category (onFailed)", { exact: true }).selectOption("Route");
   await scripts.getByLabel("Local response", { exact: true }).uncheck();
-  await scripts.getByRole("button", { name: "Test in sandbox", exact: true }).click();
+  await testInSandbox(scripts);
   await waitIdle();
   const failureEvidence = await scripts.locator(".script-test-result pre").textContent();
   assert.match(failureEvidence, /Handler: onFailed.*Local response: no.*Failure category: Route/s);
@@ -397,7 +409,7 @@ export function onFailed() { return { decision: { action: "continue" as const } 
   await scripts.getByLabel("Response body", { exact: true }).fill('{"ready":true}');
   await scripts.getByLabel("Response chunk byte counts (optional)", { exact: true }).fill("2, 4");
   await scripts.getByLabel("Delay between chunks (ms, simulated)", { exact: true }).fill("5");
-  await scripts.getByRole("button", { name: "Test in sandbox", exact: true }).click();
+  await testInSandbox(scripts);
   await waitIdle();
   assert.match(
     await scripts.locator(".script-test-result").textContent(),
@@ -442,7 +454,7 @@ export function onFailed() { return { decision: { action: "continue" as const } 
     .selectOption("failure");
   assert.equal(await scripts.getByLabel("Response body", { exact: true }).isVisible(), false);
   assert.equal(await scripts.getByLabel("Local response", { exact: true }).isVisible(), false);
-  await scripts.getByRole("button", { name: "Test in sandbox", exact: true }).click();
+  await testInSandbox(scripts);
   await waitIdle();
   assert.equal(
     await page.evaluate(() => globalThis.__workspaceFixture.scriptScenarioInput.failure),
@@ -459,7 +471,7 @@ export function onFailed() { return { decision: { action: "continue" as const } 
     /Scenario passed.*Exchange: failed/,
   );
   await fixture({ scriptScenarioVerdict: "failed" });
-  await scripts.getByRole("button", { name: "Test in sandbox", exact: true }).click();
+  await testInSandbox(scripts);
   await waitIdle();
   assert.match(await scripts.locator(".script-test-result").textContent(), /Scenario failed/);
   assert.equal(await scripts.evaluate((editor) => editor.statusKind), "error");
@@ -472,13 +484,13 @@ export function onFailed() { return { decision: { action: "continue" as const } 
   }
   await page.setViewportSize({ width: 1440, height: 900 });
   await fixture({ scriptScenarioVerdict: "incomplete" });
-  await scripts.getByRole("button", { name: "Test in sandbox", exact: true }).click();
+  await testInSandbox(scripts);
   await waitIdle();
   assert.match(await scripts.locator(".script-test-result").textContent(), /Scenario incomplete/);
   assert.equal(await scripts.evaluate((editor) => editor.statusKind), "error");
   await fixture({ scriptScenarioVerdict: "passed" });
   await fixture({ deferScriptTest: true });
-  await scripts.getByRole("button", { name: "Test in sandbox", exact: true }).click();
+  await testInSandbox(scripts);
   await page.waitForFunction(() => globalThis.__workspaceFixture.scriptTestPending);
   await scripts
     .getByRole("textbox", { name: "Request body", exact: true })
@@ -512,7 +524,7 @@ export function onFailed() { return { decision: { action: "continue" as const } 
   assert.equal(await scripts.getByLabel("End of response body", { exact: true }).isVisible(), true);
   await scripts.getByLabel("End of response body", { exact: true }).uncheck();
   await scripts.getByLabel("Headers held for initial inspection", { exact: true }).check();
-  await scripts.getByRole("button", { name: "Test in sandbox", exact: true }).click();
+  await testInSandbox(scripts);
   await waitIdle();
   assert.deepEqual(
     await page.evaluate(() => ({
@@ -545,7 +557,7 @@ export function onFailed() { return { decision: { action: "continue" as const } 
   await scripts
     .getByRole("combobox", { name: "Scenario outcome", exact: true })
     .selectOption("response");
-  await scripts.getByRole("button", { name: "Test in sandbox", exact: true }).click();
+  await testInSandbox(scripts);
   await waitIdle();
   assert.match(
     await scripts.locator(".script-test-result").textContent(),
@@ -582,7 +594,7 @@ export function onFailed() { return { decision: { action: "continue" as const } 
   await scripts.getByLabel("Method", { exact: true }).fill("GET");
   assert.match(await scripts.locator(".script-test-result").textContent(), /Outdated/);
   await fixture({ deferScriptTest: true });
-  await scripts.getByRole("button", { name: "Test in sandbox", exact: true }).click();
+  await testInSandbox(scripts);
   await page.waitForFunction(() => globalThis.__workspaceFixture.scriptTestPending);
   await scripts.getByLabel("Method", { exact: true }).fill("POST");
   await page.evaluate(() => {
@@ -696,7 +708,7 @@ export function onFailed() { return { decision: { action: "continue" as const } 
   );
 
   // Comparison includes settings and stale comparisons are labelled.
-  await scripts.getByRole("button", { name: "More", exact: true }).click();
+  await scripts.getByRole("button", { name: /source options/i }).click();
   await scripts.getByRole("button", { name: "Compare with active", exact: true }).click();
   await waitIdle();
   await checkMonacoIcons(scripts.locator(".diff-editor"));
@@ -706,7 +718,7 @@ export function onFailed() { return { decision: { action: "continue" as const } 
   await scripts.locator(".script-settings-diff > summary").click();
   await append("\n// comparison is now old");
   assert.equal(await scripts.evaluate((editor) => editor.diffStale), true);
-  await scripts.getByRole("button", { name: "More", exact: true }).click();
+  await scripts.getByRole("button", { name: /source options/i }).click();
   await scripts.getByRole("button", { name: "Compare with active", exact: true }).click();
   await waitIdle();
   assert.equal(await scripts.evaluate((editor) => editor.diffStale), false);
@@ -760,6 +772,7 @@ export function onFailed() { return { decision: { action: "continue" as const } 
     state.savedScript = {
       ...active.manifest,
       source: active.source + "\n// newest saved draft",
+      sourceEdited: true,
       revision: active.manifest.revision + 1,
     };
     delete state.savedScript.sourceHash;
@@ -789,9 +802,9 @@ export function onFailed() { return { decision: { action: "continue" as const } 
   );
   await scripts.getByRole("button", { name: "Save draft", exact: true }).click();
   await waitIdle();
-  await scripts.getByRole("button", { name: "More", exact: true }).click();
+  await scripts.getByRole("button", { name: /source options/i }).click();
   await scripts
-    .locator("#script-actions-menu")
+    .locator("#script-source-menu")
     .getByRole("button", { name: "Edit JavaScript", exact: true })
     .click();
   await waitIdle();
@@ -812,7 +825,7 @@ export function onFailed() { return { decision: { action: "continue" as const } 
   await reopen();
   assert.equal(await scripts.evaluate((editor) => editor.language), "javascript");
   await sourceSurface.getByRole("button", { name: "Expand editor", exact: true }).click();
-  await scripts.getByRole("button", { name: "More", exact: true }).click();
+  await scripts.getByRole("button", { name: /source options/i }).click();
   await scripts.getByRole("button", { name: /Return to TypeScript/ }).click();
   assert.match(await scripts.evaluate((editor) => editor.sourceEditor.getValue()), /const invalid/);
   await scripts.getByRole("button", { name: "Compare generated JavaScript", exact: true }).click();
@@ -1116,26 +1129,26 @@ export function onFailed() { return { decision: { action: "continue" as const } 
   await page.setViewportSize({ width: 1280, height: 800 });
   await scripts.locator(".script-settings > summary").click();
 
-  // More remains anchored inside an expanded editor and Escape restores focus.
+  // The source menu remains anchored inside an expanded editor and Escape restores focus.
   await sourceSurface.getByRole("button", { name: "Expand editor", exact: true }).click();
-  await scripts.getByRole("button", { name: "More", exact: true }).click();
-  const button = await scripts.getByRole("button", { name: "More", exact: true }).boundingBox();
-  const menu = await scripts.locator("#script-actions-menu").boundingBox();
+  await scripts.getByRole("button", { name: /source options/i }).click();
+  const button = await scripts.getByRole("button", { name: /source options/i }).boundingBox();
+  const menu = await scripts.locator("#script-source-menu").boundingBox();
   assert.ok(
     menu.x < button.x + button.width &&
       menu.x + menu.width > button.x &&
       Math.abs(menu.y - button.y - button.height) < 12,
-    "Script menu is detached from More",
+    "Source menu is detached from the source title",
   );
   await scripts.getByRole("button", { name: "Validate only", exact: true }).focus();
   await page.keyboard.press("Escape");
   await page.waitForFunction(() => {
     const editor = document.querySelector("app-shell").shadowRoot.querySelector("script-editor");
-    return editor.scriptMore === editor.getRootNode().activeElement;
+    return editor.sourceButton === editor.getRootNode().activeElement;
   });
   assert.equal(
     await scripts
-      .getByRole("button", { name: "More", exact: true })
+      .getByRole("button", { name: /source options/i })
       .evaluate(
         (button) =>
           button === document.activeElement || button === button.getRootNode().activeElement,
@@ -1150,7 +1163,7 @@ export function onFailed() { return { decision: { action: "continue" as const } 
     ["small", 800, 600],
   ]) {
     await page.setViewportSize({ width, height });
-    await scripts.locator(".script-state").scrollIntoViewIfNeeded();
+    await sourceSurface.evaluate((surface) => surface.scrollIntoView({ block: "start" }));
     const bounds = await scripts
       .getByRole("button", { name: "Pause script", exact: true })
       .boundingBox();

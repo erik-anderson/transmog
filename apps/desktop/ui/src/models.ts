@@ -877,6 +877,7 @@ export interface ScriptBodyFilter {
   includeLocal: boolean;
 }
 export interface ScriptDraft {
+  sourceEdited?: boolean;
   parameters: Record<string, ScriptParameter>;
   requestBodyFilter: ScriptBodyFilter;
   responseBodyFilter: ScriptBodyFilter;
@@ -910,13 +911,17 @@ export interface ScriptDraft {
   priority: number;
 }
 export interface ScriptRevision {
-  manifest: Omit<ScriptDraft, "source" | "language" | "retainedSource" | "javascriptHistory"> & {
+  manifest: Omit<
+    ScriptDraft,
+    "source" | "sourceEdited" | "language" | "retainedSource" | "javascriptHistory"
+  > & {
     sourceHash: string;
     apiRevision: number;
   };
   source: string;
   language: ScriptLanguage;
   retainedSource: string | null;
+  sourceEdited?: boolean;
   javascriptHistory: string[];
   javascript: string;
   sourceMap: number[];

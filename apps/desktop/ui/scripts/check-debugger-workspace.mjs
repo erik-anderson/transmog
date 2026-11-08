@@ -17,12 +17,13 @@ export async function checkDebuggerWorkspace(page, root) {
     .getByRole("button", { name: "Scripts", exact: true })
     .click();
   await page.locator("script-editor .monaco-editor").waitFor();
+  await page.locator("script-editor").getByRole("button", { name: "Debug", exact: true }).click();
   await page.screenshot({
     path: resolve(root, "../../../target/ui-check", "debugger-access-scripts.png"),
   });
   await page
     .locator("script-editor")
-    .getByRole("button", { name: "Open debugger", exact: true })
+    .getByRole("button", { name: "Open debugger for live traffic", exact: true })
     .click();
   const workspace = page.locator("debugger-workspace");
   await workspace.locator(".monaco-editor").waitFor();

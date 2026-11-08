@@ -97,12 +97,31 @@ saved script source and settings without changing the active script.
 
 ## Traffic script authoring and execution
 
-Open **Automation → Scripts**, edit the TypeScript example, and review **Filters, capabilities,
-and parameters** before choosing **Save & enable**. TypeScript is the default
-authoring language; exported handlers are checked against their phase contracts.
-The starter demonstrates helpers and callback decisions behind disabled local
-switches. Enable one example and its documented capabilities to try it. Body
-examples are separate so the starter does not buffer traffic.
+Open **Automation → Scripts** and choose **Handlers** in the **Traffic scripts** header.
+The **TypeScript** or **JavaScript** menu holds language, validation, and comparison
+commands. **Debug** and **Open API docs** are in the same header.
+A new workspace starts with an empty TypeScript draft. The menu groups seven
+tasks under Request, Response, and Outcome. **Add** inserts a synchronous handler
+with useful sample code behind a descriptive boolean initialized to `false`;
+the selected boolean is ready to edit. One Undo removes the handler and its new
+imports. **Go to** reveals an existing handler, including your own implementations.
+**Review** takes you to an incomplete or conflicting declaration for repair.
+
+Each example passes traffic through by default. Turn its switch on to try its
+change in the sandbox, then review **Filters, capabilities, and parameters**
+before choosing **Save & enable**. The contextual **Review settings** action opens
+the relevant field, returning an expanded editor to its panel first. Adding code
+keeps permissions, filters, saving, and live activation explicit. Body callbacks
+require **Read bounded bodies** even with their switches off. Whole-body callbacks
+buffer matching messages and hold headers. The menu's body examples identify
+the filters and write permissions needed to try their edits.
+
+**View full sample** in an empty editor opens the large reference example in
+read-only API docs. TypeScript is the default authoring language; exported
+handlers are checked against their phase contracts. Saved TypeScript and
+JavaScript drafts retain their authored source and settings. Drafts without source
+edits use the current starter view when the app updates. Source provenance is
+saved explicitly, including when a draft saves only settings.
 **Open API docs** includes searchable guides, complete examples and the full
 `transmog:api` namespace in a read-only Monaco editor with TypeScript highlighting.
 Search a symbol to reveal its declaration, or use Ctrl+F within the reference.
@@ -137,8 +156,9 @@ need saving, but do not mark unchanged executable code as unapplied.
 | Action | Effect |
 | --- | --- |
 | **Save draft** or Ctrl+S | Saves unfinished source, settings and recovery drafts. Passing type checks is not required; no JavaScript is emitted and live traffic is unchanged. |
-| **More → Validate only** | Checks the current draft and retains a successful build. Does not save the editing draft or activate it. |
-| **Test in sandbox** | Validates/builds first, then tests the authored sample in a fresh sandbox without sending a request. Does not save the editing draft or activate it. |
+| **TypeScript / JavaScript → Validate only** | Checks the current draft and retains a successful build. |
+| **Debug → Test in sandbox** | Runs the draft with the selected callback or exchange-scenario input and reports the result. |
+| **Debug → Run sandbox test in debugger** | Runs the same draft and input under the debugger. With pauses enabled, it stops at the first user statement. |
 | **Save & enable** / **Save & apply** | Validates/builds, starts the sandbox, saves that exact version as the editing baseline and atomically applies it to new requests. |
 | **Pause script** | Stops selecting the applied build for new requests and retains it. |
 | **Resume applied script** | Restarts the paused applied artifact, preserving newer or invalid drafts without rebuilding them. |
@@ -174,7 +194,7 @@ headers omitted.
 
 Failed publishing preserves the applied version and current edits. In-flight
 requests retain their original registration snapshot. Concurrent workspace
-changes invalidate stale activation candidates. **More → Compare with active**
+changes invalidate stale activation candidates. **Source title → Compare with active**
 compares source and settings without applying the draft. Reopening restores the
 newest saved draft or applied source. Save the editing draft before closing the
 app; a compiled artifact does not replace its saved baseline.
@@ -192,7 +212,7 @@ source location, and **Check TypeScript again** retries the check.
 
 If an app update exposes new TypeScript errors, the previously applied JavaScript
 remains selected; the editor reports runtime availability separately. Fix the
-TypeScript or choose **More → Edit JavaScript**. That action starts from the
+TypeScript or choose **TypeScript → Edit JavaScript**. That action starts from the
 **last successfully compiled JavaScript**, which may have come from validation or
 testing and may never have been applied. Newer TypeScript edits are retained
 separately and are not included in that JavaScript draft. Feedback identifies the
@@ -207,7 +227,7 @@ actions. Headless callers must supply any type-checking policy they require.
 
 ### Return to TypeScript and recover earlier JavaScript
 
-1. Choose **More → Return to TypeScript…** to repair the retained TypeScript while
+1. Choose **JavaScript → Return to TypeScript…** to repair the retained TypeScript while
    preserving the current JavaScript draft.
 2. Choose **Compare generated JavaScript**. This checks and builds the TypeScript,
    then compares current JavaScript on the left with generated JavaScript on the
@@ -258,7 +278,7 @@ edits. Pause the script if its effects should stop while you repair it. The
 Automation activity count describes configured activation, not successful script
 execution.
 
-**More → View applied JavaScript** shows executable code even while paused. The
+**Source title → View applied JavaScript** shows executable code even while paused. The
 build disclosure identifies the latest compiled build, whether it is applied,
 its compiler provenance, and source/JavaScript/declaration hashes. Source/build
 alignment, current type-check results and runtime availability are independent:
@@ -861,7 +881,7 @@ representation, coverage, exclusion and processing limits.
 
 ## Debug script execution
 
-Choose **Open debugger** in **Automation → Scripts** or **Settings → Extensions**,
+Choose **Debug → Open debugger for live traffic** in **Automation → Scripts**, choose **Open debugger** in **Settings → Extensions**,
 or toggle it with **F12**, including from an editor. After the first open, the
 app toolbar keeps a **Debugger** shortcut until you quit the app.
 Sources lists saved scripts and installed extension files without activating
@@ -901,7 +921,7 @@ remote clients and servers still control their own timeouts. Workspace pauses
 last until continued or closed. Source changes rebind a uniquely identifiable
 statement; removed or ambiguous statements lose their saved breakpoints.
 
-Choose **Debug test** in Scripts to run the current callback or exchange-scenario
+Choose **Debug → Run sandbox test in debugger** in Scripts to run the current callback or exchange-scenario
 input in a fresh worker without applying the draft. It opens this same workspace
 and pauses before the first user statement. Set breakpoints and exception policy,
 then continue. When paused, select a frame or scope and expand objects in place;

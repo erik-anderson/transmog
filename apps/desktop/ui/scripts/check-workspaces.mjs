@@ -172,7 +172,7 @@ await page
   .grantPermissions(["clipboard-read", "clipboard-write"], { origin: "https://workspace.test" });
 const errors = [];
 const requests = [];
-page.on("pageerror", (error) => errors.push(error.message));
+page.on("pageerror", (error) => errors.push(error.stack ?? error.message));
 page.on("console", (message) => {
   if (message.type() === "error") errors.push(message.text());
 });
@@ -4298,8 +4298,14 @@ await page.addInitScript(
             }
             if (state.scriptValidationError)
               throw new Error("Fixture TypeScript validation failed");
-            const { source, language, retainedSource, javascriptHistory, ...manifest } =
-              state.scriptCandidate;
+            const {
+              source,
+              sourceEdited,
+              language,
+              retainedSource,
+              javascriptHistory,
+              ...manifest
+            } = state.scriptCandidate;
             const javascript =
               language === "javascript" ? source : await window.__compileFixtureScript(source);
             state.scriptBuilds = [
@@ -4310,6 +4316,7 @@ await page.addInitScript(
                 retainedSource,
                 javascriptHistory,
                 javascript,
+                sourceEdited,
                 sourceMap: [],
                 javascriptHash: "0".repeat(64),
                 sourceMapHash: "0".repeat(64),

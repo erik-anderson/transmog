@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
+import { smokeHandlerAuthoring } from "./smoke-handler-authoring.mjs";
 
 export async function smokeScriptHelp(call, evaluate, screenshotPath) {
+  let originalSource;
   const editor = "document.querySelector('app-shell').automation.querySelector('script-editor')";
   const wait = async (expression) => {
     const deadline = Date.now() + 20000;
@@ -18,6 +20,12 @@ export async function smokeScriptHelp(call, evaluate, screenshotPath) {
       `(async()=>{const shell=document.querySelector('app-shell');shell.shadowRoot.querySelector('a[data-view="automation"]').click();await shell.automation.showAutomationSection('scripts');shell.automation.$flushUpdates();})()`,
     );
     await wait(`Boolean(${editor}?.scriptReady)`);
+    const handlers = await smokeHandlerAuthoring(call, evaluate, editor, screenshotPath);
+    // This scenario intentionally exercises the complete reference script.
+    originalSource = await evaluate(`${editor}.sourceEditor.getValue()`);
+    await evaluate(
+      `(()=>{const e=${editor};if(!e.sourceEditor.getValue().trim())e.sourceEditor.setValue(e.allHelpSections.find(section=>section.id==='examples').examples[0].code);})()`,
+    );
     const search = await evaluate(
       `(()=>{const editor=${editor};editor.scriptHelpButton.click();const search=(value)=>{editor.scriptHelpSearch.value=value;editor.scriptHelpSearch.dispatchEvent(new Event('input',{bubbles:true}));editor.$flushUpdates();};search('Complete examples');editor.scriptHelpContent.scrollTop=editor.scriptHelpContent.scrollHeight;const scrolled=editor.scriptHelpContent.scrollTop>0;search('request body');return {scrolled,top:editor.scriptHelpContent.scrollTop,content:editor.scriptHelpContent.textContent};})()`,
     );
@@ -81,6 +89,7 @@ export async function smokeScriptHelp(call, evaluate, screenshotPath) {
       );
     }
     return {
+      handlers,
       revision: contract.revision,
       scope: contract.scope,
       search: true,
@@ -90,6 +99,8 @@ export async function smokeScriptHelp(call, evaluate, screenshotPath) {
       failedExchangeVerdict: true,
     };
   } finally {
+    if (originalSource !== undefined)
+      await evaluate(`${editor}.sourceEditor.setValue(${JSON.stringify(originalSource)})`);
     await evaluate(
       `(async()=>{const shell=document.querySelector('app-shell');shell.automation.querySelector('script-editor')?.closeScriptHelp?.();await shell.automation.showAutomationSection(${JSON.stringify(prior.section)});shell.shadowRoot.querySelector('a[data-view="'+${JSON.stringify(prior.view)}+'"]').click();})()`,
     );

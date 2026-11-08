@@ -58,6 +58,9 @@ pub struct ScriptDraft {
     pub revision: u64,
     /// Editable ES module source.
     pub source: String,
+    /// Whether the source was authored. Unedited drafts use the current starter view.
+    #[serde(default)]
+    pub source_edited: bool,
     /// Current authoring language.
     #[serde(default)]
     pub language: ScriptLanguage,
@@ -87,6 +90,9 @@ pub struct ScriptRevision {
     pub manifest: ScriptManifest,
     /// Exact source used for this build.
     pub source: String,
+    /// Source provenance retained with the immutable build.
+    #[serde(default)]
+    pub source_edited: bool,
     /// Source authoring language.
     pub language: ScriptLanguage,
     /// Other-language draft retained through activation.
@@ -1120,6 +1126,7 @@ fn build_revision(draft: ScriptDraft) -> Result<ScriptRevision, AppError> {
         source: draft.source,
         language: draft.language,
         retained_source: draft.retained_source,
+        source_edited: draft.source_edited,
         javascript_history: draft.javascript_history,
         javascript_hash: source_hash(compiled.javascript.as_bytes()),
         source_map_hash: source_hash(&compiled.source_map),
@@ -1233,6 +1240,7 @@ fn save_activated_draft(
         source: revision.source.clone(),
         language: revision.language,
         retained_source: revision.retained_source.clone(),
+        source_edited: revision.source_edited,
         javascript_history: revision.javascript_history.clone(),
         handlers: manifest.handlers.clone(),
         prefilter: manifest.prefilter.clone(),
@@ -1500,6 +1508,7 @@ mod tests {
                     .to_owned(),
             language: ScriptLanguage::TypeScript,
             retained_source: None,
+            source_edited: true,
             javascript_history: Vec::new(),
             handlers: [ScriptHandler::RequestHead].into_iter().collect(),
             prefilter: ScriptPrefilter::default(),
@@ -1816,6 +1825,32 @@ mod tests {
         reopened.save(draft(5)).unwrap();
         assert_eq!(reopened.status().saved[0].revision, 5);
         assert_eq!(reopened.status().paused[0].manifest.revision, 4);
+    }
+
+    #[test]
+    fn source_provenance_survives_save_and_restart_without_a_source_heuristic() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("scripts");
+        let registry = registry(Some(path.clone()));
+        let mut input = draft(1);
+        input.source_edited = false;
+        input.source.clear();
+        input.handlers.clear();
+        registry.save(input.clone()).unwrap();
+        let reopened = registry_with_path(path.clone());
+        assert!(!reopened.status().saved[0].source_edited);
+        input.source_edited = true;
+        reopened.save(input.clone()).unwrap();
+        let reopened = registry_with_path(path);
+        assert!(reopened.status().saved[0].source_edited);
+        assert_eq!(reopened.status().saved[0].source, "");
+        let mut legacy = serde_json::to_value(input).unwrap();
+        legacy.as_object_mut().unwrap().remove("sourceEdited");
+        assert!(
+            !serde_json::from_value::<ScriptDraft>(legacy)
+                .unwrap()
+                .source_edited
+        );
     }
 
     #[test]

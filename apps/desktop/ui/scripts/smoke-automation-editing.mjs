@@ -41,6 +41,7 @@ export async function smokeAutomationEditing(call, evaluate, screenshotPath, wai
     w.showAutomationSection('scripts');w.$flushUpdates();const editor=w.querySelector('script-editor');
     const end=Date.now()+20000;while(!editor.scriptReady&&Date.now()<end)await new Promise(resolve=>setTimeout(resolve,25));
     if(!editor.scriptReady)throw new Error('Native script editor did not hydrate: '+JSON.stringify({status:editor.scriptText,active:editor.active,view:w.view,section:w.automationSection,connected:editor.isConnected,tag:editor.tagName,type:editor.constructor.name}));
+    if(!editor.sourceEditor.getValue().trim())await editor.chooseHandler('onRequestHead');
     await editor.activateScript();
     let status=await invoke('script_status');if(!status.active.length||editor.scriptDirty||editor.scriptUnapplied)throw new Error('One-click script enable failed: '+editor.scriptText);
     if(status.saved[0].source!==status.active[0].source)throw new Error('Enabled source was not saved as editing baseline');
@@ -111,7 +112,8 @@ export async function smokeAutomationEditing(call, evaluate, screenshotPath, wai
     const w=shell.shadowRoot.querySelector('automation-workspace');w.showAutomationSection('scripts');w.$flushUpdates();
     while(!w.querySelector('script-editor')?.scriptReady&&Date.now()<end)await new Promise(resolve=>setTimeout(resolve,25));
     const editor=w.querySelector('script-editor');
-    if(!editor?.sourceEditor?.getValue().includes('native edited version')||editor.scriptDirty)throw new Error('Reopened native script lost activated source');
+    if(!editor?.sourceEditor?.getValue().includes('native edited version'))throw new Error('Reopened native script lost activated source');
+    if(editor.scriptDirty)throw new Error('Reopened native script became dirty: '+JSON.stringify({saved:editor.savedDraft,current:editor.scriptDraft()}));
     shell.shadowRoot.querySelector('a[data-view="traffic"]').click();
   })()`);
   return {

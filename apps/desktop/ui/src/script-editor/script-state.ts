@@ -1,9 +1,15 @@
 import type { ScriptDraft, ScriptRevision, ScriptStatus } from "../models.js";
 
+/** Unauthored source follows the app's current empty starter view. */
+export function authoringDraft(draft: ScriptDraft): ScriptDraft {
+  return draft.sourceEdited ? draft : { ...draft, source: "", handlers: [] };
+}
+
 /** Revision numbers do not describe whether the source or its authority changed. */
 export function scriptFingerprint(draft: ScriptDraft): string {
   return JSON.stringify({
     source: draft.source,
+    sourceEdited: draft.sourceEdited ?? false,
     language: draft.language ?? "typescript",
     retainedSource: draft.retainedSource ?? null,
     javascriptHistory: draft.javascriptHistory ?? [],
@@ -42,6 +48,7 @@ export function activeDraft(revision: ScriptRevision): ScriptDraft {
     id,
     revision: version,
     source: revision.source,
+    sourceEdited: revision.sourceEdited ?? false,
     language: revision.language ?? "typescript",
     retainedSource: revision.retainedSource ?? null,
     javascriptHistory: revision.javascriptHistory ?? [],
@@ -89,5 +96,10 @@ export function scriptSettings(draft: ScriptDraft): string {
 
 /** Alternate-language recovery work never changes the applied executable snapshot. */
 export function scriptExecutionFingerprint(draft: ScriptDraft): string {
-  return scriptFingerprint({ ...draft, retainedSource: null, javascriptHistory: [] });
+  return scriptFingerprint({
+    ...draft,
+    sourceEdited: false,
+    retainedSource: null,
+    javascriptHistory: [],
+  });
 }

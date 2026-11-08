@@ -1,3 +1,4 @@
+import { testInSandbox } from "./check-script-authoring.mjs";
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import { writeFile } from "node:fs/promises";
@@ -70,7 +71,7 @@ export async function checkScriptDiagnostics(page, root) {
   const input = scripts.locator(".script-test");
   if (!(await input.evaluate((element) => element.open)))
     await input.locator(":scope > summary").click();
-  await scripts.getByRole("button", { name: "Test in sandbox", exact: true }).click();
+  await testInSandbox(scripts);
   const details = scripts.locator(".script-test-result script-diagnostics");
   await details.locator(".developer-details > summary").click();
   assert.match(await details.textContent(), /inner cause/);

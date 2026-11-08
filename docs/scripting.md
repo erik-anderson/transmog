@@ -6,7 +6,9 @@ through MCP `transmog_help`. The editor supplies the [complete types](../crates/
 
 ## Write and enable a script
 
-Use scripts for conditional changes, JSON transformations, local responses, or logic shared between a request and its response. Rules handle fixed header and text replacements.
+Open Automation → Scripts and choose Handlers in the Traffic scripts header. A new workspace starts with an empty TypeScript draft. Add inserts a task-named synchronous handler with sample code behind a local boolean initialized to false. Go to reveals your existing implementation; Review identifies incomplete or conflicting declarations. View full sample opens the complete reference example in read-only API docs.
+
+Change the inserted boolean to true to try its sample code in the sandbox. Review settings opens the relevant capability or filter without changing it. Body handlers require Read bounded bodies even when the switch is false; whole-body handlers buffer matching messages. Save draft, sandbox testing and live activation are explicit actions.
 
 Save draft keeps your work. Save & enable applies it to new requests; Save & apply updates an enabled script. Unsaved edits and failed builds leave the applied script unchanged.
 
@@ -124,7 +126,7 @@ export function onRequestHead(event: RequestHeadEvent) {
 
 ## Debug a script
 
-Choose Open debugger in Automation → Scripts or Settings → Extensions, or toggle it with F12. After the first open, the app toolbar keeps a Debugger shortcut until you quit. Browse saved scripts and installed extension files without activating them. Click beside a line number to toggle a breakpoint, or right-click for a condition or logpoint. A filled red circle is bound; an outline is pending. Logpoints use blue diamonds.
+In Automation → Scripts, choose Debug → Open debugger for live traffic. In Settings → Extensions, choose Open debugger. F12 toggles the debugger. After the first open, the app toolbar keeps a Debugger shortcut until you quit. Browse saved scripts and installed extension files without activating them. Click beside a line number to toggle a breakpoint, or right-click for a condition or logpoint. A filled red circle is bound; an outline is pending. Logpoints use blue diamonds.
 
 Use Ctrl+P to open a source; append :line or :line:column, or use :line for the current file. Ctrl+Shift+F searches source text and selects the matching text.
 
@@ -140,7 +142,7 @@ Console commands run JavaScript in the selected paused frame or an idle worker g
 
 Transmog suspends dependent execution deadlines while debugging blocks a worker. Cancellation remains available. Remote client and server timeouts still apply.
 
-Debug test runs the current draft and callback or scenario input in a fresh worker. With pauses enabled, it stops before its first user statement. Restart reruns the test with the current draft and input without applying them to traffic. Stop aborts selected work. Closing, including F12 or Continue and detach, continues paused work and detaches all workers.
+Debug → Test in sandbox runs the current draft with the selected callback or scenario input and shows the result. Run sandbox test in debugger runs the same input in a fresh worker under the debugger. With pauses enabled, it stops before its first user statement. Restart reruns the test with the current draft and input without applying them to traffic. Stop aborts selected work. Closing, including F12 or Continue and detach, continues paused work and detaches all workers.
 
 ## Test in the sandbox
 

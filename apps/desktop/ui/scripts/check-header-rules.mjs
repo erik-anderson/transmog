@@ -245,6 +245,17 @@ export async function checkHeaderRules(page, root) {
   });
   await page.evaluate(() => (document.documentElement.style.zoom = ""));
   await page.emulateMedia({ forcedColors: "none" });
+  const tabs = page.locator("automation-workspace .workspace-tabs");
+  await tabs.getByRole("button", { name: "Scripts", exact: true }).click();
+  await page.locator("script-editor .handler-trigger:enabled").waitFor();
+  const activity = page.locator("automation-workspace .automation-activity");
+  await activity.waitFor();
+  assert.match(await activity.textContent(), /Enabled for new traffic: 1 rule/);
+  assert.match(await page.locator("script-editor .script-state").textContent(), /Paused/);
+  await page.screenshot({
+    path: resolve(root, "../../../target/ui-check/scripts-with-active-rule-800.png"),
+  });
+  await tabs.getByRole("button", { name: "Rules", exact: true }).click();
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(async () => {
     const s = globalThis.__workspaceFixture,

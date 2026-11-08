@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { testInSandbox } from "./check-script-authoring.mjs";
 import { checkNativeDebuggerWorkspace } from "./smoke-debugger-workspace.mjs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
@@ -123,6 +124,18 @@ try {
     .click();
   const editor = page.locator("script-editor");
   await waitFor(() => editor.evaluate((element) => element.scriptReady), "script editor");
+  for (const [triggerName, firstCommand, filename] of [
+    ["TypeScript source options", "Validate only", "scripts-source-options.png"],
+    ["Debug", "Open debugger for live traffic", "scripts-debug-menu.png"],
+  ]) {
+    const trigger = editor.getByRole("button", { name: triggerName, exact: true });
+    await trigger.press("Enter");
+    const command = editor.getByRole("button", { name: firstCommand, exact: true });
+    await waitFor(() => command.evaluate((button) => button.matches(":focus")), triggerName);
+    await page.screenshot({ path: resolve(argument("--output"), filename) });
+    await page.keyboard.press("Escape");
+    assert.equal(await trigger.evaluate((button) => button.matches(":focus")), true);
+  }
   const debuggerButton = page.getByRole("button", { name: "Debugger", exact: true });
   assert.equal(
     await debuggerButton.count(),
@@ -153,6 +166,11 @@ try {
   await initialDebugger.page().keyboard.press("F12");
   await waitFor(() => initialDebugger.page().isClosed(), "F12 closes the debugger window");
   await debuggerButton.waitFor();
+  await editor.getByRole("button", { name: "Debug", exact: true }).click();
+  await editor.getByRole("button", { name: "Open debugger for live traffic", exact: true }).click();
+  const liveDebugger = await surface();
+  await closeDebugger(liveDebugger);
+  await waitFor(() => liveDebugger.page().isClosed(), "live debugger closes");
   await editor.evaluate((element) =>
     element.sourceEditor.setValue(
       [
@@ -167,7 +185,12 @@ try {
       ].join("\n"),
     ),
   );
-  await editor.getByRole("button", { name: "Debug test", exact: true }).click();
+  await testInSandbox(editor);
+  await editor.locator(".script-test-summary").filter({ hasText: "Callback completed" }).waitFor();
+  assert.equal(await page.locator("debugger-workspace:visible").count(), 0);
+  assert.equal(browser.contexts()[0].pages().length, 1);
+  await editor.getByRole("button", { name: "Debug", exact: true }).click();
+  await editor.getByRole("button", { name: "Run sandbox test in debugger", exact: true }).click();
   let panel = await surface();
   let pause = await paused(panel);
   await panel.getByRole("combobox", { name: "Pause on exceptions", exact: true }).focus();
@@ -195,6 +218,7 @@ try {
   await waitFor(() => panel.evaluate((element) => element.debuggerClosed), "fixture stop");
   await closeDebugger(panel);
   evidence.sandbox = {
+    ordinaryTestCompleted: true,
     firstStatement: true,
     callback: true,
     nestedValues: true,
@@ -307,7 +331,8 @@ try {
     .click();
   const samples = [];
   for (let iteration = 0; iteration < 10; iteration++) {
-    await editor.getByRole("button", { name: "Debug test", exact: true }).click();
+    await editor.getByRole("button", { name: "Debug", exact: true }).click();
+    await editor.getByRole("button", { name: "Run sandbox test in debugger", exact: true }).click();
     panel = await surface();
     await paused(panel);
     if (iteration % 2) {

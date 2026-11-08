@@ -5,6 +5,7 @@ dialog:modal { --editor-height:max(20rem,calc(100dvh - 12rem)); position:fixed; 
 dialog::backdrop { background:#10182080; }
 header { display:flex; align-items:baseline; justify-content:space-between; gap:.5rem; padding:.4rem .6rem; border-bottom:1px solid var(--line); }
 header strong { font-size:.85rem; }
+.editor-heading { display:flex; align-items:center; flex-wrap:wrap; gap:.7rem; min-width:0; }
 button { flex:0 0 auto; min-height:2rem; border:1px solid var(--line-strong); border-radius:.3rem; padding:.35rem .65rem; color:var(--text); background:var(--panel); font:inherit; font-size:.8125rem; line-height:1.25; cursor:pointer; }
 button:focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
 .editor-actions { padding:.5rem .7rem; }

@@ -252,7 +252,7 @@ export async function checkNativeDebuggerWorkspace({
     "skip pauses acknowledged",
   );
   assert.equal(await surface.evaluate((element) => element.debuggerPaused), true);
-  await skip.click();
+  await surface.getByRole("button", { name: "Skip all pauses", pressed: true }).click();
   await wait(
     () =>
       surface.evaluate(

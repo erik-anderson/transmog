@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { writeFile } from "node:fs/promises";
-import { checkScriptApiReference, checkScriptAuthoringLayout } from "./check-script-authoring.mjs";
+import {
+  checkScriptApiReference,
+  checkScriptAuthoringLayout,
+  testInSandbox,
+} from "./check-script-authoring.mjs";
 
 // Run only through the owned-profile Windows desktop harness.
 const argument = (name) => process.argv[process.argv.indexOf(name) + 1];
@@ -54,7 +58,7 @@ export function onResponseChunk(event: ResponseChunkEvent): ResponseChunkResult 
       .getByLabel("Response chunk byte counts (optional)", { exact: true })
       .fill("2, 5, 2, 4");
     await scripts.getByLabel("Delay between chunks (ms, simulated)", { exact: true }).fill("5");
-    await scripts.getByRole("button", { name: "Test in sandbox", exact: true }).click();
+    await testInSandbox(scripts);
     await page.waitForFunction(
       () =>
         !document.querySelector("app-shell").automation.querySelector("script-editor").scriptBusy,
@@ -141,6 +145,7 @@ try {
     "}",
   ].join("\n");
   try {
+    await scripts.evaluate((editor, source) => editor.sourceEditor.setValue(source), source);
     await checkScriptApiReference(page, scripts, argument("--output"));
     await page.keyboard.press("Escape");
     await checkScriptAuthoringLayout(
@@ -149,10 +154,9 @@ try {
       scripts.locator("editor-surface").first(),
       argument("--output"),
     );
-    await scripts.evaluate((editor, source) => editor.sourceEditor.setValue(source), source);
     const input = scripts.locator(".script-test");
     await input.locator(":scope > summary").click();
-    await scripts.getByRole("button", { name: "Test in sandbox", exact: true }).click();
+    await testInSandbox(scripts);
     await page.waitForFunction(
       () =>
         !document.querySelector("app-shell").automation.querySelector("script-editor").scriptBusy,

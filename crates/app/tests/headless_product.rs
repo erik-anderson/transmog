@@ -87,6 +87,7 @@ export function onResponseChunk(event) {
                 response_body_filter: transmog_script::ScriptBodyFilter::default(),
                 language: transmog_app::ScriptLanguage::TypeScript,
                 retained_source: None,
+                source_edited: true,
                 javascript_history: vec![],
                 id: "response-modes".into(),
                 revision: 1,
@@ -285,6 +286,7 @@ async fn literal_response_edits_preserve_fresh_data_codings_and_actual_outcomes(
             response_body_filter: transmog_script::ScriptBodyFilter::default(),
             language: transmog_app::ScriptLanguage::TypeScript,
             retained_source: None,
+            source_edited: true,
             javascript_history: Vec::new(),
             id: "before-literal".into(),
             revision: 1,
@@ -589,7 +591,7 @@ async fn header_rules_compose_with_scripts_and_preserve_fresh_response_evidence(
         .activate_automation(&candidate.candidate_id)
         .unwrap();
     let script = application.validate_script(ScriptDraft {
-        parameters: std::collections::BTreeMap::new(), request_body_filter: transmog_script::ScriptBodyFilter::default(), response_body_filter: transmog_script::ScriptBodyFilter::default(), language: transmog_app::ScriptLanguage::TypeScript, retained_source: None, javascript_history: Vec::new(),
+        parameters: std::collections::BTreeMap::new(), request_body_filter: transmog_script::ScriptBodyFilter::default(), response_body_filter: transmog_script::ScriptBodyFilter::default(), language: transmog_app::ScriptLanguage::TypeScript, retained_source: None, source_edited: true, javascript_history: Vec::new(),
         id: "header-script".into(), revision: 1,
         source: r#"
 export function onRequestHead({ request }: {request: {headers: Array<{name:string;value:number[]}>}}) {
@@ -1951,6 +1953,7 @@ export function onRequestHead({ request }: {
             response_body_filter: transmog_script::ScriptBodyFilter::default(),
             language: transmog_app::ScriptLanguage::TypeScript,
             retained_source: None,
+            source_edited: true,
             javascript_history: Vec::new(),
             id: "phase9-script".to_owned(),
             revision: 1,

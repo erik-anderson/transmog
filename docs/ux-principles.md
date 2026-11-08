@@ -189,6 +189,14 @@ when changing the experience.
   and live activation. Show unavailable evidence with its remembered identity;
   replacing it requires an explicit choice rather than matching a later URL.
 
+- Incremental script authoring starts with an empty draft and a task-named handler
+  menu. Adding a handler includes executable sample code behind a descriptive
+  false-by-default local boolean. Selecting an existing handler reveals its source.
+  Insertion is one undoable source edit, with permissions and activation explicit.
+  Keep save and activation controls direct. Group sandbox runs and live debugging
+  in the Debug menu beside the language and handler menus. Keep script and draft
+  status alongside the actions that change them.
+  Show activity from other automation alongside the workspace tabs.
 - Script authoring defaults to TypeScript while execution uses immutable saved
   JavaScript. Preserve the applied build through authoring failures and language
   changes. Retain both language drafts; returning to TypeScript requires an

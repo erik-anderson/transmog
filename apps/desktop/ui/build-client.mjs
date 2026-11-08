@@ -62,7 +62,7 @@ const outputs = { ...client.metafile.outputs };
 const inputs = { ...client.metafile.inputs };
 for (const [entryPoint, outfile] of [
   ["node_modules/monaco-editor/esm/vs/editor/editor.worker.js", "monaco-editor.worker.js"],
-  ["node_modules/monaco-editor/esm/vs/language/typescript/ts.worker.js", "monaco-ts.worker.js"],
+  ["script-worker.mjs", "monaco-ts.worker.js"],
   ["node_modules/monaco-editor/esm/vs/language/json/json.worker.js", "monaco-json.worker.js"],
   ["node_modules/monaco-editor/esm/vs/language/css/css.worker.js", "monaco-css.worker.js"],
   ["node_modules/monaco-editor/esm/vs/language/html/html.worker.js", "monaco-html.worker.js"],
