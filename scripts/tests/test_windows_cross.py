@@ -281,16 +281,18 @@ class CompiledTransferTests(unittest.TestCase):
         stages = {"Frontend": ("UI", "Browser"), "Validation": ("Analysis", "Tests", "Native", "Archives"), "Package": ("Build", "Qualify")}
         producers = {}
         for index, (stage, gates) in enumerate(stages.items(), 102):
-            producers[stage] = {"ArtifactId": str(index), "ManifestSha256": "e" * 64, "RunAttempt": "1"}
+            identity = ({"Target": "shared", "HostTarget": cross.X64}
+                        if stage == "Frontend" else {"Target": cross.ARM64})
+            producers[stage] = {"ArtifactId": str(index), "ManifestSha256": "e" * 64, "RunAttempt": "1", **identity}
             for name in gates:
                 path = payload / "evidence/gates" / (name + ".json")
                 path.parent.mkdir(exist_ok=True)
-                path.write_text(json.dumps({"Name": name, "Stage": stage, "Result": "passed", "Commit": COMMIT,
-                                            "Target": cross.ARM64, "RunId": "123", "RunAttempt": "1"}))
-        (payload / "evidence/pipeline-inputs.json").write_text(json.dumps({"Commit": COMMIT, "RunId": "123",
+                path.write_text(json.dumps({"Schema": 2, "Name": name, "Stage": stage, "Result": "passed", "Commit": COMMIT,
+                                            **identity, "RunId": "123", "RunAttempt": "1"}))
+        (payload / "evidence/pipeline-inputs.json").write_text(json.dumps({"Schema": 2, "Commit": COMMIT, "RunId": "123",
             "RunAttempt": "1", "Target": cross.ARM64, "Stages": producers, "V8": record}))
         manifest = {"Commit": COMMIT, "RunId": "123", "Target": cross.ARM64, "SourceBranch": "main",
-                    "Version": "0.1.20", "Channel": "Canary", "ReleaseType": "Canary", "PipelineSchema": 1}
+                    "Version": "0.1.20", "Channel": "Canary", "ReleaseType": "Canary", "PipelineSchema": 2}
         def refresh():
             manifest["Files"] = [{"Path": path.relative_to(payload).as_posix(), "Sha256": engine.digest(path)}
                                  for path in payload.rglob("*") if path.is_file() and path.name != "build-manifest.json"]

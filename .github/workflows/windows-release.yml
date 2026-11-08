@@ -101,26 +101,15 @@ jobs:
       actions: read
 
   frontend:
-    name: UI and browser acceptance (${{ matrix.arch }})
+    name: UI and browser acceptance (shared, x64)
     needs: policy
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: x64
-            target: x86_64-pc-windows-msvc
-            runner: windows-2025
-          - arch: arm64
-            target: aarch64-pc-windows-msvc
-            runner: windows-11-arm
-    runs-on: ${{ matrix.runner }}
-    # Both browser suites need ARM64 headroom plus time to retain failure evidence.
+    runs-on: windows-2025
+    # One source/run-bound frontend result is shared by both native targets.
     timeout-minutes: 60
     permissions:
       contents: read
     outputs:
-      artifact-id-x64: ${{ steps.reference.outputs.artifact-id-x64 }}
-      artifact-id-arm64: ${{ steps.reference.outputs.artifact-id-arm64 }}
+      artifact-id: ${{ steps.payload.outputs.artifact-id }}
     env:
       CARGO_INCREMENTAL: '0'
       CARGO_TERM_COLOR: always
@@ -131,7 +120,7 @@ jobs:
       - uses: ./.github/actions/windows-release-setup
         timeout-minutes: 8
         with:
-          target: ${{ matrix.target }}
+          target: x86_64-pc-windows-msvc
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           artifact-ids: ${{ needs.policy.outputs.snapshot-id }}
@@ -145,33 +134,29 @@ jobs:
           npm ci --prefix e2e/playwright
           Push-Location e2e/playwright
           try { npx playwright install chromium } finally { Pop-Location }
-          python ./scripts/cache-v8.py --prepare-only --target ${{ matrix.target }}
+          python ./scripts/cache-v8.py --prepare-only --target x86_64-pc-windows-msvc
       - name: Release safety fixtures
         timeout-minutes: 5
         run: ./scripts/test-release-safety.ps1
       - name: Frontend gate - UI
         timeout-minutes: 4
-        run: ./scripts/build-windows-release.ps1 -Stage Frontend -Target ${{ matrix.target }} -Phase UI -PolicySnapshot artifacts/release-policy/shared-snapshot
+        run: ./scripts/build-windows-release.ps1 -Stage Frontend -Target x86_64-pc-windows-msvc -Phase UI -PolicySnapshot artifacts/release-policy/shared-snapshot
       - name: Frontend gate - Browser
         timeout-minutes: 25
-        run: ./scripts/build-windows-release.ps1 -Stage Frontend -Target ${{ matrix.target }} -Phase Browser
+        run: ./scripts/build-windows-release.ps1 -Stage Frontend -Target x86_64-pc-windows-msvc -Phase Browser
       - name: Retain immutable frontend producer
         id: payload
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: windows-release-frontend-${{ matrix.arch }}-${{ github.run_attempt }}
+          name: windows-release-frontend-shared-${{ github.run_attempt }}
           path: artifacts/windows-build/
           if-no-files-found: error
           retention-days: 7
-      - id: reference
-        env:
-          ARTIFACT_ID: ${{ steps.payload.outputs.artifact-id }}
-        run: '"artifact-id-${{ matrix.arch }}=$env:ARTIFACT_ID" | Add-Content -LiteralPath $env:GITHUB_OUTPUT'
       - name: Retain frontend diagnostics even after a step timeout
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: windows-release-diagnostics-frontend-${{ matrix.arch }}-${{ github.run_attempt }}
+          name: windows-release-diagnostics-frontend-shared-${{ github.run_attempt }}
           path: |
             artifacts/windows-build-state.json
             artifacts/native-tools-cache-checkpoint.json
@@ -501,7 +486,7 @@ jobs:
       - name: Download immutable frontend producer
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          artifact-ids: ${{ matrix.arch == 'x64' && needs.frontend.outputs.artifact-id-x64 || needs.frontend.outputs.artifact-id-arm64 }}
+          artifact-ids: ${{ needs.frontend.outputs.artifact-id }}
           path: artifacts/stages/frontend
       - name: Download immutable validation producer
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -515,7 +500,7 @@ jobs:
           path: artifacts/stages/package
       - name: Merge only matching successful source/run-bound gates
         env:
-          FRONTEND_ID: ${{ matrix.arch == 'x64' && needs.frontend.outputs.artifact-id-x64 || needs.frontend.outputs.artifact-id-arm64 }}
+          FRONTEND_ID: ${{ needs.frontend.outputs.artifact-id }}
           VALIDATION_ID: ${{ matrix.arch == 'x64' && needs.validation.outputs.artifact-id-x64 || needs.validation.outputs.artifact-id-arm64 }}
           PACKAGE_ID: ${{ matrix.arch == 'x64' && needs.package.outputs.artifact-id-x64 || needs.package.outputs.artifact-id-arm64 }}
         run: |

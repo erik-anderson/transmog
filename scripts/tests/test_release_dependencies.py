@@ -23,6 +23,30 @@ def consumer_setup_missing(workflow):
 
 
 class ReleaseDependencyTests(unittest.TestCase):
+    def test_frontend_runs_once_on_native_x64_and_both_targets_share_its_artifact(self):
+        workflow = (ROOT / ".github/workflows/windows-release.yml").read_text()
+        sections = dict(re.findall(r"(?ms)^  ([a-z][a-z_-]*):\n(.*?)(?=^  [a-z][a-z_-]*:\n|\Z)", workflow))
+        frontend = sections["frontend"]
+        self.assertIn("runs-on: windows-2025", frontend)
+        self.assertNotIn("matrix", frontend)
+        self.assertIn("target: x86_64-pc-windows-msvc", frontend)
+        self.assertIn("artifact-id: ${{ steps.payload.outputs.artifact-id }}", frontend)
+        self.assertIn("windows-release-frontend-shared-${{ github.run_attempt }}", frontend)
+        self.assertIn("windows-release-diagnostics-frontend-shared-${{ github.run_attempt }}", frontend)
+        for gate in ("UI", "Browser"):
+            self.assertEqual(frontend.count(f"-Stage Frontend -Target x86_64-pc-windows-msvc -Phase {gate}"), 1)
+        aggregation = sections["build"]
+        self.assertIn("artifact-ids: ${{ needs.frontend.outputs.artifact-id }}", aggregation)
+        self.assertIn("FRONTEND_ID: ${{ needs.frontend.outputs.artifact-id }}", aggregation)
+        self.assertNotIn("needs.frontend.outputs.artifact-id-", workflow)
+        for job in ("validation", "package", "installer-test"):
+            self.assertIn("arch: x64", sections[job])
+            self.assertIn("arch: arm64", sections[job])
+            self.assertIn("runner: windows-11-arm", sections[job])
+        self.assertIn("-Phase Native -HostedRunnerDevToolsPolicy", sections["validation"])
+        self.assertIn("-Phase Qualify -HostedRunnerDevToolsPolicy", sections["package"])
+        self.assertIn("test-signed-windows-installer.ps1 -Target ${{ matrix.target }}", sections["installer-test"])
+
     def test_package_metadata_receives_the_validated_policy_job_track(self):
         workflow = (ROOT / ".github/workflows/windows-release.yml").read_text()
         policy = workflow.split("  policy:", 1)[1].split("  engine:", 1)[0]

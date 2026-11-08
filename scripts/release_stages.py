@@ -17,6 +17,15 @@ GATES = {
     "Validation": ("Analysis", "Tests", "Native", "Archives"),
     "Package": ("Build", "Qualify"),
 }
+SCHEMA = 2
+FRONTEND_TARGET = "shared"
+FRONTEND_HOST = "x86_64-pc-windows-msvc"
+
+
+def stage_identity(stage, target):
+    if stage == "Frontend":
+        return {"Target": FRONTEND_TARGET, "HostTarget": FRONTEND_HOST}
+    return {"Target": target}
 
 
 def catalog(root):
@@ -31,7 +40,8 @@ def catalog(root):
 
 def verify(root, stage, commit, run_id, target, attempt):
     manifest = json.loads((root / "stage-manifest.json").read_text(encoding="utf-8-sig"))
-    expected = {"Stage": stage, "Commit": commit, "RunId": run_id, "Target": target, "RunAttempt": manifest.get("RunAttempt")}
+    expected = {"Schema": SCHEMA, "Stage": stage, "Commit": commit, "RunId": run_id,
+                **stage_identity(stage, target), "RunAttempt": manifest.get("RunAttempt")}
     if not str(expected["RunAttempt"]).isdigit() or not 1 <= int(expected["RunAttempt"]) <= int(attempt):
         raise ValueError("Release stage attempt is invalid or from the future")
     if any(manifest.get(name) != value for name, value in expected.items()):
@@ -75,7 +85,10 @@ def verify(root, stage, commit, run_id, target, attempt):
 
 
 def export(root, stage, commit, run_id, target, attempt):
-    manifest = {"Stage": stage, "Commit": commit, "RunId": run_id, "Target": target,
+    if stage == "Frontend" and target != FRONTEND_HOST:
+        raise ValueError("Shared frontend acceptance must execute on Windows x64")
+    manifest = {"Schema": SCHEMA, "Stage": stage, "Commit": commit, "RunId": run_id,
+                **stage_identity(stage, target),
                 "RunAttempt": attempt, "Files": catalog(root)}
     (root / "stage-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     verify(root, stage, commit, run_id, target, attempt)
@@ -108,13 +121,14 @@ def merge(inputs, artifact_ids, output, commit, run_id, target, attempt):
     if metadata.get("ReleaseType") not in ("Canary", "Beta", "Stable"):
         raise ValueError("Release metadata requires an explicit validated ReleaseType")
     resolve_type(State.from_dict(metadata), metadata["SourceBranch"], metadata["ReleaseType"])
-    provenance = {"Commit": commit, "RunId": run_id, "RunAttempt": attempt, "Target": target,
+    provenance = {"Schema": SCHEMA, "Commit": commit, "RunId": run_id, "RunAttempt": attempt, "Target": target,
                   "Stages": {stage: {"ArtifactId": artifact_ids[stage],
                                       "ManifestSha256": digest(inputs[stage] / "stage-manifest.json"),
-                                      "RunAttempt": manifests[stage]["RunAttempt"]}
+                                      "RunAttempt": manifests[stage]["RunAttempt"],
+                                      **stage_identity(stage, target)}
                              for stage in GATES}, "V8": engines[0]}
     (output / "evidence/pipeline-inputs.json").write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
-    metadata["PipelineSchema"] = 1
+    metadata["PipelineSchema"] = SCHEMA
     metadata["Files"] = [{"Path": name, "Sha256": sha} for name, sha in catalog(output).items()]
     (output / "build-manifest.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
 

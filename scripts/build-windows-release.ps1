@@ -10,6 +10,12 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
+if ($Stage -eq 'Frontend' -and ($Target -cne 'x86_64-pc-windows-msvc' -or -not $IsWindows -or
+    [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne [Runtime.InteropServices.Architecture]::X64 -or
+    [Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture -ne [Runtime.InteropServices.Architecture]::X64)) {
+    throw 'Shared frontend acceptance requires native Windows x64.'
+}
+$evidenceTarget = if ($Stage -eq 'Frontend') { 'shared' } else { $Target }
 if ($CompiledBuild -and ($Stage -ne 'Package' -or $Phase -ne 'Build')) { throw 'Compiled inputs are restricted to the Package Build gate.' }
 if ([bool]$CompiledBuild -ne [bool]$CompiledBuildId) { throw 'Compiled inputs require their immutable artifact ID.' }
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
@@ -55,7 +61,8 @@ function Invoke-BuildPhase([string]$Name, [scriptblock]$Action) {
         if ($LASTEXITCODE -ne 0) { throw "$Name exited with $LASTEXITCODE" }
         $result = 'passed'
     } finally {
-        $record = [ordered]@{ Name=$Name; Commit=$sourceCommit; Target=$Target; Stage=$Stage; RunId=$env:GITHUB_RUN_ID; RunAttempt=$env:GITHUB_RUN_ATTEMPT; Result=$result; StartedAtUtc=$started.ToString('o'); DurationSeconds=[math]::Round(([DateTimeOffset]::UtcNow-$started).TotalSeconds,2) }
+        $record = [ordered]@{ Schema=2; Name=$Name; Commit=$sourceCommit; Target=$evidenceTarget; Stage=$Stage; RunId=$env:GITHUB_RUN_ID; RunAttempt=$env:GITHUB_RUN_ATTEMPT; Result=$result; StartedAtUtc=$started.ToString('o'); DurationSeconds=[math]::Round(([DateTimeOffset]::UtcNow-$started).TotalSeconds,2) }
+        if ($Stage -eq 'Frontend') { $record.HostTarget = 'x86_64-pc-windows-msvc' }
         $state.Phases[$Name] = $record
         $state | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $statePath -Encoding utf8NoBOM
         $record | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $gateRoot "$Name.json") -Encoding utf8NoBOM

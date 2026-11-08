@@ -133,7 +133,7 @@ Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-commit' -RunId '123' |
 Write-Host 'Release payload safety checks passed.'
 # Verify the complete merged schema at the same boundary used by signing.
 $qualified = $baseline | ConvertFrom-Json
-$qualified | Add-Member -NotePropertyName PipelineSchema -NotePropertyValue 1
+$qualified | Add-Member -NotePropertyName PipelineSchema -NotePropertyValue 2
 $groups = @{ Frontend=@('UI','Browser'); Validation=@('Analysis','Tests','Native','Archives'); Package=@('Build','Qualify') }
 $originalGates = @{}
 foreach ($stage in $groups.Keys) {
@@ -142,17 +142,22 @@ foreach ($stage in $groups.Keys) {
         $path = Join-Path $fixture $relative
         $originalGates[$path] = Get-Content -Raw $path
         $gate = Get-Content -Raw $path | ConvertFrom-Json
+        $gate | Add-Member -NotePropertyName Schema -NotePropertyValue 2
         $gate | Add-Member -NotePropertyName Stage -NotePropertyValue $stage
         $gate | Add-Member -NotePropertyName RunAttempt -NotePropertyValue '1'
+        if ($stage -ceq 'Frontend') {
+            $gate.Target = 'shared'
+            $gate | Add-Member -NotePropertyName HostTarget -NotePropertyValue 'x86_64-pc-windows-msvc'
+        }
         $gate | ConvertTo-Json | Set-Content -LiteralPath $path
         ($qualified.Files | Where-Object Path -CEQ $relative).Sha256 = (Get-FileHash $path).Hash
     }
 }
 $v8 = @{ Commit='test-commit'; RunId='123'; Target='x86_64-pc-windows-msvc'; ArtifactId='100'; ManifestSha256=('a' * 64) }
-$pipeline = @{ Commit='test-commit'; RunId='123'; Target='x86_64-pc-windows-msvc'; RunAttempt='2'; V8=$v8; Stages=@{
-    Frontend=@{ ArtifactId='101'; ManifestSha256=('b' * 64); RunAttempt='1' }
-    Validation=@{ ArtifactId='102'; ManifestSha256=('c' * 64); RunAttempt='1' }
-    Package=@{ ArtifactId='103'; ManifestSha256=('d' * 64); RunAttempt='1' }
+$pipeline = @{ Schema=2; Commit='test-commit'; RunId='123'; Target='x86_64-pc-windows-msvc'; RunAttempt='2'; V8=$v8; Stages=@{
+    Frontend=@{ ArtifactId='101'; ManifestSha256=('b' * 64); RunAttempt='1'; Target='shared'; HostTarget='x86_64-pc-windows-msvc' }
+    Validation=@{ ArtifactId='102'; ManifestSha256=('c' * 64); RunAttempt='1'; Target='x86_64-pc-windows-msvc' }
+    Package=@{ ArtifactId='103'; ManifestSha256=('d' * 64); RunAttempt='1'; Target='x86_64-pc-windows-msvc' }
 } }
 foreach ($name in @('pipeline-inputs','v8-engine-validation','v8-engine-package')) {
     $value = if ($name -eq 'pipeline-inputs') { $pipeline } else { $v8 }
@@ -161,6 +166,36 @@ foreach ($name in @('pipeline-inputs','v8-engine-validation','v8-engine-package'
     $value | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $path
     $qualified.Files += [pscustomobject]@{ Path=$relative; Sha256=(Get-FileHash $path).Hash }
 }
+$qualified | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifestPath
+Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-commit' -RunId '123' | Out-Null
+$sharedGatePath = Join-Path $fixture 'evidence/gates/Browser.json'
+$sharedGate = Get-Content -Raw -LiteralPath $sharedGatePath
+foreach ($change in @(@{Target='aarch64-pc-windows-msvc'}, @{HostTarget='aarch64-pc-windows-msvc'}, @{Schema=1})) {
+    $bad = $sharedGate | ConvertFrom-Json
+    foreach ($key in $change.Keys) { $bad.$key = $change[$key] }
+    $bad | ConvertTo-Json | Set-Content -LiteralPath $sharedGatePath
+    ($qualified.Files | Where-Object Path -CEQ 'evidence/gates/Browser.json').Sha256 = (Get-FileHash $sharedGatePath).Hash
+    $qualified | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifestPath
+    Require-Rejection { Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-commit' -RunId '123' } 'mislabelled shared frontend evidence' 'Unqualified release gate: Browser'
+}
+$sharedGate | Set-Content -NoNewline -LiteralPath $sharedGatePath
+($qualified.Files | Where-Object Path -CEQ 'evidence/gates/Browser.json').Sha256 = (Get-FileHash $sharedGatePath).Hash
+foreach ($schema in @(1,3,$null)) {
+    $bad = $qualified | ConvertTo-Json -Depth 8 | ConvertFrom-Json
+    $bad.PipelineSchema = $schema
+    $bad | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifestPath
+    Require-Rejection { Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-commit' -RunId '123' } 'a downgraded or unknown pipeline schema' 'Unsupported or incomplete pipeline producer schema'
+}
+$pipelinePath = Join-Path $fixture 'evidence/pipeline-inputs.json'
+$goodPipeline = Get-Content -Raw -LiteralPath $pipelinePath
+$badPipeline = $goodPipeline | ConvertFrom-Json
+$badPipeline.Stages.Frontend.HostTarget = 'aarch64-pc-windows-msvc'
+$badPipeline | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $pipelinePath
+($qualified.Files | Where-Object Path -CEQ 'evidence/pipeline-inputs.json').Sha256 = (Get-FileHash $pipelinePath).Hash
+$qualified | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifestPath
+Require-Rejection { Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-commit' -RunId '123' } 'a frontend producer claiming ARM64 execution' 'Stage producer execution scope differs'
+$goodPipeline | Set-Content -NoNewline -LiteralPath $pipelinePath
+($qualified.Files | Where-Object Path -CEQ 'evidence/pipeline-inputs.json').Sha256 = (Get-FileHash $pipelinePath).Hash
 $qualified | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifestPath
 Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-commit' -RunId '123' | Out-Null
 $path = Join-Path $fixture 'evidence/gates/Tests.json'

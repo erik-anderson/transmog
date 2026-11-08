@@ -23,9 +23,11 @@ Publishing a reviewed draft does not rebuild its assets.
 
 The workflow runs only in public repositories on approved branches. It qualifies
 x64 on `windows-2025` and ARM64 on `windows-11-arm`, then bundles both on the
-protected x64 signer. Each architecture must pass the repository, browser,
-certificate, archive, optimized CLI and three-minute WebView soak gates before
-signing. Policy checks share an immutable advisory snapshot during builds and
+protected x64 signer. Web UI and browser acceptance run once on native x64,
+with one immutable source/run-bound artifact shared by both architectures.
+Each architecture must still pass its native repository, certificate, archive,
+optimized CLI, symbols and three-minute WebView soak gates before signing.
+Policy checks share an immutable advisory snapshot during builds and
 refresh advisories before signing. Python requires 3.11+; `PYTHONUTF8=1` keeps
 subprocess output consistent with the tooling's UTF-8 decoder.
 

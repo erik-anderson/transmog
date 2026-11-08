@@ -118,12 +118,15 @@ release; `use_cache: false` also disables consumer-report reuse.
 Rust application targets, unsigned payloads and signed outputs are not cached.
 The unsigned workflow's `use_cache: false` also forces cold engine preparation.
 
-After policy preflight, frontend/browser acceptance (60 minutes, including release
-safety fixtures, with a 25-minute deadline for the complete workspace and debugger
-browser suites) runs independently of engine preparation. Once V8 is ready and
-frontend acceptance passes, Clippy, workspace tests, native acceptance and archive interoperability share one
-120-minute native validation job. Test compilation uses the matching native Rust,
-LLVM and CMake toolchains; this retains stable Rust's complete workspace and
+After policy preflight, frontend/browser acceptance runs once on native x64
+`windows-2025`, independently of engine preparation. Both package targets share
+this source/run-bound result for the web UI and mocked native bridge. The
+60-minute job includes release safety fixtures and retains the 25-minute deadline
+for the complete workspace and debugger browser suites. Once V8 is ready and
+frontend acceptance passes, each architecture runs Clippy, workspace tests, native
+acceptance and archive interoperability in its own 120-minute native validation
+job. Test compilation uses the matching native Rust, LLVM and CMake toolchains;
+this retains stable Rust's complete workspace and
 doc-test execution. Optimized production compilation runs independently in a
 90-minute x64 job. A source/run/target-bound immutable artifact transfers its four
 executables, full PDBs and UI to a 45-minute native qualification job for CLI/symbol
@@ -143,13 +146,19 @@ caching. An unavailable checkpoint fails with retained JSON evidence instead of
 reporting a successful cache save. Native tool archives use the same reporting.
 The verified engine artifact is still retained if only the cache checkpoint fails.
 
-An aggregation job downloads each producer by its immutable artifact ID and
-requires all eight successful gates from the exact source, run and target.
+Each architecture's aggregation job downloads producers by immutable artifact ID
+and requires all eight successful gates from the exact source and run. Both use
+the same frontend artifact. Stage and pipeline schema 2 mark its UI and Browser
+gates as `Target=shared` with `HostTarget=x86_64-pc-windows-msvc`; the other six
+gates must match the package's native target. Frontend execution rejects emulated
+or non-x64 hosts. Native ARM64 application, WebView, CLI, symbols and installer
+qualification remain required.
+
 Successful producers from an earlier attempt of that same run may be reused
 when retrying failed jobs; future attempts and other runs are rejected. Validation
 and packaging must use the identical engine artifact. `pipeline-inputs.json`
-retains the producer IDs, manifest digests and original engine identity, and the
-signing boundary checks the gate results again. The fresh final dependency-policy
+retains the producer IDs, execution scopes, manifest digests and original engine
+identity, and the signing boundary checks the gate results again. The fresh final dependency-policy
 job still waits for every required producer before the protected signing gate.
 
 For a local cross-build with the ARM64 Visual Studio C++ component installed, use

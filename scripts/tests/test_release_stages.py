@@ -158,8 +158,8 @@ class ReleaseStageTests(unittest.TestCase):
         for stage, root in self.sources.items():
             for gate in stages.GATES[stage]:
                 write(root / f"evidence/gates/{gate}.json", {
-                    "Name": gate, "Result": "passed", "Stage": stage, "Commit": COMMIT,
-                    "RunId": "123", "Target": TARGET, "RunAttempt": "1",
+                    "Schema": stages.SCHEMA, "Name": gate, "Result": "passed", "Stage": stage, "Commit": COMMIT,
+                    "RunId": "123", **stages.stage_identity(stage, TARGET), "RunAttempt": "1",
                 })
             if stage != "Frontend":
                 write(root / f"evidence/v8-engine-{stage.lower()}.json", self.engine)
@@ -178,17 +178,84 @@ class ReleaseStageTests(unittest.TestCase):
 
     def merge(self, **kwargs):
         stages.merge(kwargs.get("sources", self.sources), kwargs.get("ids", self.ids),
-                     self.output, COMMIT, "123", TARGET, kwargs.get("attempt", "1"))
+                     self.output, COMMIT, "123", kwargs.get("target", TARGET), kwargs.get("attempt", "1"))
 
     def test_merges_complete_gates_and_retains_immutable_producer_ids(self):
         self.merge(attempt="2")
         manifest = json.loads((self.output / "build-manifest.json").read_text())
-        self.assertEqual(manifest["PipelineSchema"], 1)
+        self.assertEqual(manifest["PipelineSchema"], 2)
         self.assertEqual(manifest["ReleaseType"], "Canary")
         provenance = json.loads((self.output / "evidence/pipeline-inputs.json").read_text())
         self.assertEqual(provenance["Stages"]["Validation"]["ArtifactId"], "102")
         self.assertEqual(provenance["Stages"]["Validation"]["RunAttempt"], "1")
+        self.assertEqual(provenance["Stages"]["Frontend"]["Target"], "shared")
+        self.assertEqual(provenance["Stages"]["Frontend"]["HostTarget"], TARGET)
         self.assertEqual(len(list((self.output / "evidence/gates").glob("*.json"))), 8)
+
+    def test_both_native_targets_consume_the_same_unchanged_shared_frontend(self):
+        self.merge()
+        first = json.loads((self.output / "evidence/pipeline-inputs.json").read_text())
+        frontend_digest = engine.digest(self.sources["Frontend"] / "stage-manifest.json")
+        arm = engine.TARGETS[1]
+        native = json.loads(json.dumps(self.engine))
+        native["Target"] = arm
+        native["ArtifactId"] = "200"
+        native["Engine"]["identity"]["target"] = arm
+        native["Engine"]["key"] = engine.encoded_digest(native["Engine"]["identity"])
+        for stage in ("Validation", "Package"):
+            root = self.sources[stage]
+            for gate in stages.GATES[stage]:
+                path = root / f"evidence/gates/{gate}.json"
+                value = json.loads(path.read_text())
+                write(path, dict(value, Target=arm))
+            write(root / f"evidence/v8-engine-{stage.lower()}.json", native)
+            if stage == "Package":
+                path = root / "evidence/package-metadata.json"
+                write(path, dict(json.loads(path.read_text()), Target=arm))
+            stages.export(root, stage, COMMIT, "123", arm, "1")
+        self.output = self.root / "arm64-merged"
+        self.merge(target=arm, ids={"Frontend": "101", "Validation": "202", "Package": "203"})
+        second = json.loads((self.output / "evidence/pipeline-inputs.json").read_text())
+        self.assertEqual(first["Stages"]["Frontend"], second["Stages"]["Frontend"])
+        self.assertEqual(engine.digest(self.sources["Frontend"] / "stage-manifest.json"), frontend_digest)
+        for name in ("UI", "Browser"):
+            gate = json.loads((self.output / f"evidence/gates/{name}.json").read_text())
+            self.assertEqual((gate["Target"], gate["HostTarget"]), ("shared", TARGET))
+        self.assertEqual(second["Stages"]["Validation"]["Target"], arm)
+
+    def test_rejects_mislabelled_or_legacy_frontend_provenance(self):
+        root = self.sources["Frontend"]
+        path = root / "stage-manifest.json"
+        original = json.loads(path.read_text())
+        for changes in ({"Target": TARGET}, {"Target": engine.TARGETS[1]},
+                        {"HostTarget": engine.TARGETS[1]}, {"HostTarget": None}, {"Schema": 1}):
+            with self.subTest(changes=changes):
+                write(path, dict(original, **changes))
+                with self.assertRaisesRegex(ValueError, "source, run, attempt, target or producer"):
+                    self.merge()
+        write(path, original)
+        for gate in stages.GATES["Frontend"]:
+            path = root / f"evidence/gates/{gate}.json"
+            value = json.loads(path.read_text())
+            for changes in ({"Target": TARGET}, {"HostTarget": engine.TARGETS[1]}, {"Schema": 1}):
+                with self.subTest(gate=gate, changes=changes):
+                    write(path, dict(value, **changes))
+                    self.refresh("Frontend")
+                    with self.assertRaisesRegex(ValueError, "did not pass"):
+                        self.merge()
+            write(path, value)
+            self.refresh("Frontend")
+
+    def test_shared_frontend_cannot_relabel_native_validation(self):
+        path = self.sources["Validation"] / "evidence/gates/Native.json"
+        write(path, dict(json.loads(path.read_text()), Target="shared", HostTarget=TARGET))
+        self.refresh("Validation")
+        with self.assertRaisesRegex(ValueError, "did not pass"):
+            self.merge()
+
+    def test_frontend_export_requires_x64_execution_target(self):
+        with self.assertRaisesRegex(ValueError, "execute on Windows x64"):
+            stages.export(self.sources["Frontend"], "Frontend", COMMIT, "123", engine.TARGETS[1], "1")
 
     def test_rejects_missing_null_or_incompatible_package_release_type(self):
         path = self.sources["Package"] / "evidence/package-metadata.json"
