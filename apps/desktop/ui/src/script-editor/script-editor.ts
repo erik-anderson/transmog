@@ -2091,7 +2091,7 @@ export class ScriptEditor extends WorkspaceElement {
         this.feedback(
           build
             ? `Editing JavaScript from compiled build ${build.manifest.revision}${[...status.active, ...(status.paused ?? [])].some((item) => item.manifest.id === "user-script" && item.manifest.revision === build.manifest.revision && item.javascriptHash === build.javascriptHash) ? " (applied)" : " (not applied)"}. TypeScript edits and previous JavaScript drafts are retained. ${this.appliedBuildText}`
-            : "No successful build exists. A JavaScript starter is ready; your TypeScript is retained.",
+            : "No successful build exists. The JavaScript editor starts empty; your TypeScript is retained.",
         );
       } catch (error: unknown) {
         this.scriptFailure("Language switch failed", error);

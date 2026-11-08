@@ -6,29 +6,53 @@ through MCP `transmog_help`. The editor supplies the [complete types](../crates/
 
 ## Write and enable a script
 
-Open Automation → Scripts and choose Handlers in the Traffic scripts header. A new workspace starts with an empty TypeScript draft. Add inserts a task-named synchronous handler with sample code behind a local boolean initialized to false. Go to reveals your existing implementation; Review identifies incomplete or conflicting declarations. View full sample opens the complete reference example in read-only API docs.
+Open Automation → Scripts. A new workspace starts with an empty TypeScript draft. Choose a task in Handlers: Add inserts a handler, Go to reveals existing code, and Review takes you to a declaration that needs repair.
 
-Change the inserted boolean to true to try its sample code in the sandbox. Review settings opens the relevant capability or filter without changing it. Body handlers require Read bounded bodies even when the switch is false; whole-body handlers buffer matching messages. Save draft, sandbox testing and live activation are explicit actions.
+Inserted handlers keep sample behavior behind a boolean set to false. Change it to true to try the sample. Adding code does not grant permissions, save the draft, or enable the script. View full sample opens a read-only reference example without inserting it.
 
-Save draft keeps your work. Save & enable applies it to new requests; Save & apply updates an enabled script. Unsaved edits and failed builds leave the applied script unchanged.
+Open Filters, capabilities, and parameters to set the traffic scope and permissions. New drafts target example.test; blank request filters match all traffic. Review settings opens the field needed by an inserted handler. Body callbacks need Read bounded bodies even with the sample switch off; complete-body handlers buffer matching messages.
 
-Pause script stops selecting new requests. Requests already in progress keep the version they started with. Scripts run on traffic received by the proxy; direct Composer sends and imported captures do not run scripts.
+Save draft keeps unfinished work. Use Debug → Test in sandbox to try the draft without sending traffic, then Save & enable when ready. Save & apply updates an enabled script. Scripts run on proxy traffic; direct Composer sends and imported captures do not run them.
 
-Export synchronous handlers and import helpers and types from transmog:api. Browser and Node APIs, network access, files, and timers are unavailable. Handlers cannot return promises.
+## Save, validate and apply
 
-If the applied script becomes unavailable, matching requests can fail. Choose Retry applied script, apply a fix, or Pause script.
+Save draft or Ctrl+S saves source, settings and retained language drafts without compiling or changing live traffic. TypeScript errors do not prevent saving. Save before closing the app; unsaved edits are not saved automatically. Discard changes restores the saved draft, or the initial draft if none was saved, without changing the applied script.
+
+Choose TypeScript / JavaScript → Validate only to check and build the draft. Validation, sandbox-test preparation and generated-output comparisons can update the latest compiled build without saving or applying it. View applied JavaScript is available for an applied build, including while paused; Compare with active is available while the script is on.
+
+Save & enable and Save & apply check, build and start the script, then save and apply that exact version to new matching requests. Failed builds or activation leave the previously applied version unchanged. Requests already in progress keep the version they started with.
+
+Pause script stops selecting the applied build for new requests. Resume applied script restarts that build while preserving newer draft edits. If an applied script is unavailable, use Retry applied script to restart the same build, apply a fix, or pause it.
+
+Saved means the editing draft is stored. Unapplied changes means its executable source or settings differ from the active build. Type-check results and runtime availability are shown separately.
+
+## Change language and recover drafts
+
+The editor checks TypeScript against the bundled Transmog types. Fix errors before validation, sandbox testing or applying TypeScript. Choose an issue below the editor to jump to its source; Check TypeScript again retries the check. Save draft remains available.
+
+TypeScript → Edit JavaScript starts from the latest successful compiled build, which may come from validation or testing rather than the applied script. Newer TypeScript edits are retained separately. Without a successful build, the JavaScript editor starts empty.
+
+To return, choose JavaScript → Return to TypeScript…, repair the retained source, then Compare generated JavaScript. Review current JavaScript on the left and TypeScript output on the right. Use TypeScript output selects TypeScript; Keep JavaScript retains your repairs while continuing with JavaScript. Neither choice changes live traffic.
+
+Previous JavaScript drafts keeps up to eight displaced drafts for inspection, restoration or removal. Undo draft removal restores the latest removal in this editor. Save draft to keep language choices, repairs and recovery drafts across app restarts.
+
+## Resolve a save conflict
+
+If another window changes the saved script, choose Compare with saved script. Review the source and Compare settings and retained drafts before choosing either version.
+
+Keep my draft accepts the reviewed saved version as the new baseline; it does not save over it. Your next save or apply replaces that version. Load saved draft replaces the editor contents and offers Restore my previous draft for your displaced work.
+
+Neither choice changes live traffic. Save recovered work before closing the app.
 
 ## JavaScript runtime
 
-Traffic scripts and protocol visualizers provide modules, promises, Date, Intl, Unicode strings, and the Transmog API. Temporal, WebAssembly, browser APIs, and Node APIs are unavailable in the isolated runtime.
+Traffic scripts and protocol visualizers support modules, promises, Date, Intl, Unicode strings and the Transmog API. Network access, files, timers, browser and Node APIs, Temporal and WebAssembly are unavailable in the isolated runtime.
 
 Unicode normalization, Unicode property escapes in regular expressions, locale-sensitive casing and comparison, international number/date formatting, and text segmentation are supported. Supply explicit locales and time zones when transformations must produce consistent results across computers.
 
-These restrictions apply to isolated scripts and visualizers. The desktop browser has its own JavaScript capabilities. Native script debugging remains available.
-
 ## Callbacks, decisions and permissions
 
-Every callback receives the request, parameters, state, and context. The table shows its additional inputs and allowed decisions. These inputs are read-only.
+Export synchronous handlers and import helpers and types from transmog:api. Handlers cannot return promises. Each callback receives the request, parameters, state and context; the table shows its additional inputs and allowed decisions. Inputs are read-only.
 
 Return a decision with helpers such as pass(), edit(), and respondJson(). Combine related header, status, and body changes in one edit. Empty bytes clear a complete body. Streaming callbacks also support forward(), emit() and needMore().
 
@@ -124,35 +148,43 @@ export function onRequestHead(event: RequestHeadEvent) {
 }
 ```
 
-## Debug a script
-
-In Automation → Scripts, choose Debug → Open debugger for live traffic. In Settings → Extensions, choose Open debugger. F12 toggles the debugger. After the first open, the app toolbar keeps a Debugger shortcut until you quit. Browse saved scripts and installed extension files without activating them. Click beside a line number to toggle a breakpoint, or right-click for a condition or logpoint. A filled red circle is bound; an outline is pending. Logpoints use blue diamonds.
-
-Use Ctrl+P to open a source; append :line or :line:column, or use :line for the current file. Ctrl+Shift+F searches source text and selects the matching text.
-
-While the workspace is open, normal script and visualizer workers honor breakpoints and debugger statements. Dock it beside Traffic or move it to a separate window. Moving preserves Console history, filters, and cleared output. Closing continues paused work and detaches; saved breakpoints return next time.
-
-F8 or Ctrl+\ continues a paused worker, or arms Pause next callback. Pause in selects a worker or Any script or extension in this window, including workers created later. Press again to cancel. Each arm pauses one callback and preserves the target choice for the next arm. F5 also continues. Step over: F10. Step into: F11. Step out: Shift+F11. Stop: Shift+F5. Hover or focus toolbar icons for their shortcuts. Switch between mapped TypeScript and running JavaScript when a source map is available.
-
-Use the Breakpoints list to enable, disable, edit, or remove saved points. Skip all pauses temporarily ignores breakpoints, logpoints, debugger statements, and exception pauses while keeping those choices. Continue to here runs to a selected line once. Logpoints print an expression without pausing when their condition matches; use a string or template literal to format output.
-
-The pause banner shows the callback and any captured request. Show request selects it in Traffic. Select a frame to inspect its scopes or copy the stack trace. Expand values and scroll for more properties; large collections use ranges. Watches refresh on pause, step, or frame changes and can be edited in place. Committed expressions return when you reopen the debugger during the app session. Right-click selected source to add a watch or evaluate it in Console; Ctrl+Shift+E evaluates the selection. Watches and hover previews reject side effects. Property browsing and completion never run getters or proxy traps. Values expire when execution resumes or pauses again.
-
-Console's Run in choice selects Scratch or the selected worker. Scratch is available before any script runs and keeps its variables through debugger close/reopen in its owning window. Reset scratch clears its variables separately from Clear output. Worker commands run JavaScript in the selected paused frame or its idle global context, and can change its state. Use Up/Down for command history, Ctrl+Space for runtime completion, and Tab to accept a suggestion. Expand object results to inspect their data properties. Callback output and command results share the Console; filter by context or level and open Details for technical identifiers. Conditions and log expressions reject side effects. A failed condition pauses; a failed log expression reports an error in the Console.
-
-Transmog suspends dependent execution deadlines while debugging blocks a worker. Cancellation remains available. Remote client and server timeouts still apply.
-
-Debug → Test in sandbox runs the current draft with the selected callback or scenario input and shows the result. Run sandbox test in debugger runs the same input in a fresh worker under the debugger. With pauses enabled, it stops before its first user statement. Restart reruns the test with the current draft and input without applying them to traffic. Stop aborts selected work. Closing, including F12 or Continue and detach, continues paused work and detaches all workers.
-
 ## Test in the sandbox
+
+Open Sandbox input and results below the editor to choose a test mode and set the input. Run it with Debug → Test in sandbox, or choose Run sandbox test in debugger to step through the same draft and input. Neither action applies the draft to traffic.
 
 Single callback runs only the selected handler, starting with empty state. It bypasses the request and body filters. Use it to check a callback’s returned changes.
 
-Exchange scenario tests filters, request/response callbacks, and carried state together. A pass means no script or processing errors. Inspect which callbacks ran and the resulting messages to confirm your changes. Failed streams retain output produced before the failure. A simulated upstream failure can still pass.
+Exchange scenario tests filters, request/response callbacks, and carried state together. A pass means no script or processing errors. Inspect which callbacks ran and the resulting messages to confirm your changes. Failed streams retain output produced before the failure. A simulated upstream failure can still pass. An unresolved response asset makes the result incomplete.
 
 Neither mode sends traffic or enables the script. Tests use the draft’s capabilities and parameters, but do not verify network behavior or resolve saved response assets. Supply decoded body fixtures without Content-Encoding. Confirm the result with matching proxy traffic.
 
-To test split input, enter response chunk byte counts; any remaining bytes form the last chunk. Byte counts can split UTF-8 characters. Chunk delays are simulated; their total must fit the second half of the scenario duration. Results show header-release time and a bounded callback timeline. Developer details includes earlier chunk logs and diagnostics; phase evidence records the last callback. Single callback tests let you set EOF and simulate held headers.
+To test split input, enter response chunk byte counts; remaining bytes form the last chunk. Counts may split UTF-8 characters. Chunk delays are simulated and must fit the second half of the scenario duration. Results show header-release time and a bounded callback timeline. Single callback tests can set EOF and simulate held headers.
+
+## Debug a script
+
+Choose Debug → Open debugger for live traffic, Open debugger in Settings → Extensions, or press F12. After its first open, the toolbar keeps a Debugger shortcut until you quit. Browsing saved scripts or installed extension sources does not activate them.
+
+Use Ctrl+P to open a source and Ctrl+Shift+F to search sources. Append :line or :line:column to the source query. Click beside a line number to toggle a breakpoint; right-click for a condition or logpoint. A filled red circle is bound, an outline is pending, and a blue diamond marks a logpoint.
+
+F8 or Ctrl+\ continues a paused worker, or arms Pause next callback when not paused. Pause in selects a worker or Any script or extension in this window, including workers created later. Each arm catches one callback; press again before it pauses to cancel. With Any script or extension, attachment and Scratch commands do not consume the arm. The target choice stays selected for the next arm.
+
+The pause banner identifies the callback and any captured request; Show request selects it in Traffic. Select a stack frame to inspect its scopes or copy the stack. Watches refresh on pause, step and frame changes. Right-click selected source to add a watch or evaluate it in Console; Ctrl+Shift+E evaluates the selection in the chosen Console context.
+
+Watches, hover previews, conditions and log expressions reject side effects. Property browsing and completion never run getters or proxy traps. Paused values expire when execution resumes or pauses again. A failed condition pauses with an explanation; a failed log expression reports a Console error. Skip all pauses temporarily suppresses breakpoints, logpoints, debugger statements and exception pauses.
+
+F5 also continues. Step over: F10. Step into: F11. Step out: Shift+F11. Stop: Shift+F5. Continue to here runs to a selected line once. Restart reruns a sandbox test from its current draft and input, or restarts an applied script from its applied build. Stop aborts the selected worker.
+
+Use Dock to move the debugger and View to choose its panes; checkmarks identify visible panes. Closing, including F12 or Continue and detach, continues paused workers and cancels an armed callback pause. Reopening in the same window restores its view and saved breakpoints. Remote client and server timeouts still apply while paused.
+
+## Use Console or Scratch
+
+Console’s Run in choice selects Scratch or the selected worker, independently of output filters and Pause in. Worker commands run in the selected paused frame or its idle global context and can change its state. A live pause preserves a Scratch destination.
+
+Scratch is a separate JavaScript context in each main or capture window. It works before scripts run and keeps variables through debugger close/reopen and docking changes. Closing its owning window discards it.
+
+Reset scratch appears only for Scratch. It cancels Scratch work and clears variables and object references, while keeping output, command history and the typed draft. Clear output clears the transcript without clearing variables.
+
+Enter runs a command; Shift+Enter adds a line. Use Up/Down for command history, Ctrl+Space for runtime completion and Tab to accept a suggestion. Expand object results to inspect data properties. Filter output by context or level; Details shows technical identifiers.
 
 ## Complete examples
 

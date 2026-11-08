@@ -97,48 +97,32 @@ saved script source and settings without changing the active script.
 
 ## Traffic script authoring and execution
 
-Open **Automation → Scripts** and choose **Handlers** in the **Traffic scripts** header.
-The **TypeScript** or **JavaScript** menu holds language, validation, and comparison
-commands. **Debug** and **Open API docs** are in the same header.
-A new workspace starts with an empty TypeScript draft. The menu groups seven
-tasks under Request, Response, and Outcome. **Add** inserts a synchronous handler
-with useful sample code behind a descriptive boolean initialized to `false`;
-the selected boolean is ready to edit. One Undo removes the handler and its new
-imports. **Go to** reveals an existing handler, including your own implementations.
-**Review** takes you to an incomplete or conflicting declaration for repair.
+Open **Automation → Scripts**. A new workspace starts with an empty TypeScript
+draft. Choose a task in **Handlers**: **Add** inserts a handler, **Go to** reveals
+existing code, and **Review** takes you to a declaration that needs repair. One
+Undo removes an inserted handler and its new imports.
 
-Each example passes traffic through by default. Turn its switch on to try its
-change in the sandbox, then review **Filters, capabilities, and parameters**
-before choosing **Save & enable**. The contextual **Review settings** action opens
-the relevant field, returning an expanded editor to its panel first. Adding code
-keeps permissions, filters, saving, and live activation explicit. Body callbacks
-require **Read bounded bodies** even with their switches off. Whole-body callbacks
-buffer matching messages and hold headers. The menu's body examples identify
-the filters and write permissions needed to try their edits.
+Inserted sample behavior starts behind a boolean set to `false`. Change it to
+`true` to try the sample. Adding code does not grant permissions, save the draft
+or enable the script. **View full sample** opens a read-only reference example
+without inserting it.
 
-**View full sample** in an empty editor opens the large reference example in
-read-only API docs. TypeScript is the default authoring language; exported
-handlers are checked against their phase contracts. Saved TypeScript and
-JavaScript drafts retain their authored source and settings. Drafts without source
-edits use the current starter view when the app updates. Source provenance is
-saved explicitly, including when a draft saves only settings.
-**Open API docs** includes searchable guides, complete examples and the full
-`transmog:api` namespace in a read-only Monaco editor with TypeScript highlighting.
-Search a symbol to reveal its declaration, or use Ctrl+F within the reference.
-Helpers are module exports: import them by name, or import the namespace and use
-`api.` completion. Live type-check feedback stays below the source editor so
-temporary errors do not move the typing surface.
-Export `onResponseBody` for complete-body edits and headers that depend on the
-full body; buffering is automatic. Export `onResponseChunk` for incremental
-processing. If both are exported, `onResponseBody` is the default.
-In streaming mode, `needMore()` retains pending bytes and `forward(consumed)`
-forwards an unchanged prefix without body-write permission. Return
-`deferResponseHeaders()` from `onResponseHead` to also hold headers for initial
-inspection. The editor shows the inferred default below the source.
-See [streaming callbacks](scripting.md#stream-or-wait-for-response-bytes) for
-conditional selection, boundary-safe helpers and the complete examples.
-Traffic executes the applied JavaScript build. These scripts modify
-matching requests and responses. Packaged read-only visualizers use the separate
+Set traffic scope and permissions in **Filters, capabilities, and parameters**.
+New drafts target `example.test`; blank request filters match all traffic.
+**Review settings** opens the field needed by an inserted handler. Body callbacks
+require **Read bounded bodies** even with the sample switch off. Complete-body
+handlers buffer matching messages and hold headers; the editor shows the inferred
+body mode below the source. See [streaming callbacks](scripting.md#stream-or-wait-for-response-bytes)
+for body modes and helpers.
+
+The **TypeScript / JavaScript** menu holds validation, language and comparison
+commands. **Debug** holds sandbox tests and debugger actions. **Open API docs**
+provides searchable guides, complete examples and the full `transmog:api`
+namespace. Search a symbol or use Ctrl+F within the read-only reference. Import
+helpers by name, or use a namespace import for `api.` completion.
+
+Traffic runs the applied JavaScript build. Direct Composer sends and imported
+captures do not run scripts. Packaged read-only visualizers use the separate
 [extension workflow](extensions.md).
 
 ### Drafts, builds and live traffic
@@ -155,7 +139,8 @@ need saving, but do not mark unchanged executable code as unapplied.
 
 | Action | Effect |
 | --- | --- |
-| **Save draft** or Ctrl+S | Saves unfinished source, settings and recovery drafts. Passing type checks is not required; no JavaScript is emitted and live traffic is unchanged. |
+| **Save draft** or Ctrl+S | Saves unfinished source, settings and recovery drafts. Passing type checks is not required; live traffic is unchanged. |
+| **Discard changes** | Restores the saved draft, or the initial draft if none was saved, without changing the applied script. |
 | **TypeScript / JavaScript → Validate only** | Checks the current draft and retains a successful build. |
 | **Debug → Test in sandbox** | Runs the draft with the selected callback or exchange-scenario input and reports the result. |
 | **Debug → Run sandbox test in debugger** | Runs the same draft and input under the debugger. With pauses enabled, it stops at the first user statement. |
@@ -163,47 +148,39 @@ need saving, but do not mark unchanged executable code as unapplied.
 | **Pause script** | Stops selecting the applied build for new requests and retains it. |
 | **Resume applied script** | Restarts the paused applied artifact, preserving newer or invalid drafts without rebuilding them. |
 
-Compilation happens only during explicit authoring actions, including generated
-output comparison. A successful validation, sandbox-test preparation or comparison
-can replace the latest compiled build without saving the editing draft or
-changing the applied build. Successful compilation does not prove that a sandbox
-can start or that the script works for every input. Sandbox testing is optional.
-**Single callback** starts with empty state and bypasses request/body filters.
-**Exchange scenario** runs native selection, related edits and shared state through
-completion or a simulated upstream failure. Each phase explains whether it ran or
-was skipped. The verdict reports callback/pipeline errors independently of the exchange
-outcome: an expected upstream failure can pass, while a terminal callback error
-fails the test even if the exchange completed. Unresolved assets are incomplete.
-Inspect phase selection and resulting messages to check your intent. Failed
-streams retain output produced before the failure. Scenarios use
-decoded fixtures and simulated timing. They do not send traffic or resolve saved
-response assets; confirm behavior with matching proxy traffic.
-Optional response chunk byte counts split the UTF-8 fixture; remaining bytes form
-the last chunk. Total simulated chunk delays must fit the second half of the
-scenario duration. Results show header release time and a streaming callback
-timeline. Developer details includes earlier chunk logs and diagnostics within the
-live evidence limits; each phase's result records its last callback. Single
-callback tests can set EOF and simulate headers held for initial inspection.
-Both modes enforce live capabilities and use the candidate's parameter values.
-The draft’s native traffic scope stays visible beside the editor. **Open API docs**
-opens searchable bundled help and complete examples with required settings; the
-[repository reference](scripting.md) and MCP help use the same content.
-Changing source, capabilities or test input marks earlier test results outdated.
-Samples can be authored or copied from a selected Traffic request with sensitive
-headers omitted.
+Validation, sandbox-test preparation and generated-output comparisons can update
+the latest compiled build without saving or applying the editing draft. A
+successful build does not prove that the sandbox can start or that the script
+works for every input. Sandbox testing is optional.
 
-Failed publishing preserves the applied version and current edits. In-flight
-requests retain their original registration snapshot. Concurrent workspace
-changes invalidate stale activation candidates. **Source title → Compare with active**
-compares source and settings without applying the draft. Reopening restores the
-newest saved draft or applied source. Save the editing draft before closing the
-app; a compiled artifact does not replace its saved baseline.
+Open **Sandbox input and results** to choose a mode and set fixtures:
+
+- **Single callback** starts with empty state and bypasses request/body filters.
+- **Exchange scenario** tests filter selection, related callbacks, edits and shared
+  state. Inspect which callbacks ran and the resulting messages. A simulated
+  upstream failure can pass; callback or processing errors fail the test.
+
+Both modes use the draft's capabilities and parameters. They do not send traffic
+or resolve saved response assets. Use decoded body fixtures without
+`Content-Encoding`, then confirm behavior with matching proxy traffic. Test
+results become **Outdated** when source, settings or input changes. **Use selected
+Traffic request** copies the URL, method and nonsensitive headers; it clears the
+body input. See [sandbox testing](scripting.md#test-in-the-sandbox) for chunk timing
+and streaming fixtures.
+
+If applying fails, the previously applied version and current edits remain intact.
+Requests already in progress keep the version they started with. If another
+window saves changes, review them before applying your draft.
+**TypeScript / JavaScript → Compare with active** compares source and settings
+without applying the draft. Reopening restores the newest saved draft or applied
+source. Save the editing draft before closing the app; a compiled build does not
+replace it.
 
 ### TypeScript checks and JavaScript recovery
 
 The editor checks TypeScript against the current bundled declarations when it
 first opens in a window, after edits, and before validation, sandbox testing or
-publishing. These checks do not emit JavaScript or change the applied build.
+applying. These checks do not emit JavaScript or change the applied build.
 The type environment includes ECMAScript and the Transmog API without browser
 or Node globals.
 Type errors, syntax errors or an unavailable checker block those TypeScript
@@ -217,13 +194,10 @@ TypeScript or choose **TypeScript → Edit JavaScript**. That action starts from
 testing and may never have been applied. Newer TypeScript edits are retained
 separately and are not included in that JavaScript draft. Feedback identifies the
 starting build and whether it is applied. With no successful build, the editor
-provides a JavaScript starter while retaining the TypeScript draft.
+opens an empty JavaScript editor while retaining the TypeScript draft.
 
-JavaScript authoring does not require the retained TypeScript to pass checking.
-Its syntax, exports, declared capabilities and sandbox startup still undergo
-native validation. The backend transpiles TypeScript without full TypeScript
-type checking; the desktop adds its existing Monaco diagnostics before authoring
-actions. Headless callers must supply any type-checking policy they require.
+JavaScript authoring does not require retained TypeScript to pass checking. Its
+syntax, exported handlers and capabilities are still validated before activation.
 
 ### Return to TypeScript and recover earlier JavaScript
 
@@ -235,7 +209,7 @@ actions. Headless callers must supply any type-checking policy they require.
 3. Choose **Use TypeScript output** to select TypeScript authoring, or **Keep
    JavaScript** to return to JavaScript while retaining TypeScript repairs.
 4. **Save draft** to persist the choice, or **Save & enable** / **Save & apply** to
-   publish it. Selecting a language or viewing the comparison never publishes it.
+   apply it. Selecting a language or viewing the comparison does not apply it.
 
 **Use TypeScript output** requires a successful, current comparison; subsequent
 edits invalidate it. Closing the comparison keeps the TypeScript review open.
@@ -250,12 +224,12 @@ JavaScript drafts**, newest first. Expand an entry to inspect, restore or remove
 it. Restoring also retains the current JavaScript draft. The list holds up to
 eight earlier drafts; when full, explicitly remove one before retaining another.
 **Undo draft removal** restores the most recent removal in the current editor.
-Save the draft or publish to persist language changes and recovery drafts across
+Save the draft or apply it to persist language changes and recovery drafts across
 restart; merely switching or restoring does not save them.
 
 ### Resolve a save conflict
 
-Saving and publishing compare with the saved editing baseline loaded by this
+Saving and applying compare with the saved editing baseline loaded by this
 window. If another window changes it, both versions are preserved and **Compare
 with saved script** becomes available. Review the source and the **Compare
 settings and retained drafts** disclosure, then choose **Keep my draft** or
@@ -278,25 +252,19 @@ edits. Pause the script if its effects should stop while you repair it. The
 Automation activity count describes configured activation, not successful script
 execution.
 
-**Source title → View applied JavaScript** shows executable code even while paused. The
-build disclosure identifies the latest compiled build, whether it is applied,
-its compiler provenance, and source/JavaScript/declaration hashes. Source/build
-alignment, current type-check results and runtime availability are independent:
-unchanged source can match its compiled build and have new type errors. Runtime
-failures with a source location use the executed artifact's source map when
-available; direct JavaScript locations refer to its unchanged executable bytes.
+**TypeScript / JavaScript → View applied JavaScript** shows the code used by
+traffic, including while paused. The build disclosure identifies the compiled
+build and whether it is applied. Source/build alignment, type-check results and
+runtime availability are independent: unchanged source can match its build and
+have new type errors. Runtime failures show locations in the code that ran;
+TypeScript locations use its source map when available.
 
-Restart, resume and retry validate and load stored JavaScript without TypeScript
-transpilation. Compiler provenance and declaration hashes do not require a
-rebuild. They also do not promise compatibility with future scripting API or
-JavaScript runtime changes; those remain separate contracts.
-
-Startup discards script workspace files declaring an older schema; it does not
-migrate their source or activation state. If no current workspace remains, scripts
-start empty. Current-schema, future-schema and malformed files are preserved;
-loading reports an error if none can be read as a valid current workspace.
-See [persisted state](product-state-and-support.md#persisted-state) for storage
-and recovery boundaries.
+Restart, resume and retry use stored JavaScript without recompiling TypeScript.
+Runtime and scripting API compatibility are separate constraints. Startup discards
+script workspace files with an older schema; current, newer and malformed files
+are preserved.
+See [persisted state](product-state-and-support.md#persisted-state) for storage and
+recovery boundaries.
 
 ## Choose an editing workflow
 
