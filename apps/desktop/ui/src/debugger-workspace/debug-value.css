@@ -75,3 +75,7 @@ th > button {
 .property-label {
   white-space: pre;
 }
+[data-kind="string"] { color: var(--console-string, #96511a); }
+[data-kind="number"], [data-kind="boolean"], [data-kind="bigint"] { color: var(--accent-strong); }
+tr:focus-visible, .heading:focus-visible { outline: 2px solid var(--accent-strong); }
+@media (forced-colors: active) { [data-kind] { color: CanvasText; } }

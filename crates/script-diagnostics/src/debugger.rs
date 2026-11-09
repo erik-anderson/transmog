@@ -490,6 +490,12 @@ pub enum DebugEventKind {
     },
     /// Console calls made by an explicit Immediate command, separate from callback logs.
     Output {
+        /// Immutable debugger-only snapshots of logged arguments.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        values: Vec<crate::LogValue>,
+        /// Native trace frames.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        frames: Vec<crate::StackFrame>,
         /// Native console level.
         level: crate::LogLevel,
         /// Bounded inert snapshot text.

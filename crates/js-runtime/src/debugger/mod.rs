@@ -155,6 +155,7 @@ impl Runtime {
             return Err(debug_error("Debugger event transport unavailable"));
         }
         self.debugger = Some(connection);
+        crate::state(&self.isolate).console.borrow_mut().snapshots = true;
         Ok(())
     }
 
@@ -368,6 +369,7 @@ impl Debugger {
         }
     }
     pub(crate) fn close(&self) {
+        self.client.runtime_state.console.borrow_mut().snapshots = false;
         self.client.values.borrow_mut().clear();
         self.client.session.borrow_mut().take();
         *self.inspector.client.borrow_mut() = Weak::new();
@@ -878,6 +880,8 @@ impl Client {
             self.emit(
                 request,
                 DebugEventKind::Output {
+                    values: record.values,
+                    frames: record.frames,
                     level: record.level,
                     text: record.text,
                 },
@@ -887,6 +891,8 @@ impl Client {
             self.emit(
                 request,
                 DebugEventKind::Output {
+                    values: vec![],
+                    frames: vec![],
                     level: transmog_script_diagnostics::LogLevel::Warn,
                     text: format!("{} additional console records omitted", dropped.get()),
                 },

@@ -151,6 +151,11 @@ export class InspectionCopyMenu extends WebUIElement {
         this.close(false);
         return;
       }
+      if (action.run) {
+        this.close();
+        await action.run();
+        return;
+      }
       const conversion = action.readConversion ? await action.readConversion(current) : null;
       if (!conversion && !action.read) {
         throw new CopyError("This action is unavailable. Open the menu again.");

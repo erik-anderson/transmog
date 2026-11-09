@@ -182,6 +182,12 @@ when changing the experience.
   never run getters or proxy traps. Explicit Console commands may change the worker.
   Expire values when their execution scope changes, and keep ordinary Console
   output readable with technical identifiers behind details.
+  Show ordinary Console logs, warnings and errors by default. Let users combine
+  levels and opt into verbose output. Keep prompt logs individually filterable,
+  with commands and results visible. Logged object snapshots preserve bounded
+  data from log time, and contextual copying uses displayed values without
+  executing code. Distinguish severity with icons and accessible labels as well
+  as color.
   Keep Console's execution destination separate from output filters and callback
   pause targeting. A live pause preserves an explicitly chosen Scratch destination.
   Each owning window retains its Scratch heap through debugger dismissal and moves;

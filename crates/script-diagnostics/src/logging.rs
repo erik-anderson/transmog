@@ -14,6 +14,60 @@ pub const MAX_LOG_FRAMES: usize = 8;
 /// Maximum retained trace frames across one complete operation.
 pub const MAX_LOG_TOTAL_FRAMES: usize = 32;
 
+/// One immutable value in a flat, bounded Console snapshot. Parents precede children.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LogValue {
+    /// Property name, or empty for an argument.
+    pub name: String,
+    /// Parent index; absent for an argument.
+    pub parent: Option<u16>,
+    /// Engine-owned value classification.
+    pub kind: String,
+    /// Bounded inert display text.
+    pub display: String,
+    /// Properties or text were omitted.
+    pub truncated: bool,
+}
+
+/// Validates flat snapshots before retaining untrusted worker output.
+pub fn snapshot_bounded(values: &[LogValue]) -> bool {
+    values.len() <= 64
+        && values.iter().enumerate().all(|(index, value)| {
+            let mut parent = value.parent;
+            let mut depth = 0;
+            while let Some(next) = parent {
+                if usize::from(next) >= index || depth >= 4 {
+                    return false;
+                }
+                parent = values[usize::from(next)].parent;
+                depth += 1;
+            }
+            matches!(
+                value.kind.as_str(),
+                "string"
+                    | "number"
+                    | "boolean"
+                    | "object"
+                    | "array"
+                    | "unavailable"
+                    | "null"
+                    | "undefined"
+                    | "bigint"
+                    | "symbol"
+                    | "function"
+            )
+        })
+}
+
+/// Snapshot payload bytes are charged together with record text and frames.
+pub fn snapshot_bytes(values: &[LogValue]) -> usize {
+    values
+        .iter()
+        .map(|value| value.name.len() + value.kind.len() + value.display.len() + 16)
+        .sum()
+}
+
 /// Native console method, without browser-specific formatting behavior.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -34,6 +88,9 @@ pub enum LogLevel {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LogRecord {
+    /// Optional debugger-only argument snapshots, absent in detached logging.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub values: Vec<LogValue>,
     /// Monotonic call sequence within one operation, including omitted calls.
     pub sequence: u64,
     /// Host wall-clock milliseconds since Unix epoch.
@@ -51,20 +108,24 @@ pub struct LogRecord {
 impl LogRecord {
     /// Total retained UTF-8 evidence bytes, including source-map names.
     pub fn text_bytes(&self) -> usize {
-        self.frames.iter().fold(self.text.len(), |bytes, frame| {
-            bytes.saturating_add(frame.function.len()).saturating_add(
-                [&frame.generated, &frame.original]
-                    .into_iter()
-                    .flatten()
-                    .map(|location| location.source.len())
-                    .sum::<usize>(),
-            )
-        })
+        self.frames.iter().fold(
+            self.text.len() + snapshot_bytes(&self.values),
+            |bytes, frame| {
+                bytes.saturating_add(frame.function.len()).saturating_add(
+                    [&frame.generated, &frame.original]
+                        .into_iter()
+                        .flatten()
+                        .map(|location| location.source.len())
+                        .sum::<usize>(),
+                )
+            },
+        )
     }
 
     /// Checks an untrusted worker record before mapping, cloning or retaining it.
     pub fn is_bounded(&self) -> bool {
         self.sequence > 0
+            && snapshot_bounded(&self.values)
             && self.frames.len() <= MAX_LOG_FRAMES
             && self.text_bytes() <= MAX_LOG_RECORD_BYTES
             && self.frames.iter().all(|frame| {
@@ -366,6 +427,15 @@ impl LogCapture {
     }
     /// Copies bounded accepted evidence without waiting for a callback result.
     pub fn snapshot(&self) -> Option<LogRun> {
+        self.debugger_snapshot().map(|mut run| {
+            for record in &mut run.records {
+                record.values.clear();
+            }
+            run
+        })
+    }
+    /// Local debugger output includes captured argument values.
+    pub fn debugger_snapshot(&self) -> Option<LogRun> {
         let state = self.state.lock().ok()?;
         state.run.has_output().then(|| state.run.clone())
     }
@@ -414,6 +484,42 @@ mod tests {
     use super::*;
     static CAPTURE_TEST: std::sync::Mutex<()> = std::sync::Mutex::new(());
     #[test]
+    fn captured_values_are_exclusive_to_local_debugger_snapshots() {
+        let capture = LogCapture::new(LogContext {
+            artifact: None,
+            worker: "worker".into(),
+            revision: "one".into(),
+            callback: "onRequestHead".into(),
+            invocation: 1,
+            exchange_id: None,
+        });
+        capture
+            .accept(
+                ConsoleEvent::Record(LogRecord {
+                    sequence: 1,
+                    time_unix_ms: 0,
+                    level: LogLevel::Info,
+                    text: "[Object]".into(),
+                    frames: vec![],
+                    truncated: false,
+                    values: vec![LogValue {
+                        name: String::new(),
+                        parent: None,
+                        kind: "object".into(),
+                        display: "[Object]".into(),
+                        truncated: false,
+                    }],
+                }),
+                |_| {},
+            )
+            .unwrap();
+        assert_eq!(capture.snapshot().unwrap().records[0].values.len(), 0);
+        assert_eq!(
+            capture.debugger_snapshot().unwrap().records[0].values.len(),
+            1
+        );
+    }
+    #[test]
     fn only_a_completely_silent_stream_can_complete_at_the_result_barrier() {
         let context = LogContext {
             artifact: None,
@@ -431,6 +537,7 @@ mod tests {
         spoken
             .accept(
                 ConsoleEvent::Record(LogRecord {
+                    values: vec![],
                     sequence: 1,
                     time_unix_ms: 0,
                     level: LogLevel::Info,
@@ -465,6 +572,7 @@ mod tests {
             capture
                 .accept(
                     ConsoleEvent::Record(LogRecord {
+                        values: vec![],
                         sequence: 1,
                         time_unix_ms: 0,
                         level: LogLevel::Info,
@@ -490,6 +598,7 @@ mod tests {
         active
             .accept(
                 ConsoleEvent::Record(LogRecord {
+                    values: vec![],
                     sequence: 2,
                     time_unix_ms: 0,
                     level: LogLevel::Info,
@@ -523,6 +632,7 @@ mod tests {
         });
         for sequence in 1..=128 {
             run.push(LogRecord {
+                values: vec![],
                 sequence,
                 time_unix_ms: 0,
                 level: LogLevel::Trace,
@@ -562,6 +672,7 @@ mod tests {
             exchange_id: None,
         });
         let record = LogRecord {
+            values: vec![],
             sequence: 1,
             time_unix_ms: 0,
             level: LogLevel::Info,
@@ -619,6 +730,7 @@ mod tests {
         });
         for sequence in 1..=200 {
             run.push(LogRecord {
+                values: vec![],
                 sequence,
                 time_unix_ms: 0,
                 level: LogLevel::Info,

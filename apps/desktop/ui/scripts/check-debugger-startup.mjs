@@ -163,12 +163,7 @@ export async function checkDebuggerStartup(page, workspace, root) {
   await context.selectOption("scratch");
   await workspace.getByRole("button", { name: "Reset scratch", exact: true }).click();
   await page.evaluate(() => globalThis.__workspaceFixture.workspaceDebug.finishWorkerEvaluation());
-  await output
-    .locator(".command")
-    .filter({ hasText: "› value" })
-    .last()
-    .getByText("42", { exact: true })
-    .waitFor();
+  await output.locator(".command").getByText("42", { exact: true }).last().waitFor();
 
   await page.evaluate(() => {
     globalThis.__workspaceFixture.workspaceDebug.holdScratchEvaluation = true;

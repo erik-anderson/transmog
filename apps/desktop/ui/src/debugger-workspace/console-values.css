@@ -1,0 +1,14 @@
+:host { display: inline; font-family: Consolas, monospace; }
+.node { display: block; overflow-wrap: anywhere; }
+:host > .node { display: inline-block; vertical-align: top; margin-inline-end: .5rem; }
+.children { padding-inline-start: 1rem; }
+.snapshot-toggle { cursor: pointer; border: 0; background: transparent; color: inherit; padding: 0; font: inherit; text-align: start; }
+.snapshot-toggle:focus-visible { outline: 2px solid var(--accent-strong); }
+small { color: var(--muted); font: .7rem system-ui; }
+[data-kind="string"] { color: var(--console-string, #96511a); white-space: pre-wrap; }
+[data-kind="number"], [data-kind="bigint"], [data-kind="boolean"] { color: var(--accent-strong); }
+[data-kind="unavailable"] { color: var(--muted); }
+.node:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 1px; }
+@media (forced-colors: active) {
+  [data-kind] { color: CanvasText; }
+}

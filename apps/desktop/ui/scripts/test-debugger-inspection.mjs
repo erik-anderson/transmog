@@ -163,7 +163,7 @@ test("idle values expire across a missed pause and resume, and stale leases cann
   registry.dispose();
 });
 
-test("loading more appends properties and ignores duplicate reads", async () => {
+test("loading more preserves empty property labels and ignores duplicate reads", async () => {
   const sent = [];
   const registry = new Inspection(
     async (action) => sent.push(action),
@@ -182,10 +182,15 @@ test("loading more appends properties and ignores duplicate reads", async () => 
     offset: 0,
     total: 2,
     next: 1,
-    properties: [{ name: "old", value: value(null) }],
+    properties: [
+      { name: "", value: { kind: "string", display: "", handle: null, truncated: false } },
+    ],
   });
   await first;
+  assert.equal(registry.get("result").rows[0].label, '""');
+  assert.equal(registry.get("result").rows[0].preview, '""');
   const more = registry.get("result").rows.at(-1);
+  assert.equal(more.preview, "");
   const loading = registry.toggle("result", more);
   await tick();
   await registry.toggle("result", more);
@@ -203,7 +208,7 @@ test("loading more appends properties and ignores duplicate reads", async () => 
   await loading;
   assert.deepEqual(
     registry.get("result").rows.map((row) => row.name),
-    ["old", "new"],
+    ["", "new"],
   );
   assert.deepEqual(registry.leases()[0].handles, [1]);
   registry.dispose();

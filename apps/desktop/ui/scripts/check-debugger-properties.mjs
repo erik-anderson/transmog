@@ -7,10 +7,7 @@ export async function checkDebuggerProperties(page, workspace, root) {
     await workspace.getByRole("button", { name: "Clear output", exact: true }).click();
     await prompt.fill("sample");
     await workspace.getByRole("button", { name: "Run", exact: true }).click();
-    const result = workspace
-      .locator(".command")
-      .filter({ hasText: "› sample" })
-      .locator("debug-value");
+    const result = workspace.locator(".command").locator("debug-value").last();
     await result.getByRole("button", { name: /Result/u }).click();
     return result;
   };

@@ -895,6 +895,20 @@ history and the typed draft. Earlier object results keep their readable summarie
 but expire for expansion. **Clear output** clears Console output without clearing
 variables. Worker **Restart** remains a separate control.
 
+**Levels** combines Info, Warnings, Errors and Verbose. Info, warnings and errors
+appear by default, including normal `console.log()` output. Enable Verbose to see
+`console.debug()`. Warnings and errors have distinct icons and colors. Each log call
+from a command has its own row and follows these filters.
+
+Logged objects expand as bounded snapshots of their data at log time. Snapshots
+remain readable after the worker finishes or Scratch is reset. Accessors and
+proxies stay inert, and shortened values and repeated references are labeled.
+Right-click a message or property to copy it, or open its source when available.
+**Copy displayed subtree** copies displayed names and values. Right-click the
+transcript background for **Copy visible output** and **Clear output**.
+Shift+F10 opens the same actions for a focused item.
+
+
 Scope/property inspection stays inert; conditions reject side effects. An invalid
 condition pauses with an explanation.
 

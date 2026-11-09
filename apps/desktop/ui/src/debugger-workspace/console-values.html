@@ -1,0 +1,13 @@
+<template shadowrootmode="open">
+  <for id="snapshot-node" each="node in nodes">
+    <div key="{{node.index}}" class="node" tabindex="0" @contextmenu="{menu(node,e)}" @keydown="{menu(node,e)}">
+      <if condition="node.children.length">
+
+          <button type="button" class="snapshot-toggle" aria-expanded="{{node.open}}" @click="{toggle(node)}"><if condition="node.open"><span aria-hidden="true">▾ </span></if><if condition="!node.open"><span aria-hidden="true">▸ </span></if><if condition="node.named"><span class="name">{{node.label}}: </span></if><span data-kind="{{node.kind}}">{{node.display}}</span><if condition="node.truncated"><small> Shortened</small></if></button>
+          <if condition="node.open"><div class="children"><for id="snapshot-node" each="node in node.children" /></div></if>
+
+      </if>
+      <if condition="!node.children.length"><if condition="node.named"><span class="name">{{node.label}}: </span></if><span data-kind="{{node.kind}}">{{node.display}}</span><if condition="node.truncated"><small> Shortened</small></if></if>
+    </div>
+  </for>
+</template>

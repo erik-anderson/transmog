@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { checkDebuggerConsole } from "./check-debugger-console.mjs";
+import { checkConsolePresentation } from "./check-console-presentation.mjs";
 import { checkDebuggerProperties } from "./check-debugger-properties.mjs";
 import { resolve } from "node:path";
 import { checkDebuggerNavigation } from "./check-debugger-navigation.mjs";
@@ -197,6 +198,7 @@ export async function checkDebuggerWorkspace(page, root) {
   await checkDebuggerAuthoring(page, workspace, root);
   await checkDebuggerControls(page, workspace, root);
   await checkDebuggerProperties(page, workspace, root);
+  await checkConsolePresentation(page, workspace, root);
   await checkDebuggerConsole(page, workspace);
   await page.evaluate(() => {
     const debug = globalThis.__workspaceFixture.workspaceDebug;

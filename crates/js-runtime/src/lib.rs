@@ -9,6 +9,7 @@
 #[allow(unsafe_code)] // Only V8-provided callback arguments may create CallbackScopes.
 mod callbacks;
 mod console;
+mod console_snapshot;
 #[cfg(feature = "debugger")]
 pub mod debugger;
 mod exception;

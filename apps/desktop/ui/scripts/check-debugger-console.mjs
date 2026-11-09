@@ -85,9 +85,10 @@ export async function checkDebuggerConsole(page, workspace) {
   await workspace
     .getByRole("combobox", { name: "Console output", exact: true })
     .selectOption("selected");
-  await workspace
-    .getByRole("combobox", { name: "Console level", exact: true })
-    .selectOption("warn");
+  await workspace.getByRole("button", { name: "Console levels", exact: true }).click();
+  await workspace.getByRole("checkbox", { name: "Info", exact: true }).uncheck();
+  await workspace.getByRole("checkbox", { name: "Errors", exact: true }).uncheck();
+  await workspace.getByRole("checkbox", { name: "Warnings", exact: true }).press("Escape");
   await prompt.fill("history draft");
   await prompt.press("ArrowUp");
   assert.equal(await prompt.inputValue(), "value");
@@ -121,10 +122,13 @@ export async function checkDebuggerConsole(page, workspace) {
     "selected",
   );
   assert.equal(
-    await workspace.getByRole("combobox", { name: "Console level", exact: true }).inputValue(),
-    "warn",
+    await workspace.getByRole("button", { name: "Console levels", exact: true }).textContent(),
+    "Warnings",
   );
-  await workspace.getByRole("combobox", { name: "Console level", exact: true }).selectOption("all");
+  await workspace.getByRole("button", { name: "Console levels", exact: true }).click();
+  await workspace.getByRole("checkbox", { name: "Info", exact: true }).check();
+  await workspace.getByRole("checkbox", { name: "Errors", exact: true }).check();
+  await workspace.getByRole("checkbox", { name: "Info", exact: true }).press("Escape");
   assert.equal(await workspace.getByText("First synchronous log", { exact: true }).count(), 0);
   assert.equal(await workspace.getByText("Second synchronous log", { exact: true }).count(), 0);
   await workspace.getByText("New after clear", { exact: true }).waitFor();

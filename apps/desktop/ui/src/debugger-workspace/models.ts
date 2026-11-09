@@ -2,6 +2,8 @@ import type {
   DeveloperEvidence,
   ExceptionDiagnostic,
   LogRun,
+  LogValue,
+  StackFrame,
   SourceLocation,
 } from "../script-diagnostics/models.js";
 export interface DebugSessionInfo {
@@ -88,7 +90,7 @@ export type DebugEvent =
       timeUnixMs: number;
     }
   | { kind: "completions"; pause: number; matches: string[]; omitted: boolean }
-  | { kind: "output"; level: string; text: string }
+  | { kind: "output"; level: string; text: string; values?: LogValue[]; frames?: StackFrame[] }
   | { kind: "evaluating" }
   | { kind: "evaluated"; pause: number; value: DebugValue; thrown: boolean }
   | { kind: "attached" | "detached" | "resumed" | "acknowledged" }

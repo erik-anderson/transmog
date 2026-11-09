@@ -255,7 +255,9 @@ export class PropertyTree {
     return rows.map((row) => ({
       ...row,
       label: inline(
-        /[\r\n\t\u2028\u2029"\\]/u.test(row.name) ? JSON.stringify(row.name) : row.name,
+        row.name === "" || /[\r\n\t\u2028\u2029"\\]/u.test(row.name)
+          ? JSON.stringify(row.name)
+          : row.name,
       ),
       preview: inline(
         row.value.kind === "string" ? JSON.stringify(row.value.display) : row.value.display,

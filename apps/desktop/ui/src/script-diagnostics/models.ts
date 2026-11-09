@@ -23,11 +23,19 @@ export interface ExceptionDiagnostic {
   truncated: boolean;
 }
 export interface LogRecord {
+  values?: LogValue[];
   sequence: number;
   timeUnixMs: number;
   level: "debug" | "info" | "warn" | "error" | "trace";
   text: string;
   frames: StackFrame[];
+  truncated: boolean;
+}
+export interface LogValue {
+  name: string;
+  parent: number | null;
+  kind: string;
+  display: string;
   truncated: boolean;
 }
 export interface LogRun {

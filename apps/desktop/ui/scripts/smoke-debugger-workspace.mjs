@@ -247,6 +247,24 @@ export async function checkNativeDebuggerWorkspace({
   await surface.getByRole("textbox", { name: "Immediate expression" }).fill("local");
   await surface.getByRole("button", { name: "Run", exact: true }).click();
   await surface.locator(".command > pre").filter({ hasText: "7" }).waitFor();
+  await surface.getByRole("textbox", { name: "Immediate expression" }).fill('""');
+  await surface.getByRole("button", { name: "Run", exact: true }).click();
+  await surface.locator(".command > pre").getByText('""', { exact: true }).waitFor();
+  await surface
+    .getByRole("textbox", { name: "Immediate expression" })
+    .fill(
+      'console.warn("native snapshot", {headers:{accept:"application/json"}}); console.debug("native verbose")',
+    );
+  await surface.getByRole("button", { name: "Run", exact: true }).click();
+  const snapshot = surface
+    .locator(".command")
+    .filter({ hasText: "native snapshot" })
+    .filter({ has: detached.locator("console-values") });
+  await snapshot.locator("console-values .snapshot-toggle").first().click();
+  await snapshot.locator("console-values .snapshot-toggle").filter({ hasText: "headers" }).click();
+  await snapshot.getByText("application/json", { exact: true }).click({ button: "right" });
+  await detached.getByRole("menuitem", { name: "Copy value", exact: true }).press("Escape");
+  assert.equal(await surface.getByText("native verbose", { exact: true }).count(), 0);
   const inspector = surface.getByRole("complementary", { name: "Call stack and variables" });
   await inspector.locator(".call-stack button").filter({ hasText: "onRequestHead" }).waitFor();
   await inspector.getByRole("textbox", { name: "Watch expression" }).fill("local");
@@ -278,7 +296,10 @@ export async function checkNativeDebuggerWorkspace({
   assert.equal(await prompt.inputValue(), "local");
   await prompt.fill("({nested:{answer:42},get secret(){throw Error('getter ran')}})");
   await surface.getByRole("button", { name: "Run", exact: true }).click();
-  const object = surface.locator(".command").filter({ hasText: "› ({nested:" });
+  const object = surface
+    .locator(".command")
+    .filter({ has: detached.locator("debug-value") })
+    .last();
   await object.locator("debug-value").getByRole("button", { name: "Result", exact: false }).click();
   await object
     .getByText("Accessor or unavailable property; not evaluated", { exact: true })
@@ -343,7 +364,10 @@ export async function checkNativeDebuggerWorkspace({
   await surface.getByRole("button", { name: "Clear output", exact: true }).click();
   await prompt.fill("Array.from({length:150},(_,i)=>({i}))");
   await surface.getByRole("button", { name: "Run", exact: true }).click();
-  const arrayResult = surface.locator(".command").filter({ hasText: "› Array.from" });
+  const arrayResult = surface
+    .locator(".command")
+    .filter({ has: detached.locator("debug-value") })
+    .last();
   await arrayResult
     .locator("debug-value")
     .getByRole("button", { name: "Result", exact: false })
@@ -360,7 +384,10 @@ export async function checkNativeDebuggerWorkspace({
   await surface
     .getByRole("combobox", { name: "Console output", exact: true })
     .selectOption("selected");
-  await surface.getByRole("combobox", { name: "Console level", exact: true }).selectOption("warn");
+  await surface.getByRole("button", { name: "Console levels", exact: true }).click();
+  await surface.getByRole("checkbox", { name: "Info", exact: true }).uncheck();
+  await surface.getByRole("checkbox", { name: "Errors", exact: true }).uncheck();
+  await surface.getByRole("checkbox", { name: "Warnings", exact: true }).press("Escape");
   await page.evaluate(() => {
     const prototype = customElements.get("debugger-workspace").prototype;
     const original = prototype.start;
@@ -447,10 +474,13 @@ export async function checkNativeDebuggerWorkspace({
     "selected",
   );
   assert.equal(
-    await dock.getByRole("combobox", { name: "Console level", exact: true }).inputValue(),
-    "warn",
+    await dock.getByRole("button", { name: "Console levels", exact: true }).textContent(),
+    "Warnings",
   );
-  await dock.getByRole("combobox", { name: "Console level", exact: true }).selectOption("all");
+  await dock.getByRole("button", { name: "Console levels", exact: true }).click();
+  await dock.getByRole("checkbox", { name: "Info", exact: true }).check();
+  await dock.getByRole("checkbox", { name: "Errors", exact: true }).check();
+  await dock.getByRole("checkbox", { name: "Info", exact: true }).press("Escape");
   assert.equal(
     await dock.locator(".command").getByText("workspace callback", { exact: true }).count(),
     0,
@@ -470,7 +500,10 @@ export async function checkNativeDebuggerWorkspace({
     .filter({ hasText: "local" })
     .getByText("7", { exact: true })
     .waitFor();
-  const keptResult = dock.locator(".command").filter({ hasText: "› Array.from" });
+  const keptResult = dock
+    .locator(".command")
+    .filter({ has: page.locator("debug-value") })
+    .last();
   await keptResult
     .locator("debug-value")
     .getByRole("button", { name: "Result", exact: false })

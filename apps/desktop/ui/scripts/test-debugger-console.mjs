@@ -14,6 +14,34 @@ const compiled = await build({
 const { ConsoleOutput } = await import(
   "data:text/javascript;base64," + Buffer.from(compiled.outputFiles[0].text).toString("base64")
 );
+const presentation = await build({
+  entryPoints: [
+    fileURLToPath(new URL("../src/debugger-workspace/console-presentation.ts", import.meta.url)),
+  ],
+  bundle: true,
+  platform: "node",
+  format: "esm",
+  write: false,
+});
+const { restoreLevels, levelsLabel, resultText } = await import(
+  "data:text/javascript;base64," + Buffer.from(presentation.outputFiles[0].text).toString("base64")
+);
+test("string results distinguish empty strings, escaped content and shortened output", () => {
+  const value = { kind: "string", display: "", handle: null, truncated: false };
+  assert.equal(resultText(value), '""');
+  assert.equal(resultText({ ...value, display: "first\nsecond" }), '"first\\nsecond"');
+  assert.equal(
+    resultText({ ...value, display: "partial", truncated: true }),
+    '"partial"\n[Shortened]',
+  );
+});
+test("saved level choices preserve an empty mask and recover unsupported legacy filters", () => {
+  assert.deepEqual(restoreLevels([], "warn"), []);
+  assert.deepEqual(restoreLevels(undefined, "trace"), ["info"]);
+  assert.deepEqual(restoreLevels(undefined, "debug"), ["verbose"]);
+  assert.equal(levelsLabel(restoreLevels(undefined, "unknown")), "Default levels");
+  assert.equal(levelsLabel(restoreLevels(undefined, "all")), "Default levels");
+});
 const run = () => ({
   context: { worker: "worker", invocation: 1, callback: "onRequestHead" },
   records: [{ sequence: 1 }, { sequence: 2 }],

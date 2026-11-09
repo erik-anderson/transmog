@@ -9,6 +9,7 @@ use transmog_script_diagnostics::{
 type Sink = Box<dyn Fn(u64, ConsoleEvent) -> bool>;
 #[derive(Default)]
 pub(super) struct Console {
+    pub(super) snapshots: bool,
     sink: Option<Sink>,
     invocation: u64,
     sequence: u64,
@@ -21,6 +22,7 @@ impl Console {
     #[cfg(feature = "debugger")]
     pub(super) fn capture(sink: impl Fn(u64, ConsoleEvent) -> bool + 'static) -> Self {
         Self {
+            snapshots: true,
             sink: Some(Box::new(sink)),
             ..Self::default()
         }
@@ -98,7 +100,11 @@ fn unavailable() -> Error {
 }
 
 #[allow(clippy::needless_pass_by_value)] // Native V8 callback ABI.
-fn log(scope: &mut v8::PinScope, args: v8::FunctionCallbackArguments, _result: v8::ReturnValue) {
+fn log<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    args: v8::FunctionCallbackArguments<'s>,
+    _result: v8::ReturnValue,
+) {
     let state = state(scope);
     let mut console = state.console.borrow_mut();
     console.sequence = console.sequence.saturating_add(1);
@@ -165,7 +171,8 @@ fn log(scope: &mut v8::PinScope, args: v8::FunctionCallbackArguments, _result: v
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
-    let record = LogRecord {
+    let mut record = LogRecord {
+        values: vec![],
         sequence: console.sequence,
         time_unix_ms: u64::try_from(time).unwrap_or(u64::MAX),
         level,
@@ -173,6 +180,13 @@ fn log(scope: &mut v8::PinScope, args: v8::FunctionCallbackArguments, _result: v
         frames,
         truncated: truncated || trace_truncated,
     };
+    if console.snapshots {
+        record.values = super::console_snapshot::capture(
+            scope,
+            &args,
+            limit.saturating_sub(record.text_bytes()),
+        );
+    }
     let bytes = record.text_bytes();
     let frames = record.frames.len();
     if (console.sink.as_ref().expect("checked sink"))(
@@ -185,6 +199,22 @@ fn log(scope: &mut v8::PinScope, args: v8::FunctionCallbackArguments, _result: v
     } else {
         console.dropped = console.dropped.saturating_add(1);
     }
+}
+
+pub(super) fn number_label(
+    scope: &mut v8::PinScope<'_, '_>,
+    value: v8::Local<v8::Value>,
+) -> String {
+    if value
+        .number_value(scope)
+        .is_some_and(|number| number.to_bits() == (-0.0_f64).to_bits())
+    {
+        return "-0".into();
+    }
+    value
+        .to_string(scope)
+        .map(|text| text.to_rust_string_lossy(scope))
+        .unwrap_or_default()
 }
 
 fn inert_label(scope: &mut v8::PinScope<'_, '_>, value: v8::Local<v8::Value>) -> String {
@@ -201,7 +231,7 @@ fn inert_label(scope: &mut v8::PinScope<'_, '_>, value: v8::Local<v8::Value>) ->
             "false".into()
         }
     } else if value.is_number() {
-        value.number_value(scope).unwrap_or_default().to_string()
+        number_label(scope, value)
     } else if value.is_symbol() {
         "[Symbol]".into()
     } else if value.is_function() {

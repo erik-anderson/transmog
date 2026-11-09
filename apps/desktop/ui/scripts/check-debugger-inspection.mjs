@@ -68,7 +68,10 @@ export async function checkDebuggerInspection(page, workspace, root) {
   await prompt.press("Tab");
   assert.equal(await prompt.inputValue(), "sample");
   await prompt.press("Enter");
-  const result = workspace.locator(".command").filter({ hasText: "› sample" }).last();
+  const result = workspace
+    .locator(".command")
+    .filter({ has: page.locator("debug-value") })
+    .last();
   await result.locator("debug-value").getByRole("button", { name: "Result", exact: false }).click();
   await result.getByText("Accessor; not evaluated", { exact: true }).waitFor();
   await result.getByRole("button", { name: "nested", exact: false }).click();

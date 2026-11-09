@@ -184,7 +184,9 @@ Scratch is a separate JavaScript context in each main or capture window. It work
 
 Reset scratch appears only for Scratch. It cancels Scratch work and clears variables and object references, while keeping output, command history and the typed draft. Clear output clears the transcript without clearing variables.
 
-Enter runs a command; Shift+Enter adds a line. Use Up/Down for command history, Ctrl+Space for runtime completion and Tab to accept a suggestion. Expand object results to inspect data properties. Filter output by context or level; Details shows technical identifiers.
+Enter runs a command; Shift+Enter adds a line. Use Up/Down for command history, Ctrl+Space for runtime completion and Tab to accept a suggestion. Levels lets you combine Info, Warnings, Errors and Verbose. Info, warnings and errors appear by default; enable Verbose for console.debug(). Output filters are independent of Run in.
+
+Expand object results or logged object snapshots to inspect nested data. Logged snapshots capture values at log time and mark shortened data, repeated references and unevaluated accessors. Right-click a message or property for copying and source actions; Shift+F10 opens the same menu from the keyboard. Copy displayed subtree uses the displayed data without running JavaScript. Details shows technical identifiers.
 
 ## Complete examples
 

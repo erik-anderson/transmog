@@ -79,12 +79,7 @@ export async function checkDebuggerAuthoring(page, workspace, root) {
     element.editor.focus();
   });
   await page.keyboard.press("Control+Shift+E");
-  await workspace
-    .locator(".command")
-    .filter({ hasText: "› value" })
-    .last()
-    .getByText("21", { exact: true })
-    .waitFor();
+  await workspace.locator(".command").getByText("21", { exact: true }).last().waitFor();
   assert.equal(await prompt.inputValue(), historyEntry);
   await prompt.press("ArrowDown");
   await prompt.press("ArrowDown");
@@ -119,6 +114,9 @@ export async function checkDebuggerAuthoring(page, workspace, root) {
       .shadowRoot.activeElement?.matches(".call-stack button"),
   );
 
+  await page.evaluate(() => {
+    delete navigator.clipboard;
+  });
   await watches.getByRole("button", { name: "Edit watch value", exact: true }).click();
   await edit.fill("(value");
   await edit.press("Shift+Enter");

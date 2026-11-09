@@ -606,6 +606,7 @@
           </select>
         </label>
         <span class="spacer"></span>
+        <if condition="debuggerConsoleHidden"><small>{{debuggerConsoleHidden}}</small></if>
         <select
           aria-label="Console output"
           value="{{debuggerConsoleFilter}}"
@@ -613,17 +614,10 @@
         >
           <option value="all">All contexts</option>
           <option value="selected">Current context</option></select
-        ><select
-          aria-label="Console level"
-          value="{{debuggerConsoleLevel}}"
-          @change="{consoleFilter(e,true)}"
-        >
-          <option value="all">All levels</option>
-          <option value="info">Info</option>
-          <option value="warn">Warning</option>
-          <option value="error">Error</option>
-          <option value="debug">Debug</option>
-          <option value="trace">Trace</option></select
+        ><button type="button" class="secondary levels-trigger" popovertarget="console-levels" aria-label="Console levels">{{debuggerLevelsLabel}}</button>
+        <div id="console-levels" class="table-popover console-levels" popover="auto" @keydown="{levelMenuKey(e)}">
+          <for each="item in debuggerLevelChoices"><label><input type="checkbox" ?autofocus="{{item.id == 'info'}}" ?checked="{{item.checked}}" @change="{toggleLevel(item.id)}">{{item.label}}</label></for>
+        </div
         ><button type="button" class="secondary" @click="{clearConsole()}">Clear output</button>
         <if condition="debuggerConsoleContext == 'scratch'"><button type="button" class="secondary" title="Clear Scratch variables; keep output and history" ?disabled="{{debuggerScratchBusy}}" @click="{resetScratch()}">Reset scratch</button></if>
         <button
@@ -635,7 +629,7 @@
           ×
         </button>
       </header>
-      <div w-ref="{consoleOutput}" class="console-output" tabindex="0" data-copy-surface>
+      <div w-ref="{consoleOutput}" class="console-output" tabindex="0" data-copy-surface @contextmenu="{consoleMenu(e)}" @keydown="{consoleMenu(e)}">
         <script-diagnostics
           w-ref="{diagnostics}"
           expanded
@@ -650,10 +644,13 @@
             <pre>{{debuggerResult}}</pre>
           </details></if
         ><for each="row in debuggerFeed"
-          ><div class="command" key="{{row.id}}" data-level="{{row.level}}">
+          ><div class="command" key="{{row.id}}" data-level="{{row.level}}" tabindex="0" @contextmenu="{consoleMenu(e,row)}" @keydown="{consoleMenu(e,row)}">
+            <span class="console-marker" role="img" aria-label="{{row.severity}}">{{row.marker}}</span>
             <if condition="row.input"><pre>› {{row.input}}</pre></if
             ><if condition="row.label"><small>{{row.label}}</small></if>
-            <pre ?data-thrown="{{row.thrown}}">{{row.output}}</pre>
+            <if condition="!row.values.length"><if condition="!row.value.value.handle"><pre ?data-thrown="{{row.thrown}}">{{row.output}}</pre></if></if>
+            <if condition="row.values.length"><console-values :values="{{row.values}}" :expanded="{{row.expanded}}" @snapshot-toggle="{snapshotToggled(row,e)}"></console-values></if>
+            <if condition="row.frames.length"><details><summary>Stack trace</summary><for each="frame in row.frames"><pre>{{frame.function}} · {{frame.original.source}} {{frame.generated.source}}</pre></for></details></if>
             <if condition="row.value"
               ><if condition="row.value.value.handle"
                 ><debug-value

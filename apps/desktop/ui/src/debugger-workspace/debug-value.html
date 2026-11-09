@@ -1,6 +1,6 @@
 <template shadowrootmode="open">
   <if condition="value">
-    <div class="heading">
+    <div class="heading" tabindex="0" @contextmenu="{menu(e)}" @keydown="{menu(e)}">
       <if condition="value.value.handle"
         ><button
           type="button"
@@ -20,7 +20,7 @@
       ><table aria-busy="{{value.loading}}">
         <tbody>
           <for each="property in value.rows"
-            ><tr key="{{property.key}}">
+            ><tr key="{{property.key}}" tabindex="0" @contextmenu="{menu(e,property)}" @keydown="{menu(e,property)}">
               <th data-depth="{{property.depth}}" title="{{property.name}}">
                 <if condition="property.expandable">
                   <button type="button" aria-disabled="{{value.loading}}" aria-expanded="{{property.expanded}}" @click="{toggle(property)}">
@@ -30,7 +30,7 @@
                 <if condition="property.offset"><button type="button" data-more data-row-key="{{property.key}}" aria-disabled="{{value.loading}}" @click="{toggle(property)}">{{property.label}}</button></if>
                 <if condition="!property.expandable && property.offset == undefined"><span>{{property.label}}</span></if>
               </th>
-              <td><span class="property-preview" title="{{property.value.display}}">{{property.preview}}<if condition="property.value.truncated"> …</if></span></td>
+              <td><span class="property-preview" data-kind="{{property.value.kind}}" title="{{property.value.display}}">{{property.preview}}<if condition="property.value.truncated"> …</if></span></td>
             </tr></for
           >
         </tbody>

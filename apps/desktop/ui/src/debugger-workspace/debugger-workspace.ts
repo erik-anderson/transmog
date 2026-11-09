@@ -1,5 +1,15 @@
 import "../pane-divider/pane-divider.js";
 import "./debug-value.js";
+import "./console-values.js";
+import {
+  consoleLevels,
+  levelsLabel,
+  levelGroup,
+  restoreLevels,
+  resultText,
+} from "./console-presentation.js";
+import { copyGesture } from "../inspection-copy.js";
+import { selectedConverterText } from "../converter-selection.js";
 import { ConsoleOutput, consoleRuns, consoleRunKey, type ClearedLog } from "./console-output.js";
 import { breakpointGroups, type Point, type PointGroup } from "./breakpoints.js";
 import { debuggerToggleKey } from "./shortcuts.js";
@@ -39,7 +49,7 @@ import type {
   DebugAction,
   DebugFrame,
 } from "../debugger-workspace/models.js";
-import type { DeveloperEvidence } from "../script-diagnostics/models.js";
+import type { LogValue, StackFrame, DeveloperEvidence } from "../script-diagnostics/models.js";
 import "../script-diagnostics/script-diagnostics.js";
 import { describeError } from "../utilities.js";
 import { boundedCopy, copyScalar, requestCopy } from "../inspection-copy.js";
@@ -72,6 +82,9 @@ interface SavedView {
   consoleDrafts?: Array<[string, { input: string; history: ConsoleHistoryState }]>;
   consoleHistory?: ConsoleHistoryState;
   consoleLevel?: string;
+  consoleLevels?: string[];
+  consoleLogKeys?: Array<[string, number]>;
+  snapshotExpanded?: Array<[number, number[]]>;
   consoleFilter?: string;
   clearedLogs?: ClearedLog[];
   valueLeases?: ValueLease[];
@@ -99,6 +112,13 @@ interface SavedView {
   historyIndex?: number;
 }
 interface ConsoleRow {
+  values?: LogValue[];
+  frames?: StackFrame[];
+  notice?: boolean;
+  marker?: string;
+  severity?: string;
+  expanded?: number[];
+  command?: number;
   context?: string;
   generation?: number;
   id: number;
@@ -234,7 +254,14 @@ export class DebuggerWorkspace extends WebUIElement {
   @observable debuggerConsole: ConsoleRow[] = [];
   @observable debuggerFeed: ConsoleRow[] = [];
   @observable debuggerConsoleFilter = "all";
-  @observable debuggerConsoleLevel = "all";
+  @observable debuggerConsoleLevels = ["info", "warn", "error"];
+  @observable debuggerLevelsLabel = "Default levels";
+  @observable debuggerConsoleHidden = "";
+  @observable debuggerLevelChoices = consoleLevels.map((item) => ({
+    ...item,
+    checked: item.id !== "verbose",
+  }));
+  private snapshotExpanded = new Map<number, number[]>();
   private readonly consoleLogs = new ConsoleOutput();
   private pendingConsoleScroll: number | null = null;
   private logKeys = new Map<string, number>();
@@ -1515,7 +1542,10 @@ export class DebuggerWorkspace extends WebUIElement {
           },
         );
         this.consoleLogs.restore(saved.clearedLogs ?? []);
-        this.debuggerConsoleLevel = saved.consoleLevel ?? "all";
+        this.debuggerConsoleLevels = restoreLevels(saved.consoleLevels, saved.consoleLevel);
+        this.snapshotExpanded = new Map(saved.snapshotExpanded ?? []);
+        this.logKeys = new Map(saved.consoleLogKeys ?? []);
+        this.updateLevelChoices();
         this.debuggerConsoleFilter = saved.consoleFilter ?? "all";
         this.debuggerWatchInput = saved.watchInput ?? "";
         this.debuggerWatchEditing =
@@ -1526,6 +1556,7 @@ export class DebuggerWorkspace extends WebUIElement {
           0,
           ...saved.console.map((row) => row.id),
           ...this.logpointRows.map((row) => row.id),
+          ...this.logKeys.values(),
         );
         this.states = new Map(saved.states);
         this.history = saved.history ?? [];
@@ -1848,15 +1879,27 @@ export class DebuggerWorkspace extends WebUIElement {
               },
             ]);
           } else if (event.kind === "output") {
-            const id = this.requests.get(`${target.session}/${item.request}`);
-            this.debuggerConsole = this.debuggerConsole.map((row) =>
-              row.id === id
-                ? {
-                    ...row,
-                    output: `${row.output === "Running…" ? "" : row.output + "\n"}${event.level}: ${event.text}`,
-                  }
-                : row,
-            );
+            const command = this.requests.get(`${target.session}/${item.request}`);
+            if (command !== undefined) {
+              const owner = this.debuggerConsole.find((row) => row.id === command);
+              this.debuggerConsole = [
+                ...this.debuggerConsole,
+                {
+                  id: ++this.serial,
+                  input: "",
+                  output: event.text,
+                  thrown: event.level === "error",
+                  values: event.values ?? [],
+                  frames: event.frames ?? [],
+                  level: event.level,
+                  command,
+                  session: target.session,
+                  context: owner?.context ?? "",
+                  time: owner?.time ?? Date.now(),
+                  label: owner?.label ?? target.label,
+                },
+              ];
+            }
           } else if (event.kind === "evaluated") {
             const key = `${target.session}/${item.request}`;
             const id = this.requests.get(key);
@@ -1873,22 +1916,30 @@ export class DebuggerWorkspace extends WebUIElement {
                 },
               ]);
             }
-            this.debuggerConsole = this.debuggerConsole.map((row) =>
-              row.id === id
-                ? {
-                    ...row,
-                    output: `${row.output === "Running…" ? "" : row.output + "\n"}${event.value.display}`,
-                    thrown: event.thrown,
+            const owner = this.debuggerConsole.find((row) => row.id === id);
+            if (owner) {
+              const resultId = ++this.serial;
+              this.debuggerConsole = [
+                ...this.debuggerConsole.map((row) =>
+                  row.id === id ? { ...row, output: "" } : row,
+                ),
+                {
+                  ...owner,
+                  id: resultId,
+                  input: "",
+                  output: resultText(event.value),
+                  thrown: event.thrown,
+                  command: owner.id,
+                  generation: item.valueGeneration ?? event.pause,
+                  value: this.inspection.set(`console-${resultId}`, "Result", event.value, {
                     generation: item.valueGeneration ?? event.pause,
-                    value: this.inspection.set(`console-${row.id}`, "Result", event.value, {
-                      generation: item.valueGeneration ?? event.pause,
-                      session: target.session,
-                      pause: event.pause,
-                      frame: null,
-                    }),
-                  }
-                : row,
-            );
+                    session: target.session,
+                    pause: event.pause,
+                    frame: null,
+                  }),
+                },
+              ];
+            }
             this.requests.delete(key);
           } else if (event.kind === "rejected") {
             if (!quiet) {
@@ -2322,6 +2373,7 @@ export class DebuggerWorkspace extends WebUIElement {
       this.inspection.remove(`console-${row.id}`);
     }
     this.debuggerConsole = [];
+    this.snapshotExpanded.clear();
     this.requests.clear();
     this.logpointRows = [];
     this.diagnostics?.clearLogs();
@@ -2332,14 +2384,131 @@ export class DebuggerWorkspace extends WebUIElement {
   consoleInteracted(): void {
     this.pendingConsoleScroll = null;
   }
-  consoleFilter(event: Event, level = false): void {
-    if (level) {
-      this.debuggerConsoleLevel = (event.target as HTMLSelectElement).value;
-    } else {
-      this.debuggerConsoleFilter = (event.target as HTMLSelectElement).value;
-    }
+  consoleFilter(event: Event): void {
+    this.debuggerConsoleFilter = (event.target as HTMLSelectElement).value;
     this.updateConsoleFeed();
     this.rememberView();
+  }
+  levelMenuKey(event: KeyboardEvent): void {
+    const menu = event.currentTarget as HTMLElement;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      menu.hidePopover();
+      this.shadowRoot?.querySelector<HTMLButtonElement>(".levels-trigger")?.focus();
+      return;
+    }
+    const items = [...menu.querySelectorAll<HTMLInputElement>("input")];
+    if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+      event.preventDefault();
+      event.stopPropagation();
+      const current = items.indexOf(this.shadowRoot?.activeElement as HTMLInputElement);
+      const index =
+        event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? items.length - 1
+            : (current + (event.key === "ArrowDown" ? 1 : items.length - 1)) % items.length;
+      items[index]?.focus();
+    }
+  }
+  private updateLevelChoices(): void {
+    this.debuggerLevelsLabel = levelsLabel(this.debuggerConsoleLevels);
+    this.debuggerLevelChoices = consoleLevels.map((item) => ({
+      ...item,
+      checked: this.debuggerConsoleLevels.includes(item.id),
+    }));
+  }
+  toggleLevel(id: string): void {
+    const levels = new Set(this.debuggerConsoleLevels);
+    if (levels.has(id)) {
+      levels.delete(id);
+    } else {
+      levels.add(id);
+    }
+    this.debuggerConsoleLevels = consoleLevels
+      .filter((item) => levels.has(item.id))
+      .map((item) => item.id);
+    this.updateLevelChoices();
+    this.updateConsoleFeed();
+    this.rememberView();
+  }
+  snapshotToggled(row: ConsoleRow, event: CustomEvent<{ index: number; open: boolean }>): void {
+    const expanded = new Set(this.snapshotExpanded.get(row.id));
+    if (event.detail.open) {
+      expanded.add(event.detail.index);
+    } else {
+      expanded.delete(event.detail.index);
+    }
+    this.snapshotExpanded.set(row.id, [...expanded]);
+    this.updateConsoleFeed();
+    this.rememberView();
+  }
+  consoleMenu(event: MouseEvent | KeyboardEvent, row?: ConsoleRow): void {
+    if (!copyGesture(event) || selectedConverterText(event)) {
+      return;
+    }
+    const source = event.currentTarget as HTMLElement;
+    const signature = (): string =>
+      JSON.stringify(
+        (row ? this.debuggerFeed.filter((item) => item.id === row.id) : this.debuggerFeed).map(
+          (item) => [item.id, this.consoleRowText(item), item.source],
+        ),
+      );
+    const displayed = signature();
+    const text = row
+      ? [row.input ? "› " + row.input : "", row.output].filter(Boolean).join("\n")
+      : this.debuggerFeed.map((item) => this.consoleRowText(item)).join("\n");
+    requestCopy(event, {
+      source,
+      current: () => signature() === displayed,
+      actions: row
+        ? [
+            { id: "message", label: "Copy message", read: () => text },
+            ...(row.source
+              ? [{ id: "source", label: "Reveal in source", run: () => this.consoleSource(row) }]
+              : []),
+          ]
+        : [
+            { id: "transcript", label: "Copy visible output", read: () => text },
+            { id: "clear", label: "Clear output", run: () => this.clearConsole() },
+          ],
+    });
+  }
+  private consoleRowText(row: ConsoleRow): string {
+    const values = row.values ?? [];
+    const expanded = new Set(row.expanded);
+    const snapshot = values.flatMap((value) => {
+      let parent = value.parent;
+      let depth = 0;
+      while (parent != null) {
+        if (!expanded.has(parent)) {
+          return [];
+        }
+        depth++;
+        parent = values[parent]?.parent ?? null;
+      }
+      return [
+        "  ".repeat(depth) +
+          (value.parent !== null ? (value.name ? copyScalar(value.name) : '""') + ": " : "") +
+          value.display +
+          (value.truncated ? " [Shortened]" : ""),
+      ];
+    });
+    return [
+      row.input ? "› " + row.input : "",
+      ...(values.length ? snapshot : [row.output]),
+      ...(row.value?.rows ?? []).map(
+        (value) =>
+          "  ".repeat(value.depth + 1) +
+          copyScalar(value.name) +
+          ": " +
+          copyScalar(value.value.display) +
+          (value.value.truncated ? " [Shortened]" : ""),
+      ),
+    ]
+      .filter(Boolean)
+      .join("\n");
   }
   async consoleSource(row: ConsoleRow): Promise<void> {
     if (row.source) {
@@ -2363,6 +2532,8 @@ export class DebuggerWorkspace extends WebUIElement {
           const location = frame?.original ?? frame?.generated;
           add(`${base}/${record.sequence}`, {
             input: "",
+            values: record.values ?? [],
+            frames: record.frames,
             output: record.text + (record.truncated ? "\n[Shortened]" : ""),
             thrown: record.level === "error",
             level: record.level,
@@ -2379,6 +2550,7 @@ export class DebuggerWorkspace extends WebUIElement {
         if (loss.dropped || loss.incomplete) {
           add(`${base}/loss`, {
             input: "",
+            notice: true,
             output: [
               loss.dropped ? `${loss.dropped} console records omitted` : "",
               loss.incomplete ? "Console capture incomplete" : "",
@@ -2395,18 +2567,45 @@ export class DebuggerWorkspace extends WebUIElement {
       }
     }
     this.logKeys = keys;
-    this.debuggerFeed = [...logs, ...this.logpointRows, ...this.debuggerConsole]
-      .filter(
-        (row) =>
-          (this.debuggerConsoleFilter === "all" ||
-            row.session === this.consoleScope().session ||
-            (this.debuggerConsoleContext === "scratch" && row.context === "scratch")) &&
-          (this.debuggerConsoleLevel === "all" ||
-            !row.level ||
-            row.level === this.debuggerConsoleLevel),
-      )
+    const contextRows = [...logs, ...this.logpointRows, ...this.debuggerConsole].filter(
+      (row) =>
+        this.debuggerConsoleFilter === "all" ||
+        row.session === this.consoleScope().session ||
+        (this.debuggerConsoleContext === "scratch" && row.context === "scratch"),
+    );
+    const visible = contextRows.filter(
+      (row) =>
+        row.notice || !row.level || this.debuggerConsoleLevels.includes(levelGroup(row.level)),
+    );
+    const hidden = contextRows.length - visible.length;
+    this.debuggerConsoleHidden = hidden ? `${hidden} hidden by levels` : "";
+    this.debuggerFeed = visible
       .sort((a, b) => (a.time ?? 0) - (b.time ?? 0) || a.id - b.id)
-      .slice(-200);
+      .slice(-200)
+      .map((row) => ({
+        ...row,
+        expanded: this.snapshotExpanded.get(row.id) ?? [],
+        severity:
+          row.level === "warn"
+            ? "Warning"
+            : row.thrown
+              ? "Error"
+              : row.input
+                ? "Command"
+                : row.level
+                  ? "Info"
+                  : "Result",
+        marker:
+          row.level === "warn" ? "⚠" : row.thrown ? "⊗" : row.input ? "" : row.level ? "" : "‹",
+      }));
+    const retained = new Set(
+      [...logs, ...this.logpointRows, ...this.debuggerConsole].map((row) => row.id),
+    );
+    for (const id of this.snapshotExpanded.keys()) {
+      if (!retained.has(id)) {
+        this.snapshotExpanded.delete(id);
+      }
+    }
   }
   private trimConsole(): void {
     const previous = this.debuggerConsole;
@@ -2422,7 +2621,11 @@ export class DebuggerWorkspace extends WebUIElement {
       }))
       .reverse()
       .filter((row) => {
-        remaining -= row.input.length + row.output.length;
+        remaining -=
+          row.input.length +
+          row.output.length +
+          JSON.stringify(row.values ?? []).length +
+          JSON.stringify(row.frames ?? []).length;
         return remaining >= 0;
       })
       .reverse();
@@ -3070,7 +3273,9 @@ export class DebuggerWorkspace extends WebUIElement {
         : undefined,
       consoleHistory: this.commandHistory.snapshot(),
       consoleFilter: this.debuggerConsoleFilter,
-      consoleLevel: this.debuggerConsoleLevel,
+      consoleLevels: this.debuggerConsoleLevels,
+      consoleLogKeys: [...this.logKeys],
+      snapshotExpanded: [...this.snapshotExpanded],
       clearedLogs: this.consoleLogs.snapshot(),
       groups: [...this.sourceGroups],
       split: this.debuggerConsoleSplit,
@@ -3154,13 +3359,20 @@ export class DebuggerWorkspace extends WebUIElement {
   }
   keyboard(event: KeyboardEvent): void {
     if (event.key === "Escape" && !event.isComposing && !event.defaultPrevented) {
-      const menu = this.shadowRoot?.querySelector<HTMLElement>(".placement:popover-open");
+      const menu = this.shadowRoot?.querySelector<HTMLElement>(
+        ".placement:popover-open, .console-levels:popover-open",
+      );
       if (event.repeat || menu) {
         event.preventDefault();
         event.stopPropagation();
         if (menu) {
           menu.hidePopover();
-          (menu.id === "debugger-placement" ? this.dockMenuButton : this.viewMenuButton).focus();
+          (menu.id === "console-levels"
+            ? this.shadowRoot?.querySelector<HTMLButtonElement>(".levels-trigger")
+            : menu.id === "debugger-placement"
+              ? this.dockMenuButton
+              : this.viewMenuButton
+          )?.focus();
         }
         return;
       }

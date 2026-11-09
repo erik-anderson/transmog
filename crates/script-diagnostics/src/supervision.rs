@@ -921,8 +921,31 @@ impl Session {
                     return Err("Invalid debugger completion reply");
                 }
             }
-            DebugEventKind::Output { text, .. } => {
-                if text.len() > crate::MAX_LOG_RECORD_BYTES
+            DebugEventKind::Output {
+                text,
+                values,
+                frames,
+                ..
+            } => {
+                if text.len()
+                    + crate::snapshot_bytes(values)
+                    + frames
+                        .iter()
+                        .map(|frame| {
+                            frame.function.len()
+                                + frame
+                                    .generated
+                                    .as_ref()
+                                    .map_or(0, |location| location.source.len())
+                                + frame
+                                    .original
+                                    .as_ref()
+                                    .map_or(0, |location| location.source.len())
+                        })
+                        .sum::<usize>()
+                    > crate::MAX_LOG_RECORD_BYTES
+                    || !crate::snapshot_bounded(values)
+                    || frames.len() > crate::MAX_LOG_FRAMES
                     || !state
                         .pending
                         .get(&event.request)
@@ -1275,7 +1298,7 @@ impl Session {
             logs: state
                 .logs
                 .iter()
-                .filter_map(|capture| capture.snapshot())
+                .filter_map(|capture| capture.debugger_snapshot())
                 .collect(),
             session: self.id().into(),
             cursor: state.sequence,

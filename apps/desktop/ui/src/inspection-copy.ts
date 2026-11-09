@@ -4,6 +4,7 @@ export const COPY_TEXT_BYTES = 16 * 1024 * 1024;
 /** Only app-authored static copy errors may be shown in the menu. */
 export class CopyError extends Error {}
 export interface CopyAction {
+  run?: () => void | Promise<void>;
   id: string;
   label: string;
   disabled?: boolean;
