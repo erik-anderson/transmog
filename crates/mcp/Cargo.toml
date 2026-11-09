@@ -12,7 +12,7 @@ connector = ["dep:rmcp"]
 desktop = ["dep:transmog-app", "dep:transmog-automation", "dep:transmog-core"]
 
 [dependencies]
-rmcp = { version = "=3.6.0", default-features = false, features = ["server", "transport-io"], optional = true }
+rmcp = { version = "=3.9.0", default-features = false, features = ["server", "transport-io"], optional = true }
 base64.workspace = true
 boring.workspace = true
 bytes.workspace = true
@@ -44,4 +44,4 @@ workspace = true
 
 [dev-dependencies]
 transmog-session = { version = "=0.1.22", path = "../proxy-session" }
-rmcp = { version = "=3.6.0", default-features = false, features = ["client", "server", "transport-io"] }
+rmcp = { version = "=3.9.0", default-features = false, features = ["client", "server", "transport-io"] }
