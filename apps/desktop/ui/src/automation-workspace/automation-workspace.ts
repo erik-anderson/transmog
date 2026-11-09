@@ -921,10 +921,6 @@ export class AutomationWorkspace extends WorkspaceElement {
     if (!this.collectionRuleId || this.editorHidden || this.loadingSavedResponse) {
       return;
     }
-    this.requestHeadersOpen =
-      (this.autoResponseForm.elements.namedItem("requestHeaders") as HTMLTextAreaElement).closest(
-        "details",
-      )?.open ?? false;
     this.refreshResponseDirty();
     const fields = Array.from(this.autoResponseForm.elements)
       .filter(
@@ -1608,7 +1604,14 @@ export class AutomationWorkspace extends WorkspaceElement {
   private bodyFileTouched = false;
   @observable existingResponse = false;
   @observable ruleUsageText = "";
-  @observable requestHeadersOpen = false;
+  requestHeaderConditions!: HTMLDetailsElement;
+  // The native disclosure owns live state, including before its queued toggle event.
+  get requestHeadersOpen(): boolean {
+    return this.requestHeaderConditions.open;
+  }
+  set requestHeadersOpen(open: boolean) {
+    this.requestHeaderConditions.open = open;
+  }
   @observable responseOpen = true;
   responseToggled(event: Event): void {
     this.responseOpen = (event.currentTarget as HTMLDetailsElement).open;

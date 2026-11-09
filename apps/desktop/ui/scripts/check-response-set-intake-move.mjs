@@ -519,6 +519,36 @@ export async function checkResponseSetIntakeMove(page, root) {
     }, headersInitiallyOpen);
     const headers = editor.locator('[name="requestHeaders"]');
     assert.equal(await headers.isVisible(), headersInitiallyOpen);
+    // A refresh can run before the browser delivers the queued toggle event.
+    const disclosureChoices = await headers.evaluate((input) => {
+      const w = document.querySelector("app-shell").automation,
+        details = input.closest("details"),
+        choices = [];
+      for (let click = 0; click < 2; click++) {
+        details.querySelector("summary").click();
+        const clicked = details.open;
+        w.$update();
+        w.$flushUpdates();
+        choices.push({ clicked, refreshed: details.open });
+      }
+      return choices;
+    });
+    assert.deepEqual(disclosureChoices, [
+      { clicked: !headersInitiallyOpen, refreshed: !headersInitiallyOpen },
+      { clicked: headersInitiallyOpen, refreshed: headersInitiallyOpen },
+    ]);
+    const headerSummary = editor.getByText("Request header conditions", { exact: true });
+    for (const key of ["Space", "Enter"]) {
+      for (const open of [!headersInitiallyOpen, headersInitiallyOpen]) {
+        await headerSummary.press(key);
+        await page.evaluate(() => {
+          const w = document.querySelector("app-shell").automation;
+          w.$update();
+          w.$flushUpdates();
+        });
+        assert.equal(await headers.isVisible(), open);
+      }
+    }
     if (!(await headers.isVisible()))
       await editor.getByText("Request header conditions", { exact: true }).click();
     assert.equal(
@@ -526,10 +556,28 @@ export async function checkResponseSetIntakeMove(page, root) {
       true,
       "Request headers should be available for editing",
     );
-    await headers.fill("X-Author: newer");
+    // Reproduce fill()'s focus/selection followed by native protocol text input,
+    // with a full refresh in between. A closed disclosure silently drops the text.
+    const focusedHeader = await headers.evaluate((input) => {
+      const w = document.querySelector("app-shell").automation;
+      input.focus();
+      input.selectionStart = 0;
+      input.selectionEnd = input.value.length;
+      w.$update();
+      w.$flushUpdates();
+      return {
+        open: input.closest("details").open,
+        focused: input.getRootNode().activeElement === input,
+      };
+    });
+    assert.deepEqual(focusedHeader, { open: true, focused: true });
+    await page.keyboard.insertText("X-Author: newer");
+    assert.equal(await headers.inputValue(), "X-Author: newer");
     await page.evaluate(() => globalThis.__workspaceFixture.finishHeldCommand());
     await idle();
     assert.equal((await draft()).id, null);
+    assert.equal(await headers.isVisible(), true);
+    assert.equal(await headers.inputValue(), "X-Author: newer");
     await saveDraft();
     const preserved = (await fixture()).rules.find(
         (rule) => rule.displayName === "Detached full rule",
