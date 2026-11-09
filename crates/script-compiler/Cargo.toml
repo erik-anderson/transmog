@@ -8,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-transmog-script-diagnostics = { version = "=0.1.22", path = "../script-diagnostics" }
+transmog-script-diagnostics = { version = "=0.1.23", path = "../script-diagnostics" }
 stacker.workspace = true
 swc_common.workspace = true
 swc_ecma_ast.workspace = true
