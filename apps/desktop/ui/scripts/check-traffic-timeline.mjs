@@ -853,7 +853,9 @@ async function checkUncachedTimelineContext(page, traffic, timeline, root) {
     assert.equal(await menu.getByRole("button", { name: label, exact: true }).isVisible(), true);
   await menu.getByRole("button", { name: "Host: timeline-2500.test…", exact: true }).click();
   assert.equal(
-    await picker.getByRole("checkbox", { name: "timeline-2500.test", exact: true }).isChecked(),
+    await picker
+      .getByRole("checkbox", { name: "Pick observed host timeline-2500.test", exact: true })
+      .isChecked(),
     true,
   );
   await page.keyboard.press("Escape");
@@ -947,7 +949,9 @@ async function checkUncachedTimelineContext(page, traffic, timeline, root) {
   await openActionGroup(menu, "Filter by");
   await menu.getByRole("button", { name: "Host: timeline-2501.test…", exact: true }).click();
   assert.equal(
-    await picker.getByRole("checkbox", { name: "timeline-2501.test", exact: true }).isChecked(),
+    await picker
+      .getByRole("checkbox", { name: "Pick observed host timeline-2501.test", exact: true })
+      .isChecked(),
     true,
   );
   await picker.getByRole("button", { name: "Apply filter", exact: true }).click();

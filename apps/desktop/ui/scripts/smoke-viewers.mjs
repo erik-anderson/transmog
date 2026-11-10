@@ -17,6 +17,7 @@ import { smokeCertificates } from "./smoke-certificates.mjs";
 import { hexReachability } from "./check-hex-viewer.mjs";
 import { smokeTraceSave } from "./smoke-trace-save.mjs";
 import { smokeConnectTunnels } from "./smoke-connect-tunnels.mjs";
+import { smokeTrafficFavorites } from "./smoke-traffic-favorites.mjs";
 import { smokeBodySource } from "./smoke-body-source.mjs";
 
 import { nativeFixture } from "./native-fixture.mjs";
@@ -161,6 +162,31 @@ try {
     "Saved-file viewer did not finish automatic import",
   );
   process.stdout.write("Viewer file import verified.\n");
+  if (process.argv.includes("--traffic-favorites-only")) {
+    await viewer.evaluate(`window.__TAURI_INTERNALS__.invoke('open_main_window')`);
+    const target = await waitFor(
+      async () => (await targets()).find((target) => target.id !== pages[0].id),
+      "Main window did not open",
+    );
+    const main = await connect(target);
+    await waitFor(
+      () => main.evaluate(`${root}?.shadowRoot?.querySelector("traffic-workspace")?.queryLoaded`),
+      "Main Traffic did not initialize",
+    );
+    const result = await smokeTrafficFavorites({
+      main,
+      viewer,
+      source,
+      screenshot,
+      waitFor,
+      restart: process.argv.includes("--traffic-favorites-restart"),
+    });
+    for (const socket of sockets) socket.close();
+    await new Promise((resolve) =>
+      process.stdout.write(JSON.stringify({ trafficFavorites: result }) + "\n", resolve),
+    );
+    process.exit(0);
+  }
   let bodySource;
   if (bodySourceOnly) {
     await viewer.evaluate(

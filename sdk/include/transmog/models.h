@@ -682,6 +682,7 @@ enum class transmog_sdk_traffic_filter_value_kind : uint32_t {
   StatusFamily = 2,
   Unavailable = 3,
   Other = 4,
+  HostSubdomains = 5,
 };
 #else
 typedef uint32_t transmog_sdk_traffic_filter_value_kind;
@@ -691,6 +692,7 @@ enum {
   TRANSMOG_TRAFFIC_FILTER_VALUE_KIND_STATUS_FAMILY = 2,
   TRANSMOG_TRAFFIC_FILTER_VALUE_KIND_UNAVAILABLE = 3,
   TRANSMOG_TRAFFIC_FILTER_VALUE_KIND_OTHER = 4,
+  TRANSMOG_TRAFFIC_FILTER_VALUE_KIND_HOST_SUBDOMAINS = 5,
 };
 #endif
 typedef struct transmog_sdk_traffic_filter_value_text {
@@ -702,17 +704,22 @@ typedef struct transmog_sdk_traffic_filter_value_number {
 typedef struct transmog_sdk_traffic_filter_value_status_family {
   uint16_t item0;
 } transmog_sdk_traffic_filter_value_status_family;
+typedef struct transmog_sdk_traffic_filter_value_host_subdomains {
+  transmog_sdk_text item0;
+} transmog_sdk_traffic_filter_value_host_subdomains;
 typedef struct transmog_sdk_traffic_filter_value {
   transmog_sdk_traffic_filter_value_kind kind;
   transmog_sdk_traffic_filter_value_text text;
   transmog_sdk_traffic_filter_value_number number;
   transmog_sdk_traffic_filter_value_status_family status_family;
+  transmog_sdk_traffic_filter_value_host_subdomains host_subdomains;
 #ifdef __cplusplus
   static transmog_sdk_traffic_filter_value Text(transmog_sdk_text item0) noexcept { transmog_sdk_traffic_filter_value value{}; value.kind = transmog_sdk_traffic_filter_value_kind::Text; value.text = {item0}; return value; }
   static transmog_sdk_traffic_filter_value Number(transmog_sdk_text item0) noexcept { transmog_sdk_traffic_filter_value value{}; value.kind = transmog_sdk_traffic_filter_value_kind::Number; value.number = {item0}; return value; }
   static transmog_sdk_traffic_filter_value StatusFamily(uint16_t item0) noexcept { transmog_sdk_traffic_filter_value value{}; value.kind = transmog_sdk_traffic_filter_value_kind::StatusFamily; value.status_family = {item0}; return value; }
   static transmog_sdk_traffic_filter_value Unavailable() noexcept { transmog_sdk_traffic_filter_value value{}; value.kind = transmog_sdk_traffic_filter_value_kind::Unavailable; return value; }
   static transmog_sdk_traffic_filter_value Other() noexcept { transmog_sdk_traffic_filter_value value{}; value.kind = transmog_sdk_traffic_filter_value_kind::Other; return value; }
+  static transmog_sdk_traffic_filter_value HostSubdomains(transmog_sdk_text item0) noexcept { transmog_sdk_traffic_filter_value value{}; value.kind = transmog_sdk_traffic_filter_value_kind::HostSubdomains; value.host_subdomains = {item0}; return value; }
 #endif
 } transmog_sdk_traffic_filter_value;
 typedef struct transmog_sdk_slice_traffic_filter_value {
@@ -724,12 +731,31 @@ typedef struct transmog_sdk_slice_traffic_filter_value {
   const transmog_sdk_traffic_filter_value *end() const noexcept { return size ? data + size : data; }
 #endif
 } transmog_sdk_slice_traffic_filter_value;
+// How two independently selected membership lists combine.
+#ifdef __cplusplus
+enum class transmog_sdk_traffic_selection_mode : uint32_t {
+  Either = 0,
+  Both = 1,
+  IgnoreSaved = 2,
+};
+#else
+typedef uint32_t transmog_sdk_traffic_selection_mode;
+enum {
+  TRANSMOG_TRAFFIC_SELECTION_MODE_EITHER = 0,
+  TRANSMOG_TRAFFIC_SELECTION_MODE_BOTH = 1,
+  TRANSMOG_TRAFFIC_SELECTION_MODE_IGNORE_SAVED = 2,
+};
+#endif
 // OR alternatives in one dimension; distinct dimensions are combined with AND.
 typedef struct transmog_sdk_traffic_filter_group {
   // Metadata identity, independently of visible columns.
   transmog_sdk_traffic_dimension dimension;
   // At most 128 alternatives. Empty means unrestricted.
   transmog_sdk_slice_traffic_filter_value values;
+  // Reusable terms copied into this query; independent of the Favorite library.
+  transmog_sdk_slice_traffic_filter_value saved_values;
+  // Membership combination, defaulting to either for older payloads.
+  transmog_sdk_traffic_selection_mode selection_mode;
 } transmog_sdk_traffic_filter_group;
 typedef struct transmog_sdk_slice_traffic_filter_group {
   const transmog_sdk_traffic_filter_group *data;
@@ -801,6 +827,8 @@ typedef struct transmog_sdk_session_query_input {
   transmog_sdk_optional_text host;
   // Global metadata substring search.
   transmog_sdk_optional_text search;
+  // Omit script-authored annotation text from metadata matching for restricted readers.
+  uint32_t exclude_script_annotations;
   // Column filters, combined with AND.
   transmog_sdk_slice_session_column_filter filters;
   // Exact alternatives OR within each dimension, AND across dimensions and constraints.
@@ -906,6 +934,8 @@ typedef struct transmog_sdk_optional_auto_response_match_view {
 } transmog_sdk_optional_auto_response_match_view;
 // One bounded row in the live-session browser.
 typedef struct transmog_sdk_session_summary {
+  // Script annotation metadata used for whole-catalog filtering, omitted from row payloads.
+  transmog_sdk_slice_text script_search;
   // Exact workspace admission number, transported as decimal text.
   transmog_sdk_text request_number;
   // Opaque display identifier for subsequent detail queries.
@@ -1635,6 +1665,258 @@ typedef struct transmog_sdk_slice_stored_body_metadata {
   const transmog_sdk_stored_body_metadata *end() const noexcept { return size ? data + size : data; }
 #endif
 } transmog_sdk_slice_stored_body_metadata;
+// Attribution bound by the native supervisor to the exact executing artifact.
+typedef struct transmog_sdk_log_context {
+  // Native immutable source-cache identity, independent of display attribution.
+  transmog_sdk_optional_text artifact;
+  // Public identity of this isolated worker instance, separate from its secret IPC token.
+  transmog_sdk_text worker;
+  // Immutable script build hash or extension package digest.
+  transmog_sdk_text revision;
+  // Initializer or declared callback name.
+  transmog_sdk_text callback;
+  // Worker-local operation identity; zero denotes initialization.
+  uint64_t invocation;
+  // Native exchange identity where applicable.
+  transmog_sdk_optional_text exchange_id;
+} transmog_sdk_log_context;
+// One immutable value in a flat, bounded Console snapshot. Parents precede children.
+typedef struct transmog_sdk_log_value {
+  // Property name, or empty for an argument.
+  transmog_sdk_text name;
+  // Parent index; absent for an argument.
+  transmog_sdk_optional_u16 parent;
+  // Engine-owned value classification.
+  transmog_sdk_text kind;
+  // Bounded inert display text.
+  transmog_sdk_text display;
+  // Properties or text were omitted.
+  uint32_t truncated;
+} transmog_sdk_log_value;
+typedef struct transmog_sdk_slice_log_value {
+  const transmog_sdk_log_value *data;
+  size_t size;
+#ifdef __cplusplus
+  const transmog_sdk_log_value &operator[](size_t index) const noexcept { return data[index]; }
+  const transmog_sdk_log_value *begin() const noexcept { return data; }
+  const transmog_sdk_log_value *end() const noexcept { return size ? data + size : data; }
+#endif
+} transmog_sdk_slice_log_value;
+// Native console method, without browser-specific formatting behavior.
+#ifdef __cplusplus
+enum class transmog_sdk_log_level : uint32_t {
+  Info = 0,
+  Debug = 1,
+  Warn = 2,
+  Error = 3,
+  Trace = 4,
+};
+#else
+typedef uint32_t transmog_sdk_log_level;
+enum {
+  TRANSMOG_LOG_LEVEL_INFO = 0,
+  TRANSMOG_LOG_LEVEL_DEBUG = 1,
+  TRANSMOG_LOG_LEVEL_WARN = 2,
+  TRANSMOG_LOG_LEVEL_ERROR = 3,
+  TRANSMOG_LOG_LEVEL_TRACE = 4,
+};
+#endif
+// One position in an immutable executing or mapped source artifact.
+typedef struct transmog_sdk_source_location {
+  // Module identity, not permission to read a file or fetch a URL.
+  transmog_sdk_text source;
+  // One-based line number.
+  uint32_t line;
+  // One-based UTF-16 column number.
+  uint32_t column;
+} transmog_sdk_source_location;
+typedef struct transmog_sdk_optional_source_location {
+  uint32_t has_value;
+  transmog_sdk_source_location value;
+} transmog_sdk_optional_source_location;
+// Static source-map fallback explanations, independent of authored exception text.
+#ifdef __cplusplus
+enum class transmog_sdk_mapping_issue : uint32_t {
+  Missing = 0,
+  Invalid = 1,
+  Unmapped = 2,
+  Source = 3,
+  Budget = 4,
+};
+#else
+typedef uint32_t transmog_sdk_mapping_issue;
+enum {
+  TRANSMOG_MAPPING_ISSUE_MISSING = 0,
+  TRANSMOG_MAPPING_ISSUE_INVALID = 1,
+  TRANSMOG_MAPPING_ISSUE_UNMAPPED = 2,
+  TRANSMOG_MAPPING_ISSUE_SOURCE = 3,
+  TRANSMOG_MAPPING_ISSUE_BUDGET = 4,
+};
+#endif
+typedef struct transmog_sdk_optional_mapping_issue {
+  uint32_t has_value;
+  transmog_sdk_mapping_issue value;
+} transmog_sdk_optional_mapping_issue;
+// One engine-owned frame with separately attributed original-source mapping.
+typedef struct transmog_sdk_stack_frame {
+  // Name supplied by the engine; empty for an anonymous frame.
+  transmog_sdk_text function;
+  // Executing JavaScript location, if available.
+  transmog_sdk_optional_source_location generated;
+  // Original source location verified against the exact executing artifact.
+  transmog_sdk_optional_source_location original;
+  // Why a declared source map could not provide an original position.
+  transmog_sdk_optional_mapping_issue mapping_issue;
+} transmog_sdk_stack_frame;
+typedef struct transmog_sdk_slice_stack_frame {
+  const transmog_sdk_stack_frame *data;
+  size_t size;
+#ifdef __cplusplus
+  const transmog_sdk_stack_frame &operator[](size_t index) const noexcept { return data[index]; }
+  const transmog_sdk_stack_frame *begin() const noexcept { return data; }
+  const transmog_sdk_stack_frame *end() const noexcept { return size ? data + size : data; }
+#endif
+} transmog_sdk_slice_stack_frame;
+// An inert snapshot; ordinary logs never retain live engine objects.
+typedef struct transmog_sdk_log_record {
+  // Optional debugger-only argument snapshots, absent in detached logging.
+  transmog_sdk_slice_log_value values;
+  // Monotonic call sequence within one operation, including omitted calls.
+  uint64_t sequence;
+  // Host wall-clock milliseconds since Unix epoch.
+  uint64_t time_unix_ms;
+  // Console level.
+  transmog_sdk_log_level level;
+  // Space-separated bounded primitive values and inert object labels.
+  transmog_sdk_text text;
+  // Engine-owned trace frames; empty for ordinary messages.
+  transmog_sdk_slice_stack_frame frames;
+  // Some text, arguments or frames were omitted.
+  uint32_t truncated;
+} transmog_sdk_log_record;
+typedef struct transmog_sdk_slice_log_record {
+  const transmog_sdk_log_record *data;
+  size_t size;
+#ifdef __cplusplus
+  const transmog_sdk_log_record &operator[](size_t index) const noexcept { return data[index]; }
+  const transmog_sdk_log_record *begin() const noexcept { return data; }
+  const transmog_sdk_log_record *end() const noexcept { return size ? data + size : data; }
+#endif
+} transmog_sdk_slice_log_record;
+// Supervisor-accepted log records for one bounded operation.
+typedef struct transmog_sdk_log_run {
+  // Native attribution; JavaScript cannot supply this metadata.
+  transmog_sdk_log_context context;
+  // Accepted records in call order.
+  transmog_sdk_slice_log_record records;
+  // Known messages omitted by the worker or supervisor.
+  uint64_t dropped;
+  // No authenticated stream-end arrived before worker loss or cancellation.
+  uint32_t incomplete;
+} transmog_sdk_log_run;
+typedef struct transmog_sdk_slice_log_run {
+  const transmog_sdk_log_run *data;
+  size_t size;
+#ifdef __cplusplus
+  const transmog_sdk_log_run &operator[](size_t index) const noexcept { return data[index]; }
+  const transmog_sdk_log_run *begin() const noexcept { return data; }
+  const transmog_sdk_log_run *end() const noexcept { return size ? data + size : data; }
+#endif
+} transmog_sdk_slice_log_run;
+// Finding importance, independent of transport success.
+#ifdef __cplusplus
+enum class transmog_sdk_script_severity : uint32_t {
+  Info = 0,
+  Warning = 1,
+  Error = 2,
+};
+#else
+typedef uint32_t transmog_sdk_script_severity;
+enum {
+  TRANSMOG_SCRIPT_SEVERITY_INFO = 0,
+  TRANSMOG_SCRIPT_SEVERITY_WARNING = 1,
+  TRANSMOG_SCRIPT_SEVERITY_ERROR = 2,
+};
+#endif
+// An inert, bounded script finding retained with exchange evidence.
+typedef struct transmog_sdk_script_annotation {
+  // Short searchable tags.
+  transmog_sdk_slice_text tags;
+  // Operator-visible explanation.
+  transmog_sdk_text note;
+  // Finding importance.
+  transmog_sdk_script_severity severity;
+} transmog_sdk_script_annotation;
+typedef struct transmog_sdk_slice_script_annotation {
+  const transmog_sdk_script_annotation *data;
+  size_t size;
+#ifdef __cplusplus
+  const transmog_sdk_script_annotation &operator[](size_t index) const noexcept { return data[index]; }
+  const transmog_sdk_script_annotation *begin() const noexcept { return data; }
+  const transmog_sdk_script_annotation *end() const noexcept { return size ? data + size : data; }
+#endif
+} transmog_sdk_slice_script_annotation;
+// Safe-to-copy snapshot of one thrown value. Its text remains untrusted.
+typedef struct transmog_sdk_exception_value {
+  // Error name from a safely readable data property, if available.
+  transmog_sdk_optional_text name;
+  // Bounded message or primitive representation; never invokes user conversion.
+  transmog_sdk_text message;
+  // Engine frames; never parsed from an authored `stack` property.
+  transmog_sdk_slice_stack_frame frames;
+  // Some details could not be inspected without executing user code.
+  uint32_t unavailable;
+} transmog_sdk_exception_value;
+typedef struct transmog_sdk_slice_exception_value {
+  const transmog_sdk_exception_value *data;
+  size_t size;
+#ifdef __cplusplus
+  const transmog_sdk_exception_value &operator[](size_t index) const noexcept { return data[index]; }
+  const transmog_sdk_exception_value *begin() const noexcept { return data; }
+  const transmog_sdk_exception_value *end() const noexcept { return size ? data + size : data; }
+#endif
+} transmog_sdk_slice_exception_value;
+// Bounded exception snapshot, kept separate from host-controlled status text.
+typedef struct transmog_sdk_exception_diagnostic {
+  // Native immutable source-cache identity; workers cannot grant source access.
+  transmog_sdk_optional_text artifact;
+  // Outermost thrown value.
+  transmog_sdk_exception_value exception;
+  // Ordered `cause` chain, flattened to avoid recursive wire allocations.
+  transmog_sdk_slice_exception_value causes;
+  // Capture reached a byte, frame, cause, or cycle bound.
+  uint32_t truncated;
+} transmog_sdk_exception_diagnostic;
+typedef struct transmog_sdk_optional_exception_diagnostic {
+  uint32_t has_value;
+  transmog_sdk_exception_diagnostic value;
+} transmog_sdk_optional_exception_diagnostic;
+// Attributed script findings, separate from traffic-edit evidence.
+typedef struct transmog_sdk_script_report_view {
+  // Ephemeral native console streams, local inspection only.
+  transmog_sdk_slice_log_run logs;
+  // Exact script ID and applied revision.
+  transmog_sdk_text script;
+  // Phase that produced the evidence.
+  transmog_sdk_text phase;
+  // Notes saved with the exchange.
+  transmog_sdk_slice_script_annotation annotations;
+  // Bounded diagnostics available only in the live session.
+  transmog_sdk_slice_text diagnostics;
+  // Ephemeral exception details; never included in ordinary trace persistence.
+  transmog_sdk_optional_exception_diagnostic exception;
+  // Native retention omitted older detailed exception evidence.
+  uint32_t details_omitted;
+} transmog_sdk_script_report_view;
+typedef struct transmog_sdk_slice_script_report_view {
+  const transmog_sdk_script_report_view *data;
+  size_t size;
+#ifdef __cplusplus
+  const transmog_sdk_script_report_view &operator[](size_t index) const noexcept { return data[index]; }
+  const transmog_sdk_script_report_view *begin() const noexcept { return data; }
+  const transmog_sdk_script_report_view *end() const noexcept { return size ? data + size : data; }
+#endif
+} transmog_sdk_slice_script_report_view;
 // Redacted structural header difference.
 typedef struct transmog_sdk_header_changes {
   // Header names introduced by the hook.
@@ -1747,6 +2029,8 @@ typedef struct transmog_sdk_session_detail {
   transmog_sdk_slice_text diagnostics;
   // Centrally attributed hook effects.
   transmog_sdk_slice_text hook_effects;
+  // Script-authored annotations and live diagnostics, with immutable revision attribution.
+  transmog_sdk_slice_script_report_view script_reports;
   // Observed head edits in exchange-local execution order, excluding header values.
   transmog_sdk_slice_header_effect_view header_effects;
   // Actual bounded response-body edit outcomes, without body content.
@@ -1814,6 +2098,10 @@ typedef struct transmog_sdk_app_error {
   transmog_sdk_text message;
   // Whether retrying the same action can be useful.
   uint32_t retryable;
+  // Ephemeral authored evidence. Generic error serializers must not disclose it.
+  transmog_sdk_optional_exception_diagnostic exception;
+  // Accepted console evidence. Only explicit local authoring DTOs may disclose it.
+  transmog_sdk_slice_log_run logs;
 } transmog_sdk_app_error;
 #ifdef __cplusplus
 namespace transmog::models {
@@ -1872,6 +2160,7 @@ using TrafficDimensionKind = transmog_sdk_traffic_dimension_kind;
 using TrafficFilterValue = transmog_sdk_traffic_filter_value;
 using TrafficFilterValueKind = transmog_sdk_traffic_filter_value_kind;
 using SliceTrafficFilterValue = transmog_sdk_slice_traffic_filter_value;
+using TrafficSelectionMode = transmog_sdk_traffic_selection_mode;
 using TrafficFilterGroup = transmog_sdk_traffic_filter_group;
 using SliceTrafficFilterGroup = transmog_sdk_slice_traffic_filter_group;
 using ClassificationFilter = transmog_sdk_classification_filter;
@@ -1941,6 +2230,29 @@ using SliceBodyView = transmog_sdk_slice_body_view;
 using BodyAvailability = transmog_sdk_body_availability;
 using StoredBodyMetadata = transmog_sdk_stored_body_metadata;
 using SliceStoredBodyMetadata = transmog_sdk_slice_stored_body_metadata;
+using LogContext = transmog_sdk_log_context;
+using LogValue = transmog_sdk_log_value;
+using SliceLogValue = transmog_sdk_slice_log_value;
+using LogLevel = transmog_sdk_log_level;
+using SourceLocation = transmog_sdk_source_location;
+using OptionalSourceLocation = transmog_sdk_optional_source_location;
+using MappingIssue = transmog_sdk_mapping_issue;
+using OptionalMappingIssue = transmog_sdk_optional_mapping_issue;
+using StackFrame = transmog_sdk_stack_frame;
+using SliceStackFrame = transmog_sdk_slice_stack_frame;
+using LogRecord = transmog_sdk_log_record;
+using SliceLogRecord = transmog_sdk_slice_log_record;
+using LogRun = transmog_sdk_log_run;
+using SliceLogRun = transmog_sdk_slice_log_run;
+using ScriptSeverity = transmog_sdk_script_severity;
+using ScriptAnnotation = transmog_sdk_script_annotation;
+using SliceScriptAnnotation = transmog_sdk_slice_script_annotation;
+using ExceptionValue = transmog_sdk_exception_value;
+using SliceExceptionValue = transmog_sdk_slice_exception_value;
+using ExceptionDiagnostic = transmog_sdk_exception_diagnostic;
+using OptionalExceptionDiagnostic = transmog_sdk_optional_exception_diagnostic;
+using ScriptReportView = transmog_sdk_script_report_view;
+using SliceScriptReportView = transmog_sdk_slice_script_report_view;
 using HeaderChanges = transmog_sdk_header_changes;
 using HeaderEffectView = transmog_sdk_header_effect_view;
 using SliceHeaderEffectView = transmog_sdk_slice_header_effect_view;

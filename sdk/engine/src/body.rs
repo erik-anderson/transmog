@@ -264,6 +264,8 @@ mod tests {
         ] {
             let handle = Box::into_raw(Box::new(BodyPageHandle {
                 value: Err(AppError {
+                    exception: None,
+                    logs: Vec::new(),
                     category,
                     message: "original message".into(),
                     retryable: true,

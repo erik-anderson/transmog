@@ -10,6 +10,8 @@ publish.workspace = true
 tokio.workspace = true
 transmog-app.workspace = true
 transmog-core = { path = "../../crates/proxy-core" }
+transmog-script = { path = "../../crates/proxy-script" }
+transmog-script-diagnostics = { path = "../../crates/script-diagnostics" }
 
 [dev-dependencies]
 serde.workspace = true

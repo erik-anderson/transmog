@@ -16,7 +16,9 @@ def generate(check=False):
         schema=command(["cargo","run","--quiet","--locked","--manifest-path",ROOT/"sdk/Cargo.toml",
                     "-p","transmog-sdk-model-codegen","--",
                     "transmog_app=crates/app/src/lib.rs", "transmog_core=crates/proxy-core/src/lib.rs",
-                    "transmog_session=crates/proxy-session/src/lib.rs"], env=env,capture=True)
+                    "transmog_session=crates/proxy-session/src/lib.rs",
+                    "transmog_script=crates/proxy-script/src/lib.rs",
+                    "transmog_script_diagnostics=crates/script-diagnostics/src/lib.rs"], env=env,capture=True)
     except subprocess.CalledProcessError as error:
         raise ValueError(f"Rust model extraction failed:\n{error.stderr}") from error
     generator=Generator(Models(json.loads(schema.stdout)))

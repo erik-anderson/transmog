@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
+import { checkTrafficSavedValues } from "./check-traffic-saved-values.mjs";
 import { checkFilterCoverage } from "./check-filter-coverage.mjs";
 
 export async function checkTrafficFilters(page, root) {
@@ -80,6 +81,7 @@ export async function checkTrafficFilters(page, root) {
       await t.refreshSessions(undefined, true);
     });
     await settle();
+    await checkTrafficSavedValues(page, root, { traffic, picker, open, apply, settle });
     await checkFilterCoverage(page, root, { traffic, picker, open, apply, optionCount, settle });
     await open("traffic-type");
     assert.equal(await optionCount("HTTP"), "450");
@@ -306,13 +308,14 @@ export async function checkTrafficFilters(page, root) {
     await picker.getByRole("button", { name: "Clear selection", exact: true }).click();
     await picker.locator(".filter-custom summary").click();
     await picker.getByLabel("Column filter value", { exact: true }).fill("PO");
+    await picker.getByRole("button", { name: "Add requirement", exact: true }).click();
     await apply();
     assert.equal(
       await page.evaluate(() => document.querySelector("app-shell").traffic.totalMatched),
       225,
     );
     await traffic.getByRole("button", { name: /^Edit Method:/ }).click();
-    assert.match(await picker.locator(".filter-condition").textContent(), /contains PO/);
+    assert.match(await picker.locator(".filter-custom").textContent(), /contains “po”/);
     await page.keyboard.press("Escape");
     assert.equal(
       await traffic

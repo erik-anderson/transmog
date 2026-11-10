@@ -634,6 +634,7 @@ export type TrafficDimension =
   ColumnId | "traffic-type" | "fetch-destination" | `extension:${string}`;
 export type TrafficFilterValue =
   | { kind: "text"; value: string }
+  | { kind: "host-subdomains"; value: string }
   | { kind: "number"; value: string }
   | { kind: "status-family"; value: number }
   | { kind: "unavailable" }
@@ -641,18 +642,32 @@ export type TrafficFilterValue =
 export interface TrafficFilterGroup {
   dimension: TrafficDimension;
   values: TrafficFilterValue[];
+  savedValues?: TrafficFilterValue[];
+  selectionMode?: "either" | "both" | "ignore-saved";
+}
+export interface TrafficFavorite {
+  dimension: TrafficDimension;
+  value: TrafficFilterValue | null;
+  condition: Pick<TrafficFilter, "column" | "operator" | "value"> | null;
+}
+export interface TrafficFavoritesPage {
+  revision: number;
+  entries: TrafficFavorite[];
+  nextOffset: number | null;
 }
 export interface TrafficFacetOption {
   key: string;
   label: string;
   value: TrafficFilterValue;
   count: number;
+  matchReason?: string;
 }
 export interface TrafficFacetPage {
   dimension: TrafficDimension;
   options: TrafficFacetOption[];
   includedOptions: TrafficFacetOption[];
   matchingEntries: number;
+  draftEntries?: number;
   omittedEntries: number;
   totalOptions: number;
   nextOffset: number | null;

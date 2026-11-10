@@ -81,6 +81,8 @@ impl AgentApplication {
         validate_ranges(filters)?;
         if let Scope::Hosts { hosts } = &grant.scope {
             query.filter_groups.push(TrafficFilterGroup {
+                saved_values: Vec::new(),
+                selection_mode: transmog_app::TrafficSelectionMode::default(),
                 dimension: TrafficDimension::Column(TrafficColumn::Host),
                 values: hosts
                     .iter()

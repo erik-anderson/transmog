@@ -278,11 +278,11 @@ traffic-workspace .trace-export-facts{display:grid;gap:.4rem;overflow-wrap:anywh
 .filter-options label { display:flex;align-items:center;gap:.5rem;min-height:2rem;padding:.3rem .65rem;cursor:pointer; }
 .filter-options label > span:first-of-type { min-width:0;overflow-wrap:anywhere; }
 .filter-option-count { margin-left:auto;color:var(--muted);font-variant-numeric:tabular-nums; }
-.filter-options summary,.filter-custom summary { padding:.4rem .65rem;cursor:pointer; }
+.filter-options summary,.filter-custom > summary { padding:.4rem .65rem;cursor:pointer; }
 .filter-custom { border-top:1px solid var(--line); }
-.filter-custom label { display:flex;gap:.5rem;align-items:baseline; }
-.filter-custom select { flex:1;width:auto;min-width:0; }
-.filter-custom > input { margin:.3rem .65rem;width:calc(100% - 1.3rem); }
+.filter-requirements > label { display:flex;gap:.5rem;align-items:baseline;padding-inline:.65rem; }
+.filter-requirements select { flex:1;width:auto;min-width:0; }
+.filter-requirements > input { margin:.3rem .65rem;width:calc(100% - 1.3rem); }
 .filter-condition { display:flex;justify-content:space-between;gap:.5rem;padding:.3rem .65rem;overflow-wrap:anywhere; }
 .filter-picker-footer { position:sticky;bottom:0;background:var(--panel);border-top:1px solid var(--line); }
 .stream-identity { display:inline-flex;align-items:baseline;gap:.3rem;max-width:100%;min-height:0;padding:0;border:0;border-radius:0;background:transparent;color:var(--accent-strong);font:inherit;font-weight:600;white-space:nowrap; }
@@ -292,7 +292,7 @@ traffic-workspace .trace-export-facts{display:grid;gap:.4rem;overflow-wrap:anywh
 .stream-disclosure p { padding:.3rem .5rem;margin:0;overflow-wrap:anywhere; }
 @media (forced-colors:active) { .filter-chip { border-color:CanvasText; }.stream-identity {color:LinkText;} }
 
-@supports (height:attr(data-max-height type(<length>))) { .traffic-filter-picker {max-height:min(calc(100dvh - 1.5rem),attr(data-max-height type(<length>),500px));} }
+@supports (height:attr(data-max-height type(<length>))) { .traffic-filter-picker {max-height:min(calc(100dvh - 6.25rem),attr(data-max-height type(<length>),500px));} }
 
 .filter-observed {display:flex;flex-direction:column;gap:.3rem;padding:0 .65rem;}.filter-observed input{width:100%;min-width:0;box-sizing:border-box;}.filter-observed button{text-align:left;overflow-wrap:anywhere;font-size:.75rem;}
 .filter-observed-footer{display:flex;justify-content:space-between;gap:.4rem;align-items:center;padding:.2rem .65rem;font-size:.72rem;}.filter-observed-footer button{flex:none;}
@@ -344,3 +344,39 @@ traffic-workspace .trace-export-facts{display:grid;gap:.4rem;overflow-wrap:anywh
 .script-findings { padding:.5rem; border-bottom:1px solid var(--line); max-height:12rem; overflow:auto; overflow-wrap:anywhere; }
 .script-findings p { margin:.3rem 0; white-space:pre-wrap; }
 .script-tag { display:inline-block; margin-inline-start:.4rem; padding:0 .3rem; border:1px solid var(--line); border-radius:.2rem; }
+
+.traffic-filter-picker {width:min(27rem,calc(100vw - 1.5rem));overflow:hidden;}
+.filter-picker-form {max-height:inherit;min-height:0;}
+.filter-picker-scroll {overflow:auto;min-height:0;overscroll-behavior:contain;}
+.filter-picker-heading,.filter-picker-footer {flex-shrink:0;}
+.filter-picker-footer {flex-direction:column;align-items:stretch;gap:.35rem;}
+.filter-picker-footer > div {display:flex;justify-content:space-between;gap:.5rem;}
+.filter-commit-actions {display:flex;align-items:center;gap:.4rem;}
+.filter-preview {font-size:.75rem;overflow-wrap:anywhere;}
+.filter-section-title {font-size:.75rem;margin:.5rem .65rem .25rem;}
+.filter-list-entry {padding:.2rem .65rem;}
+.filter-list-entry label {display:flex;flex-direction:column;gap:.25rem;font-size:.75rem;}
+.filter-list-entry textarea {width:100%;min-width:0;box-sizing:border-box;resize:vertical;max-height:8rem;}
+.filter-list-entry .filter-picker-hint {padding:0;}
+.filter-combine {display:flex;flex-wrap:wrap;align-items:baseline;gap:.4rem;padding:.4rem .65rem;font-size:.75rem;}
+.filter-combine select {flex:1;min-width:10rem;width:auto;}
+.filter-saved {max-height:10rem;overflow:auto;}
+/* Explanations occupy a separate row, preserving the primary control alignment. */
+.traffic-filter-picker .filter-choice {display:grid;grid-template-columns:minmax(0,1fr) 1.8rem;align-items:center;column-gap:.25rem;padding-inline-end:.4rem;}
+.traffic-filter-picker .filter-choice > label {display:grid;grid-template-columns:1rem minmax(0,1fr) max-content;align-items:center;gap:.5rem;width:100%;min-width:0;min-height:2rem;padding:.3rem .65rem;line-height:1.35;cursor:pointer;}
+.traffic-filter-picker .filter-choice label > span {align-self:center;}
+.traffic-filter-picker .filter-choice label > span:first-of-type {min-width:0;overflow-wrap:anywhere;}
+.traffic-filter-picker .filter-choice input[type="checkbox"] {margin:0;inline-size:1rem;block-size:1rem;align-self:center;}
+.traffic-filter-picker .filter-choice .filter-option-count {margin:0;justify-self:end;align-self:center;font-size:inherit;line-height:inherit;}
+.traffic-filter-picker .filter-choice .filter-star {display:grid;place-items:center;min-width:1.8rem;min-height:2rem;padding:0;border:0;color:var(--muted);background:transparent;font-size:1.1rem;line-height:1;font-weight:400;}
+.traffic-filter-picker .filter-star[aria-pressed="true"] {color:light-dark(var(--accent-strong),#a7c5ff);}
+.traffic-filter-picker .filter-star:hover {background:var(--row-hover);}
+.traffic-filter-picker .filter-star:focus-visible {outline:2px solid var(--focus);outline-offset:1px;}
+.traffic-filter-picker .filter-choice-reason {grid-column:1 / -1;margin:-.15rem .65rem .3rem 2.15rem;font-size:.68rem;line-height:1.35;color:var(--muted);}
+.filter-library-actions {display:flex;gap:.5rem;padding:.3rem .65rem;flex-wrap:wrap;}
+.filter-library-actions button {background:transparent;border:0;color:var(--muted);padding:.2rem 0;font-size:.7rem;text-decoration:underline;}
+.filter-options {max-height:min(15rem,35dvh);}
+.filter-requirements > button {margin-inline:.65rem;}
+.filter-saved-heading {display:flex;justify-content:space-between;gap:.5rem;padding-inline-end:3.1rem;}
+.filter-saved-heading > span:last-child {color:var(--muted);font-weight:400;}
+@media (forced-colors:active) {.traffic-filter-picker .filter-star[aria-pressed="true"] {color:Highlight;}.traffic-filter-picker .filter-star:focus-visible {outline-color:Highlight;}}

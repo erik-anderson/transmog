@@ -268,6 +268,20 @@ when changing the experience.
   Large structured views may load explicit field ranges on demand. Keep source
   bytes accessible, identify flattened nesting, and report when copying requires
   a smaller range instead of silently omitting unloaded content.
+- Keep reusable Favorites, applied filters and per-window picker drafts separate.
+  Put custom filter authoring and saved values in one disclosure, collapsed for
+  an uncustomized field and expanded by default when reusable or custom values
+  exist. Preserve an explicit collapse during asynchronous refreshes.
+  Apply commits the filter draft; Cancel, Escape and outside dismissal discard it
+  without a confirmation prompt. Explicit Favorite edits keep their saved result.
+  Subtle borderless stars persist authored values without changing membership;
+  use muted outlines, accent fills for Favorites and a visible keyboard focus ring.
+  Align primary row text and counts with the checkbox and star; put explanations
+  on a separate line. Saved and observed
+  selections retain their roles after removal or clearing of Favorites. Preview
+  unique requests across the full surrounding scope, and apply explicit additional
+  requirements after membership. Preserve drafts and focus during shared-library
+  refreshes; save pending values successfully before applying their query.
 - Count and match filter choices with the same definitions. Common choices must
   not hide unfamiliar observed values; expose a counted Other choice when useful
   and distinguish it from missing evidence. Use canonical names for app-owned

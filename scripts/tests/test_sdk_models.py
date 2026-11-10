@@ -21,6 +21,14 @@ def schema():
 
 
 class ModelEvolutionTests(unittest.TestCase):
+    def test_public_glob_reexports_remain_available_to_projections(self):
+        source = schema()
+        source["modules"]["transmog_app::private"] = {"public": False, "imports": []}
+        source["modules"]["transmog_app"]["imports"].append({"public": True, "name": "*", "path": ["private"]})
+        source["types"]["transmog_app::private::Nested"] = {"name": "Nested", "module": "transmog_app::private", "public": True, "kind": "struct", "fields": [], "docs": []}
+        source["types"]["transmog_app::SessionQueryInput"]["fields"].append(field("nested", "Nested"))
+        self.assertIn("impl Project for transmog_app::Nested", Generator(Models(source)).rust_code())
+
     def test_added_rust_field_flows_into_every_projection(self):
         source = schema()
         before = Generator(Models(deepcopy(source)))

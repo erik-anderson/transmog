@@ -14,6 +14,7 @@ param(
     [switch]$WindowGeometryChecks,
     [switch]$PortableCaseChecks,
     [switch]$ViewerChecks,
+    [switch]$TrafficFavoritesChecks,
     [switch]$BodySourceChecks,
     [switch]$CapturedPageChecks,
     [switch]$TraceSaveChecks,
@@ -40,6 +41,7 @@ if ($WindowGeometryChecks -and ($StartupOnly -or $ViewerChecks -or $PortableCase
 if ($PortableCaseChecks -and ($StartupOnly -or $ViewerChecks -or $SoakMinutes)) { throw 'PortableCaseChecks is an isolated main-window flow.' }
 if ($PortableCaseChecks -and -not $ExecutablePath) { throw 'PortableCaseChecks requires an explicit desktop-test-fixtures build via ExecutablePath and SkipReleaseBuild.' }
 if ($ViewerChecks -and ($StartupOnly -or $SoakMinutes)) { throw 'ViewerChecks is a separate saved-file flow.' }
+if ($TrafficFavoritesChecks -and -not $ViewerChecks) { throw 'TrafficFavoritesChecks requires ViewerChecks.' }
 if ($BodySourceChecks -and (-not $ViewerChecks -or $TraceSaveChecks -or $CapturedPageChecks -or $NativeTracePath)) { throw 'BodySourceChecks requires ViewerChecks and cannot be combined with other focused viewer flows.' }
 if ($CapturedPageChecks -and -not $ViewerChecks) { throw 'CapturedPageChecks requires ViewerChecks.' }
 if ($TraceSaveChecks -and (-not $ViewerChecks -or $NativeTracePath)) { throw 'TraceSaveChecks requires ViewerChecks and uses its isolated SAZ fixture.' }
@@ -401,6 +403,7 @@ try {
             if ($NativeTracePath) { $viewerArguments += @('--native-source', $NativeTracePath) }
             if ($TraceSaveChecks) { $viewerArguments += '--trace-save-only' }
             if ($BodySourceChecks) { $viewerArguments += '--body-source-only' }
+            if ($TrafficFavoritesChecks) { $viewerArguments += '--traffic-favorites-only' }
             & node @viewerArguments | ForEach-Object {
                 Write-Host $_
                 Save-DesktopMemorySample ([string]$_) | Out-Null
@@ -438,16 +441,29 @@ try {
         throw 'Single-instance handoff terminated the primary process.'
     }
 
+    if ($TrafficFavoritesChecks) {
+        Stop-Process -Id $process.Id -Force
+        if (-not $process.WaitForExit(10000)) { throw 'The owned Favorites probe did not stop for restart.' }
+        $process = Start-Process @launchArguments
+        $startup = Wait-DesktopProbePage -Process $process -ProfileRoot $probeRoot -Port $DevToolsPort -DiscoverPort
+        if (-not $startup.Ready) { throw 'Favorites restart did not become ready.' }
+        Push-Location $desktopUi
+        try {
+            & node scripts/smoke-viewers.mjs --port "$($startup.Port)" --source $viewerSource --executable $executable --profile-root $probeRoot --traffic-favorites-only --traffic-favorites-restart
+            if ($LASTEXITCODE -ne 0) { throw 'Favorites restart verification failed.' }
+        } finally { Pop-Location }
+    }
     $outputPassed = $true
     [pscustomobject]@{
         StartupVerified = $true
+        TrafficFavoritesVerified = [bool]$TrafficFavoritesChecks
         AccessibilityVerified = -not $ViewerChecks -or $TraceSaveChecks
         HighContrastVerified = -not $ViewerChecks
         HighDpiVerified = -not $ViewerChecks
         LocalizationLengthVerified = -not $ViewerChecks
-        ViewerFlowVerified = [bool]($ViewerChecks -and -not $TraceSaveChecks -and -not $BodySourceChecks)
-        TraceSaveProgressVerified = [bool]($ViewerChecks -and -not $BodySourceChecks)
-        BodySourceVerified = [bool]($ViewerChecks -and -not $TraceSaveChecks)
+        ViewerFlowVerified = [bool]($ViewerChecks -and -not $TraceSaveChecks -and -not $BodySourceChecks -and -not $TrafficFavoritesChecks)
+        TraceSaveProgressVerified = [bool]($ViewerChecks -and -not $BodySourceChecks -and -not $TrafficFavoritesChecks)
+        BodySourceVerified = [bool]($ViewerChecks -and -not $TraceSaveChecks -and -not $TrafficFavoritesChecks)
         KeyRecoveryVerified = [bool]$KeyRecoveryChecks
         SoakMinutes = $SoakMinutes
         WorkingSetGrowthBytes = $endingWorkingSet - $startingWorkingSet

@@ -37,7 +37,7 @@ use std::{
 use percent_encoding::percent_decode_str;
 use serde::Serialize;
 use tauri::{
-    Manager, State, WebviewWindowBuilder,
+    Emitter, Manager, State, WebviewWindowBuilder,
     http::{Request, Response, StatusCode, header},
     ipc::Channel,
     utils::config::WebviewUrl,
@@ -1575,6 +1575,29 @@ fn query_sessions(
 }
 
 #[tauri::command]
+fn traffic_favorites(
+    dimension: transmog_app::TrafficDimension,
+    offset: usize,
+    limit: usize,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::TrafficFavoritesPage, AppError> {
+    state
+        .application
+        .traffic_favorites(dimension, offset, limit)
+}
+
+#[tauri::command]
+fn change_traffic_favorites(
+    change: transmog_app::TrafficFavoritesChange,
+    app: tauri::AppHandle,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::TrafficFavoritesResult, AppError> {
+    let result = state.application.change_traffic_favorites(change)?;
+    let _ = app.emit("traffic-favorites-changed", result.revision);
+    Ok(result)
+}
+
+#[tauri::command]
 async fn traffic_facets(
     request: transmog_app::TrafficFacetInput,
     window: tauri::WebviewWindow,
@@ -2803,6 +2826,8 @@ pub fn run() {
                 query_sessions,
                 query_traffic_view,
                 traffic_facets,
+                traffic_favorites,
+                change_traffic_favorites,
                 traffic_timeline_rows,
                 traffic_view_rows,
                 extension_traffic_columns,

@@ -198,14 +198,18 @@ export async function checkRequestOrder(page, root) {
     await header.getByRole("button", { name: "Request order", exact: true }).focus();
     await page.keyboard.press("Enter");
     await menu.getByRole("button", { name: "Filter Request order…", exact: true }).click();
+    if (!(await picker.locator(".filter-custom").evaluate((details) => details.open))) {
+      await picker.getByText("Advanced filters", { exact: true }).click();
+    }
     await picker.getByLabel("Filter comparison").selectOption("minimum");
     await picker.getByLabel("Column filter value").fill("18446744073709551616");
-    await picker.getByRole("button", { name: "Apply filter", exact: true }).click();
-    assert.equal(
-      await picker.getByLabel("Column filter value").evaluate((node) => node.validity.valid),
-      false,
+    await picker.getByRole("button", { name: "Add requirement", exact: true }).click();
+    assert.match(
+      await picker.locator(".filter-picker-error").textContent(),
+      /valid comparison value/,
     );
     await picker.getByLabel("Column filter value").fill("9007199254740993");
+    await picker.getByRole("button", { name: "Add requirement", exact: true }).click();
     await picker.getByRole("button", { name: "Apply filter", exact: true }).click();
     await settle();
     assert.deepEqual(

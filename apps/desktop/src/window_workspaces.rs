@@ -91,6 +91,8 @@ pub(super) fn viewer_command_allowed(command: &str) -> bool {
             | "query_sessions"
             | "query_traffic_view"
             | "traffic_facets"
+            | "traffic_favorites"
+            | "change_traffic_favorites"
             | "traffic_view_rows"
             | "extension_traffic_columns"
             | "extension_traffic_facets"
@@ -659,6 +661,8 @@ mod tests {
         }
         for command in [
             "import_trace",
+            "traffic_favorites",
+            "change_traffic_favorites",
             "execute_composer",
             "request_command",
             "read_body_range",

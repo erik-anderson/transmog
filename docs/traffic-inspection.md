@@ -367,14 +367,25 @@ the blocks. An unrecorded protocol is labeled unavailable rather than guessed.
 Traffic type, HTTP status families/codes and Fetch destination offer counted
 checkbox choices. Column menus open the same picker, and each active field has
 one chip with separate Edit and Remove actions. Choices remain a draft until
-**Apply filter**; Escape closes the draft and returns focus. Custom contains,
-equals and numeric conditions remain available under **Custom match**.
+**Apply filter**; **Cancel**, Escape or clicking outside discards pending
+selections and text. Closing the picker does not apply the draft or ask for
+confirmation. Cancel and Escape return focus to the opener.
+Explicit Favorite actions survive dismissal. Additional comparisons are under
+**Advanced filters**, along with **Is in**, saved values and **Combine selections**.
+This section starts collapsed for an uncustomized field and opens by default
+when it has Favorites, saved selections, enabled requirements or a nondefault
+combination mode. Collapsing it preserves its values and stays collapsed during
+count and Favorite refreshes. Additional comparisons are labeled
+**Also require**: enter a value and choose **Add requirement**, then enable each
+condition individually. Every enabled Contains condition must pass. Equals and
+each numeric endpoint have one active value; previous authored values remain
+available unchecked for reuse.
 
 Counts describe the surrounding filters across all retained entries. Zero values
 stay selectable; longer zero lists use **More values**, and selected values stay
 visible when the picker is reopened. Loading or failed counts are shown as
 unavailable rather than zero. Values outside exact filter limits are disclosed;
-use a custom contains condition to narrow long text.
+use Contains under **Also require** to narrow long text.
 
 Protocol choices group recorded `HTTP/2.0` with **HTTP/2** and `HTTP/3.0` with
 **HTTP/3**, for both counts and exact matches. Original recorded spellings remain
@@ -393,11 +404,64 @@ observed values it includes, just as status families overlap individual codes.
 Host, Process and normalized Content type offer searched observed choices with
 contextual counts. **Load more** continues the list; after 200 observed values,
 search narrows the remaining set. Selected values remain visible outside the
-searched page. **Use exact value** accepts a new value before it appears in traffic;
-custom Contains and Equals remain available. Content type choices omit parameters
+searched page. **Is in** accepts values before they appear in Traffic;
+Contains and Equals remain available under **Also require**. Content type choices omit parameters
 and compare without case. **No process name** means no captured process name,
 including remote callers; **Unavailable status** and **Missing content type** are
 explicit evidence states, distinct from zero or the literal text of those labels.
+
+**Saved values** is a local Favorite library shared by the main window and saved-file
+viewers. A star adds or removes a Favorite immediately; it never changes either
+selection. Saved checkboxes select reusable terms, while observed checkboxes pick
+exact captured values independently. Removing an active Favorite keeps its term
+under **Selected for this filter**. **Clear saved Host values** clears only Host
+Favorites, including saved comparisons, reports the removed count and offers
+**Undo**. Undo preserves intervening additions and later explicit removals.
+Favorites are separate from layouts, capture files and case exports; first run
+starts with an empty library. Filters and picker drafts remain window-local.
+
+For an empty capture, open **Filters → Host → Advanced filters** and paste
+`api.example.test, *.domain.example, future.example.test` into **Is in**.
+**Save and select** saves distinct terms and checks them in the draft;
+**Save and apply** validates and saves the entire pending paste before applying.
+Invalid or over-limit batches keep the complete text editable and save nothing.
+A zero-match filter stays active and includes later matching requests.
+
+Host terms canonicalize case, IDNs and a trailing DNS dot without changing
+captured evidence. `*.domain.example` includes both `cdn.domain.example` and
+`eu.cdn.domain.example`, while the apex `domain.example` needs its own term.
+`otherdomain.example` does not match. Exact IPv4 and IPv6 literals are accepted;
+ports, URLs, paths, credentials, malformed hosts and wildcard IPs are rejected.
+Other built-in fields use their typed exact choices, including missing values,
+Other, protocol aliases and status families. URL, Path and Process accept one
+literal value, preserving commas. Wildcards are reserved for Host.
+
+When an outside host appears, search **Observed hosts**, pick its checkbox and
+Apply to include it alongside the saved terms. Starring that row adds an unchecked
+saved row while preserving the observed checkbox and focus. **Combine selections**
+offers **Match either selection** (default), **Match both selections**, and
+**Ignore saved selection**. Each nonempty side matches any checked term of its
+own. Both requires membership in both populated sides; an empty side imposes no
+restriction. Ignore pauses the saved side while retaining its checkmarks. A
+saved-only ignored selection has no active-filter chip. Enabled **Also require**
+conditions always apply after membership, along with other fields and searches.
+**Clear selection**, chip Remove and **Clear filters** release restrictions while
+keeping Favorites.
+
+**After Apply** counts unique requests in the full surrounding scope before
+option search, option paging or table paging. Overlapping terms count a request
+once. Wildcard coverage and missing selections or requirements are explained on
+observed rows. Counts retain metadata/content-search, incident and applicable
+extension scopes with only the edited field lifted. Loading and unavailable
+counts remain distinct from measured zero. Active queries accept up to 32 fields,
+128 alternatives across both roles per field and 1,024 in total, plus 14 scalar
+requirements of up to 255 characters each. The Favorite library independently
+holds up to 1,024 entries per field and 4,096 total, read in pages of at most 256.
+Its encoded storage is capped at 4 MiB; a batch exceeding that capacity saves
+nothing and keeps the draft editable.
+Counts for unchecked Favorites outside the current count batch may be unavailable;
+select a term to request its count. The full draft preview still includes all
+selected terms.
 
 Duration and size ranges use inclusive From/To bounds with milliseconds, seconds
 or minutes and bytes, KiB, MiB or GiB. Blank ends are unrestricted; decimal values

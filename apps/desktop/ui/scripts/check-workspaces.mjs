@@ -444,6 +444,33 @@ await page.addInitScript(
                   ),
             ),
         );
+    const termMatches = (row, dimension, value) => {
+      const candidate = trafficKey(row, dimension);
+      return value.kind === "other"
+        ? otherValue(dimension, candidate)
+        : value.kind === "unavailable"
+          ? candidate == null || candidate === "Unavailable"
+          : value.kind === "status-family"
+            ? Math.floor(row.status / 100) === value.value
+            : value.kind === "number"
+              ? candidate != null && BigInt(candidate) === BigInt(value.value)
+              : value.kind === "host-subdomains"
+                ? String(candidate)
+                    .toLowerCase()
+                    .endsWith("." + value.value)
+                : String(candidate).toLowerCase() === value.value.toLowerCase();
+    };
+    const groupMatches = (row, group) => {
+      const saved = group.savedValues ?? [],
+        picked = group.values ?? [];
+      const s = saved.some((value) => termMatches(row, group.dimension, value));
+      const p = picked.some((value) => termMatches(row, group.dimension, value));
+      return group.selectionMode === "ignore-saved"
+        ? !picked.length || p
+        : group.selectionMode === "both"
+          ? (!saved.length || s) && (!picked.length || p)
+          : (!saved.length && !picked.length) || s || p;
+    };
     const trafficRows = (query = {}, exclude = null) => {
       const snapshot = query.searchResultId
         ? new Set(
@@ -505,21 +532,7 @@ await page.addInitScript(
         });
       }
       for (const group of query.filterGroups ?? []) {
-        if (group.dimension === exclude || !group.values.length) continue;
-        rows = rows.filter((row) =>
-          group.values.some((value) => {
-            const candidate = trafficKey(row, group.dimension);
-            return value.kind === "other"
-              ? otherValue(group.dimension, candidate)
-              : value.kind === "unavailable"
-                ? candidate == null || candidate === "Unavailable"
-                : value.kind === "status-family"
-                  ? Math.floor(row.status / 100) === value.value
-                  : value.kind === "number"
-                    ? candidate != null && number(candidate) === number(value.value)
-                    : String(candidate).toLowerCase() === value.value.toLowerCase();
-          }),
-        );
+        if (group.dimension !== exclude) rows = rows.filter((row) => groupMatches(row, group));
       }
       if (query.sort) {
         const { column, direction } = query.sort;
@@ -2708,6 +2721,72 @@ await page.addInitScript(
             state.extensionFacetRequests.push(structuredClone(args.request));
             return { options, matchingEntries: rows.length, omittedEntries: 0 };
           }
+          case "traffic_favorites": {
+            const all = (state.favorites ?? [])
+              .filter((entry) => entry.dimension === args.dimension)
+              .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+            return {
+              revision: state.favoriteRevision ?? 0,
+              entries: structuredClone(all.slice(args.offset, args.offset + args.limit)),
+              nextOffset: args.offset + args.limit < all.length ? args.offset + args.limit : null,
+            };
+          }
+          case "change_traffic_favorites": {
+            if (state.deferFavoriteWrite) {
+              state.deferFavoriteWrite = false;
+              state.favoriteWritePending = true;
+              await new Promise((resolve) => (state.releaseFavoriteWrite = resolve));
+              state.favoriteWritePending = false;
+            }
+            if (state.favoriteWriteError) throw new Error("Favorite write failed; retry saving.");
+            state.favorites ??= [];
+            state.favoriteUndo ??= {};
+            const key = (entry) => JSON.stringify(entry),
+              change = args.change;
+            let changed = 0,
+              undo = null;
+            if (change.action === "add")
+              for (const entry of change.entries) {
+                if (!state.favorites.some((value) => key(value) === key(entry))) {
+                  state.favorites.push(entry);
+                  changed++;
+                }
+              }
+            if (change.action === "remove") {
+              state.favorites = state.favorites.filter((entry) => {
+                const remove = key(entry) === key(change.entry);
+                changed += Number(remove);
+                return !remove;
+              });
+              for (const token of Object.keys(state.favoriteUndo))
+                state.favoriteUndo[token] = state.favoriteUndo[token].filter(
+                  (entry) => key(entry) !== key(change.entry),
+                );
+            }
+            if (change.action === "clear") {
+              const removed = state.favorites.filter(
+                (entry) => entry.dimension === change.dimension,
+              );
+              state.favorites = state.favorites.filter(
+                (entry) => entry.dimension !== change.dimension,
+              );
+              changed = removed.length;
+              if (changed) {
+                undo = "clear-" + (state.favoriteRevision ?? 0);
+                state.favoriteUndo[undo] = removed;
+              }
+            }
+            if (change.action === "undo") {
+              for (const entry of state.favoriteUndo[change.token] ?? [])
+                if (!state.favorites.some((value) => key(value) === key(entry))) {
+                  state.favorites.push(entry);
+                  changed++;
+                }
+              delete state.favoriteUndo[change.token];
+            }
+            state.favoriteRevision = (state.favoriteRevision ?? 0) + 1;
+            return { revision: state.favoriteRevision, changed, undo };
+          }
           case "traffic_facets": {
             const request = structuredClone(args.request);
             if (state.deferFacets) {
@@ -2760,6 +2839,26 @@ await page.addInitScript(
             }
             state.facetRequests ??= [];
             state.facetRequests.push(request);
+            for (const option of counts.values()) {
+              const group = request.query.filterGroups?.find(
+                (group) => group.dimension === request.dimension,
+              );
+              const row = rows.find((row) => termMatches(row, request.dimension, option.value));
+              if (row && group) {
+                const wildcard =
+                  group.selectionMode !== "ignore-saved" &&
+                  group.savedValues?.find(
+                    (value) =>
+                      value.kind === "host-subdomains" &&
+                      termMatches(row, request.dimension, value),
+                  );
+                option.matchReason = groupMatches(row, group)
+                  ? wildcard
+                    ? "Included by *." + wildcard.value
+                    : ""
+                  : "Outside Host filter · No saved term matches";
+              }
+            }
             const options = [...counts.values()]
                 .filter(
                   (option) =>
@@ -2779,7 +2878,7 @@ await page.addInitScript(
                   key,
                   label: value.kind === "unavailable" ? "Unavailable" : String(value.value),
                   value,
-                  count: 0,
+                  count: rows.filter((row) => termMatches(row, request.dimension, value)).length,
                 }
               );
             });
@@ -2788,6 +2887,7 @@ await page.addInitScript(
               includedOptions,
               options: options.slice(offset, offset + limit),
               matchingEntries: rows.length,
+              draftEntries: trafficRows(request.query).length,
               omittedEntries,
               totalOptions: options.length,
               nextOffset: offset + limit < options.length ? offset + limit : null,
@@ -5567,6 +5667,10 @@ try {
     .click();
   await page.locator("#traffic-filter-picker .filter-custom summary").click();
   await page.getByRole("textbox", { name: "Column filter value" }).fill("304");
+  await page
+    .locator("#traffic-filter-picker")
+    .getByRole("button", { name: "Add requirement", exact: true })
+    .click();
   await page
     .locator("#traffic-filter-picker")
     .getByRole("button", { name: "Apply filter" })

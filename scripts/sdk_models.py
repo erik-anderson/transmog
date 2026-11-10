@@ -44,6 +44,17 @@ class Models:
                         candidate = module + "::" + use["name"]
                         if len(candidate) < len(self.public_paths.get(destination, " " * 10000)):
                             self.public_paths[destination] = candidate
+        # Public glob re-exports expose the same canonical types as named imports.
+        for module, item in self.modules.items():
+            if not item["public"]:
+                continue
+            for use in item["imports"]:
+                if not use["public"] or use["name"] != "*":
+                    continue
+                target = self.resolve(use["path"], module)
+                for path, declaration in self.types.items():
+                    if declaration["public"] and declaration["module"] == target:
+                        self.public_paths.setdefault(path, module + "::" + declaration["name"])
         for root in ROOTS:
             self.visit(self.resolve(["transmog_app", root], "transmog_app"), root in INPUTS)
 

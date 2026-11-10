@@ -1188,11 +1188,17 @@ pub struct ViewTrafficFilterValueStatusFamily {
 }
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
+pub struct ViewTrafficFilterValueHostSubdomains {
+    pub item0: Text,
+}
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
 pub struct ViewTrafficFilterValue {
     pub kind: u32,
     pub text: ViewTrafficFilterValueText,
     pub number: ViewTrafficFilterValueNumber,
     pub status_family: ViewTrafficFilterValueStatusFamily,
+    pub host_subdomains: ViewTrafficFilterValueHostSubdomains,
 }
 impl Project for transmog_app::TrafficFilterValue {
     type View = ViewTrafficFilterValue;
@@ -1228,6 +1234,13 @@ impl Project for transmog_app::TrafficFilterValue {
                 kind: 4,
                 ..Default::default()
             },
+            Self::HostSubdomains(item0) => ViewTrafficFilterValue {
+                kind: 5,
+                host_subdomains: ViewTrafficFilterValueHostSubdomains {
+                    item0: item0.project(arena)?,
+                },
+                ..Default::default()
+            },
         })
     }
 }
@@ -1240,7 +1253,35 @@ impl FromAbi for transmog_app::TrafficFilterValue {
             2 => Self::StatusFamily(unsafe { FromAbi::read(&value.status_family.item0, budget) }?),
             3 => Self::Unavailable,
             4 => Self::Other,
+            5 => Self::HostSubdomains(unsafe {
+                FromAbi::read(&value.host_subdomains.item0, budget)
+            }?),
             _ => return Err(invalid("Invalid TrafficFilterValue discriminant")),
+        })
+    }
+}
+pub fn traffic_selection_mode_number(value: &transmog_app::TrafficSelectionMode) -> u32 {
+    match value {
+        transmog_app::TrafficSelectionMode::Either => 0,
+        transmog_app::TrafficSelectionMode::Both => 1,
+        transmog_app::TrafficSelectionMode::IgnoreSaved => 2,
+    }
+}
+impl Project for transmog_app::TrafficSelectionMode {
+    type View = u32;
+    fn project(&self, arena: &mut Arena) -> Result<Self::View, AppError> {
+        let _ = &arena;
+        Ok(traffic_selection_mode_number(self))
+    }
+}
+impl FromAbi for transmog_app::TrafficSelectionMode {
+    unsafe fn read(value: &Self::View, budget: &mut InputBudget) -> Result<Self, AppError> {
+        let _ = &budget;
+        Ok(match *value {
+            0 => Self::Either,
+            1 => Self::Both,
+            2 => Self::IgnoreSaved,
+            _ => return Err(invalid("Invalid TrafficSelectionMode discriminant")),
         })
     }
 }
@@ -1249,6 +1290,8 @@ impl FromAbi for transmog_app::TrafficFilterValue {
 pub struct ViewTrafficFilterGroup {
     pub dimension: ViewTrafficDimension,
     pub values: Slice<ViewTrafficFilterValue>,
+    pub saved_values: Slice<ViewTrafficFilterValue>,
+    pub selection_mode: u32,
 }
 impl Project for transmog_app::TrafficFilterGroup {
     type View = ViewTrafficFilterGroup;
@@ -1257,6 +1300,8 @@ impl Project for transmog_app::TrafficFilterGroup {
         Ok(ViewTrafficFilterGroup {
             dimension: self.dimension.project(arena)?,
             values: self.values.project(arena)?,
+            saved_values: self.saved_values.project(arena)?,
+            selection_mode: self.selection_mode.project(arena)?,
         })
     }
 }
@@ -1266,6 +1311,8 @@ impl FromAbi for transmog_app::TrafficFilterGroup {
         Ok(Self {
             dimension: unsafe { FromAbi::read(&value.dimension, budget) }?,
             values: unsafe { FromAbi::read(&value.values, budget) }?,
+            saved_values: unsafe { FromAbi::read(&value.saved_values, budget) }?,
+            selection_mode: unsafe { FromAbi::read(&value.selection_mode, budget) }?,
         })
     }
 }
@@ -1354,6 +1401,7 @@ pub struct ViewSessionQueryInput {
     pub method: Optional<Text>,
     pub host: Optional<Text>,
     pub search: Optional<Text>,
+    pub exclude_script_annotations: u32,
     pub filters: Slice<ViewSessionColumnFilter>,
     pub filter_groups: Slice<ViewTrafficFilterGroup>,
     pub extension_filters: Slice<ViewClassificationFilter>,
@@ -1376,6 +1424,7 @@ impl Project for transmog_app::SessionQueryInput {
             method: self.method.project(arena)?,
             host: self.host.project(arena)?,
             search: self.search.project(arena)?,
+            exclude_script_annotations: self.exclude_script_annotations.project(arena)?,
             filters: self.filters.project(arena)?,
             filter_groups: self.filter_groups.project(arena)?,
             extension_filters: self.extension_filters.project(arena)?,
@@ -1399,6 +1448,9 @@ impl FromAbi for transmog_app::SessionQueryInput {
             method: unsafe { FromAbi::read(&value.method, budget) }?,
             host: unsafe { FromAbi::read(&value.host, budget) }?,
             search: unsafe { FromAbi::read(&value.search, budget) }?,
+            exclude_script_annotations: unsafe {
+                FromAbi::read(&value.exclude_script_annotations, budget)
+            }?,
             filters: unsafe { FromAbi::read(&value.filters, budget) }?,
             filter_groups: unsafe { FromAbi::read(&value.filter_groups, budget) }?,
             extension_filters: unsafe { FromAbi::read(&value.extension_filters, budget) }?,
@@ -1515,6 +1567,7 @@ impl Project for transmog_app::AutoResponseMatchView {
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct ViewSessionSummary {
+    pub script_search: Slice<Text>,
     pub request_number: Text,
     pub id: Text,
     pub caller: ViewClientIdentityView,
@@ -1548,6 +1601,7 @@ impl Project for transmog_app::SessionSummary {
     fn project(&self, arena: &mut Arena) -> Result<Self::View, AppError> {
         let _ = &arena;
         Ok(ViewSessionSummary {
+            script_search: self.script_search.project(arena)?,
             request_number: self.request_number.project(arena)?,
             id: self.id.project(arena)?,
             caller: self.caller.project(arena)?,
@@ -2268,6 +2322,266 @@ impl Project for transmog_app::StoredBodyMetadata {
 }
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
+pub struct ViewLogContext {
+    pub artifact: Optional<Text>,
+    pub worker: Text,
+    pub revision: Text,
+    pub callback: Text,
+    pub invocation: u64,
+    pub exchange_id: Optional<Text>,
+}
+impl Project for transmog_script::LogContext {
+    type View = ViewLogContext;
+    fn project(&self, arena: &mut Arena) -> Result<Self::View, AppError> {
+        let _ = &arena;
+        Ok(ViewLogContext {
+            artifact: self.artifact.project(arena)?,
+            worker: self.worker.project(arena)?,
+            revision: self.revision.project(arena)?,
+            callback: self.callback.project(arena)?,
+            invocation: self.invocation.project(arena)?,
+            exchange_id: self.exchange_id.project(arena)?,
+        })
+    }
+}
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct ViewLogValue {
+    pub name: Text,
+    pub parent: Optional<u16>,
+    pub kind: Text,
+    pub display: Text,
+    pub truncated: u32,
+}
+impl Project for transmog_script_diagnostics::LogValue {
+    type View = ViewLogValue;
+    fn project(&self, arena: &mut Arena) -> Result<Self::View, AppError> {
+        let _ = &arena;
+        Ok(ViewLogValue {
+            name: self.name.project(arena)?,
+            parent: self.parent.project(arena)?,
+            kind: self.kind.project(arena)?,
+            display: self.display.project(arena)?,
+            truncated: self.truncated.project(arena)?,
+        })
+    }
+}
+pub fn log_level_number(value: &transmog_script_diagnostics::LogLevel) -> u32 {
+    match value {
+        transmog_script_diagnostics::LogLevel::Info => 0,
+        transmog_script_diagnostics::LogLevel::Debug => 1,
+        transmog_script_diagnostics::LogLevel::Warn => 2,
+        transmog_script_diagnostics::LogLevel::Error => 3,
+        transmog_script_diagnostics::LogLevel::Trace => 4,
+    }
+}
+impl Project for transmog_script_diagnostics::LogLevel {
+    type View = u32;
+    fn project(&self, arena: &mut Arena) -> Result<Self::View, AppError> {
+        let _ = &arena;
+        Ok(log_level_number(self))
+    }
+}
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct ViewSourceLocation {
+    pub source: Text,
+    pub line: u32,
+    pub column: u32,
+}
+impl Project for transmog_app::SourceLocation {
+    type View = ViewSourceLocation;
+    fn project(&self, arena: &mut Arena) -> Result<Self::View, AppError> {
+        let _ = &arena;
+        Ok(ViewSourceLocation {
+            source: self.source.project(arena)?,
+            line: self.line.project(arena)?,
+            column: self.column.project(arena)?,
+        })
+    }
+}
+pub fn mapping_issue_number(value: &transmog_script::MappingIssue) -> u32 {
+    match value {
+        transmog_script::MappingIssue::Missing => 0,
+        transmog_script::MappingIssue::Invalid => 1,
+        transmog_script::MappingIssue::Unmapped => 2,
+        transmog_script::MappingIssue::Source => 3,
+        transmog_script::MappingIssue::Budget => 4,
+    }
+}
+impl Project for transmog_script::MappingIssue {
+    type View = u32;
+    fn project(&self, arena: &mut Arena) -> Result<Self::View, AppError> {
+        let _ = &arena;
+        Ok(mapping_issue_number(self))
+    }
+}
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct ViewStackFrame {
+    pub function: Text,
+    pub generated: Optional<ViewSourceLocation>,
+    pub original: Optional<ViewSourceLocation>,
+    pub mapping_issue: Optional<u32>,
+}
+impl Project for transmog_script_diagnostics::StackFrame {
+    type View = ViewStackFrame;
+    fn project(&self, arena: &mut Arena) -> Result<Self::View, AppError> {
+        let _ = &arena;
+        Ok(ViewStackFrame {
+            function: self.function.project(arena)?,
+            generated: self.generated.project(arena)?,
+            original: self.original.project(arena)?,
+            mapping_issue: self.mapping_issue.project(arena)?,
+        })
+    }
+}
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct ViewLogRecord {
+    pub values: Slice<ViewLogValue>,
+    pub sequence: u64,
+    pub time_unix_ms: u64,
+    pub level: u32,
+    pub text: Text,
+    pub frames: Slice<ViewStackFrame>,
+    pub truncated: u32,
+}
+impl Project for transmog_script::LogRecord {
+    type View = ViewLogRecord;
+    fn project(&self, arena: &mut Arena) -> Result<Self::View, AppError> {
+        let _ = &arena;
+        Ok(ViewLogRecord {
+            values: self.values.project(arena)?,
+            sequence: self.sequence.project(arena)?,
+            time_unix_ms: self.time_unix_ms.project(arena)?,
+            level: self.level.project(arena)?,
+            text: self.text.project(arena)?,
+            frames: self.frames.project(arena)?,
+            truncated: self.truncated.project(arena)?,
+        })
+    }
+}
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct ViewLogRun {
+    pub context: ViewLogContext,
+    pub records: Slice<ViewLogRecord>,
+    pub dropped: u64,
+    pub incomplete: u32,
+}
+impl Project for transmog_app::LogRun {
+    type View = ViewLogRun;
+    fn project(&self, arena: &mut Arena) -> Result<Self::View, AppError> {
+        let _ = &arena;
+        Ok(ViewLogRun {
+            context: self.context.project(arena)?,
+            records: self.records.project(arena)?,
+            dropped: self.dropped.project(arena)?,
+            incomplete: self.incomplete.project(arena)?,
+        })
+    }
+}
+pub fn script_severity_number(value: &transmog_script::ScriptSeverity) -> u32 {
+    match value {
+        transmog_script::ScriptSeverity::Info => 0,
+        transmog_script::ScriptSeverity::Warning => 1,
+        transmog_script::ScriptSeverity::Error => 2,
+    }
+}
+impl Project for transmog_script::ScriptSeverity {
+    type View = u32;
+    fn project(&self, arena: &mut Arena) -> Result<Self::View, AppError> {
+        let _ = &arena;
+        Ok(script_severity_number(self))
+    }
+}
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct ViewScriptAnnotation {
+    pub tags: Slice<Text>,
+    pub note: Text,
+    pub severity: u32,
+}
+impl Project for transmog_script::ScriptAnnotation {
+    type View = ViewScriptAnnotation;
+    fn project(&self, arena: &mut Arena) -> Result<Self::View, AppError> {
+        let _ = &arena;
+        Ok(ViewScriptAnnotation {
+            tags: self.tags.project(arena)?,
+            note: self.note.project(arena)?,
+            severity: self.severity.project(arena)?,
+        })
+    }
+}
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct ViewExceptionValue {
+    pub name: Optional<Text>,
+    pub message: Text,
+    pub frames: Slice<ViewStackFrame>,
+    pub unavailable: u32,
+}
+impl Project for transmog_script_diagnostics::ExceptionValue {
+    type View = ViewExceptionValue;
+    fn project(&self, arena: &mut Arena) -> Result<Self::View, AppError> {
+        let _ = &arena;
+        Ok(ViewExceptionValue {
+            name: self.name.project(arena)?,
+            message: self.message.project(arena)?,
+            frames: self.frames.project(arena)?,
+            unavailable: self.unavailable.project(arena)?,
+        })
+    }
+}
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct ViewExceptionDiagnostic {
+    pub artifact: Optional<Text>,
+    pub exception: ViewExceptionValue,
+    pub causes: Slice<ViewExceptionValue>,
+    pub truncated: u32,
+}
+impl Project for transmog_app::ExceptionDiagnostic {
+    type View = ViewExceptionDiagnostic;
+    fn project(&self, arena: &mut Arena) -> Result<Self::View, AppError> {
+        let _ = &arena;
+        Ok(ViewExceptionDiagnostic {
+            artifact: self.artifact.project(arena)?,
+            exception: self.exception.project(arena)?,
+            causes: self.causes.project(arena)?,
+            truncated: self.truncated.project(arena)?,
+        })
+    }
+}
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct ViewScriptReportView {
+    pub logs: Slice<ViewLogRun>,
+    pub script: Text,
+    pub phase: Text,
+    pub annotations: Slice<ViewScriptAnnotation>,
+    pub diagnostics: Slice<Text>,
+    pub exception: Optional<ViewExceptionDiagnostic>,
+    pub details_omitted: u32,
+}
+impl Project for transmog_app::ScriptReportView {
+    type View = ViewScriptReportView;
+    fn project(&self, arena: &mut Arena) -> Result<Self::View, AppError> {
+        let _ = &arena;
+        Ok(ViewScriptReportView {
+            logs: self.logs.project(arena)?,
+            script: self.script.project(arena)?,
+            phase: self.phase.project(arena)?,
+            annotations: self.annotations.project(arena)?,
+            diagnostics: self.diagnostics.project(arena)?,
+            exception: self.exception.project(arena)?,
+            details_omitted: self.details_omitted.project(arena)?,
+        })
+    }
+}
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
 pub struct ViewHeaderChanges {
     pub added: Slice<Text>,
     pub removed: Slice<Text>,
@@ -2377,6 +2691,7 @@ pub struct ViewSessionDetail {
     pub stored_bodies: Slice<ViewStoredBodyMetadata>,
     pub diagnostics: Slice<Text>,
     pub hook_effects: Slice<Text>,
+    pub script_reports: Slice<ViewScriptReportView>,
     pub header_effects: Slice<ViewHeaderEffectView>,
     pub body_edits: Slice<ViewBodyEditView>,
     pub auto_response: Optional<ViewAutoResponseMatchView>,
@@ -2414,6 +2729,7 @@ impl Project for transmog_app::SessionDetail {
             stored_bodies: self.stored_bodies.project(arena)?,
             diagnostics: self.diagnostics.project(arena)?,
             hook_effects: self.hook_effects.project(arena)?,
+            script_reports: self.script_reports.project(arena)?,
             header_effects: self.header_effects.project(arena)?,
             body_edits: self.body_edits.project(arena)?,
             auto_response: self.auto_response.project(arena)?,
@@ -2471,6 +2787,8 @@ pub struct ViewAppError {
     pub category: u32,
     pub message: Text,
     pub retryable: u32,
+    pub exception: Optional<ViewExceptionDiagnostic>,
+    pub logs: Slice<ViewLogRun>,
 }
 impl Project for transmog_app::AppError {
     type View = ViewAppError;
@@ -2480,6 +2798,8 @@ impl Project for transmog_app::AppError {
             category: self.category.project(arena)?,
             message: self.message.project(arena)?,
             retryable: self.retryable.project(arena)?,
+            exception: self.exception.project(arena)?,
+            logs: self.logs.project(arena)?,
         })
     }
 }
@@ -2618,162 +2938,210 @@ pub fn layout(index: usize) -> usize {
         97 => std::mem::align_of::<ViewTrafficFilterValue>(),
         98 => std::mem::size_of::<Slice<ViewTrafficFilterValue>>(),
         99 => std::mem::align_of::<Slice<ViewTrafficFilterValue>>(),
-        100 => std::mem::size_of::<ViewTrafficFilterGroup>(),
-        101 => std::mem::align_of::<ViewTrafficFilterGroup>(),
-        102 => std::mem::size_of::<Slice<ViewTrafficFilterGroup>>(),
-        103 => std::mem::align_of::<Slice<ViewTrafficFilterGroup>>(),
-        104 => std::mem::size_of::<ViewClassificationFilter>(),
-        105 => std::mem::align_of::<ViewClassificationFilter>(),
-        106 => std::mem::size_of::<Slice<ViewClassificationFilter>>(),
-        107 => std::mem::align_of::<Slice<ViewClassificationFilter>>(),
-        108 => std::mem::size_of::<u32>(),
-        109 => std::mem::align_of::<u32>(),
-        110 => std::mem::size_of::<ViewSessionSort>(),
-        111 => std::mem::align_of::<ViewSessionSort>(),
-        112 => std::mem::size_of::<Optional<ViewSessionSort>>(),
-        113 => std::mem::align_of::<Optional<ViewSessionSort>>(),
-        114 => std::mem::size_of::<ViewSessionQueryInput>(),
-        115 => std::mem::align_of::<ViewSessionQueryInput>(),
-        116 => std::mem::size_of::<Optional<u32>>(),
-        117 => std::mem::align_of::<Optional<u32>>(),
-        118 => std::mem::size_of::<ViewClientIdentityView>(),
-        119 => std::mem::align_of::<ViewClientIdentityView>(),
-        120 => std::mem::size_of::<u32>(),
-        121 => std::mem::align_of::<u32>(),
-        122 => std::mem::size_of::<Optional<u32>>(),
-        123 => std::mem::align_of::<Optional<u32>>(),
-        124 => std::mem::size_of::<ViewStreamLifetime>(),
-        125 => std::mem::align_of::<ViewStreamLifetime>(),
-        126 => std::mem::size_of::<Optional<ViewStreamLifetime>>(),
-        127 => std::mem::align_of::<Optional<ViewStreamLifetime>>(),
-        128 => std::mem::size_of::<ViewLocalResponseSnapshot>(),
-        129 => std::mem::align_of::<ViewLocalResponseSnapshot>(),
-        130 => std::mem::size_of::<Optional<ViewLocalResponseSnapshot>>(),
-        131 => std::mem::align_of::<Optional<ViewLocalResponseSnapshot>>(),
-        132 => std::mem::size_of::<ViewAutoResponseMatchView>(),
-        133 => std::mem::align_of::<ViewAutoResponseMatchView>(),
-        134 => std::mem::size_of::<Optional<ViewAutoResponseMatchView>>(),
-        135 => std::mem::align_of::<Optional<ViewAutoResponseMatchView>>(),
-        136 => std::mem::size_of::<ViewSessionSummary>(),
-        137 => std::mem::align_of::<ViewSessionSummary>(),
-        138 => std::mem::size_of::<Slice<ViewSessionSummary>>(),
-        139 => std::mem::align_of::<Slice<ViewSessionSummary>>(),
-        140 => std::mem::size_of::<ViewSessionPage>(),
-        141 => std::mem::align_of::<ViewSessionPage>(),
-        142 => std::mem::size_of::<ViewTrafficView>(),
-        143 => std::mem::align_of::<ViewTrafficView>(),
-        144 => std::mem::size_of::<u32>(),
-        145 => std::mem::align_of::<u32>(),
-        146 => std::mem::size_of::<ViewStreamState>(),
-        147 => std::mem::align_of::<ViewStreamState>(),
-        148 => std::mem::size_of::<ViewStreamSummary>(),
-        149 => std::mem::align_of::<ViewStreamSummary>(),
-        150 => std::mem::size_of::<Optional<ViewStreamSummary>>(),
-        151 => std::mem::align_of::<Optional<ViewStreamSummary>>(),
-        152 => std::mem::size_of::<ViewComposerOrigin>(),
-        153 => std::mem::align_of::<ViewComposerOrigin>(),
-        154 => std::mem::size_of::<Optional<ViewComposerOrigin>>(),
-        155 => std::mem::align_of::<Optional<ViewComposerOrigin>>(),
-        156 => std::mem::size_of::<u32>(),
-        157 => std::mem::align_of::<u32>(),
-        158 => std::mem::size_of::<ViewTimingPoint>(),
-        159 => std::mem::align_of::<ViewTimingPoint>(),
-        160 => std::mem::size_of::<Slice<ViewTimingPoint>>(),
-        161 => std::mem::align_of::<Slice<ViewTimingPoint>>(),
-        162 => std::mem::size_of::<u32>(),
-        163 => std::mem::align_of::<u32>(),
-        164 => std::mem::size_of::<ViewConnectionTiming>(),
-        165 => std::mem::align_of::<ViewConnectionTiming>(),
-        166 => std::mem::size_of::<Slice<ViewConnectionTiming>>(),
-        167 => std::mem::align_of::<Slice<ViewConnectionTiming>>(),
-        168 => std::mem::size_of::<Slice<u8>>(),
-        169 => std::mem::align_of::<Slice<u8>>(),
-        170 => std::mem::size_of::<ViewAlpsEvidence>(),
-        171 => std::mem::align_of::<ViewAlpsEvidence>(),
-        172 => std::mem::size_of::<Optional<ViewAlpsEvidence>>(),
-        173 => std::mem::align_of::<Optional<ViewAlpsEvidence>>(),
-        174 => std::mem::size_of::<Optional<ViewNetworkProfileSnapshot>>(),
-        175 => std::mem::align_of::<Optional<ViewNetworkProfileSnapshot>>(),
-        176 => std::mem::size_of::<ViewPublicCertificate>(),
-        177 => std::mem::align_of::<ViewPublicCertificate>(),
-        178 => std::mem::size_of::<Slice<ViewPublicCertificate>>(),
-        179 => std::mem::align_of::<Slice<ViewPublicCertificate>>(),
-        180 => std::mem::size_of::<ViewVerificationResult>(),
-        181 => std::mem::align_of::<ViewVerificationResult>(),
-        182 => std::mem::size_of::<Optional<ViewVerificationResult>>(),
-        183 => std::mem::align_of::<Optional<ViewVerificationResult>>(),
-        184 => std::mem::size_of::<ViewTlsEvidence>(),
-        185 => std::mem::align_of::<ViewTlsEvidence>(),
-        186 => std::mem::size_of::<Optional<ViewTlsEvidence>>(),
-        187 => std::mem::align_of::<Optional<ViewTlsEvidence>>(),
-        188 => std::mem::size_of::<ViewTcpObservation>(),
-        189 => std::mem::align_of::<ViewTcpObservation>(),
-        190 => std::mem::size_of::<Optional<ViewTcpObservation>>(),
-        191 => std::mem::align_of::<Optional<ViewTcpObservation>>(),
-        192 => std::mem::size_of::<Optional<i64>>(),
-        193 => std::mem::align_of::<Optional<i64>>(),
-        194 => std::mem::size_of::<ViewSocketIoObservation>(),
-        195 => std::mem::align_of::<ViewSocketIoObservation>(),
-        196 => std::mem::size_of::<Optional<ViewSocketIoObservation>>(),
-        197 => std::mem::align_of::<Optional<ViewSocketIoObservation>>(),
-        198 => std::mem::size_of::<ViewQuicObservation>(),
-        199 => std::mem::align_of::<ViewQuicObservation>(),
-        200 => std::mem::size_of::<Optional<ViewQuicObservation>>(),
-        201 => std::mem::align_of::<Optional<ViewQuicObservation>>(),
-        202 => std::mem::size_of::<ViewTransportObservation>(),
-        203 => std::mem::align_of::<ViewTransportObservation>(),
-        204 => std::mem::size_of::<Slice<ViewTransportObservation>>(),
-        205 => std::mem::align_of::<Slice<ViewTransportObservation>>(),
-        206 => std::mem::size_of::<ViewProtocolObservation>(),
-        207 => std::mem::align_of::<ViewProtocolObservation>(),
-        208 => std::mem::size_of::<Slice<ViewProtocolObservation>>(),
-        209 => std::mem::align_of::<Slice<ViewProtocolObservation>>(),
-        210 => std::mem::size_of::<ViewWorkTiming>(),
-        211 => std::mem::align_of::<ViewWorkTiming>(),
-        212 => std::mem::size_of::<Slice<ViewWorkTiming>>(),
-        213 => std::mem::align_of::<Slice<ViewWorkTiming>>(),
-        214 => std::mem::size_of::<ViewPerformanceEvidence>(),
-        215 => std::mem::align_of::<ViewPerformanceEvidence>(),
-        216 => std::mem::size_of::<ViewHeaderSummary>(),
-        217 => std::mem::align_of::<ViewHeaderSummary>(),
-        218 => std::mem::size_of::<ViewHeaderView>(),
-        219 => std::mem::align_of::<ViewHeaderView>(),
-        220 => std::mem::size_of::<Slice<ViewHeaderView>>(),
-        221 => std::mem::align_of::<Slice<ViewHeaderView>>(),
-        222 => std::mem::size_of::<ViewHeadView>(),
-        223 => std::mem::align_of::<ViewHeadView>(),
-        224 => std::mem::size_of::<Slice<ViewHeadView>>(),
-        225 => std::mem::align_of::<Slice<ViewHeadView>>(),
-        226 => std::mem::size_of::<ViewBodyView>(),
-        227 => std::mem::align_of::<ViewBodyView>(),
-        228 => std::mem::size_of::<Slice<ViewBodyView>>(),
-        229 => std::mem::align_of::<Slice<ViewBodyView>>(),
-        230 => std::mem::size_of::<u32>(),
-        231 => std::mem::align_of::<u32>(),
-        232 => std::mem::size_of::<ViewStoredBodyMetadata>(),
-        233 => std::mem::align_of::<ViewStoredBodyMetadata>(),
-        234 => std::mem::size_of::<Slice<ViewStoredBodyMetadata>>(),
-        235 => std::mem::align_of::<Slice<ViewStoredBodyMetadata>>(),
-        236 => std::mem::size_of::<ViewHeaderChanges>(),
-        237 => std::mem::align_of::<ViewHeaderChanges>(),
-        238 => std::mem::size_of::<ViewHeaderEffectView>(),
-        239 => std::mem::align_of::<ViewHeaderEffectView>(),
-        240 => std::mem::size_of::<Slice<ViewHeaderEffectView>>(),
-        241 => std::mem::align_of::<Slice<ViewHeaderEffectView>>(),
-        242 => std::mem::size_of::<ViewBodyEditReport>(),
-        243 => std::mem::align_of::<ViewBodyEditReport>(),
-        244 => std::mem::size_of::<ViewBodyEditView>(),
-        245 => std::mem::align_of::<ViewBodyEditView>(),
-        246 => std::mem::size_of::<Slice<ViewBodyEditView>>(),
-        247 => std::mem::align_of::<Slice<ViewBodyEditView>>(),
-        248 => std::mem::size_of::<ViewSessionDetail>(),
-        249 => std::mem::align_of::<ViewSessionDetail>(),
-        250 => std::mem::size_of::<ViewSessionHint>(),
-        251 => std::mem::align_of::<ViewSessionHint>(),
-        252 => std::mem::size_of::<u32>(),
-        253 => std::mem::align_of::<u32>(),
-        254 => std::mem::size_of::<ViewAppError>(),
-        255 => std::mem::align_of::<ViewAppError>(),
+        100 => std::mem::size_of::<u32>(),
+        101 => std::mem::align_of::<u32>(),
+        102 => std::mem::size_of::<ViewTrafficFilterGroup>(),
+        103 => std::mem::align_of::<ViewTrafficFilterGroup>(),
+        104 => std::mem::size_of::<Slice<ViewTrafficFilterGroup>>(),
+        105 => std::mem::align_of::<Slice<ViewTrafficFilterGroup>>(),
+        106 => std::mem::size_of::<ViewClassificationFilter>(),
+        107 => std::mem::align_of::<ViewClassificationFilter>(),
+        108 => std::mem::size_of::<Slice<ViewClassificationFilter>>(),
+        109 => std::mem::align_of::<Slice<ViewClassificationFilter>>(),
+        110 => std::mem::size_of::<u32>(),
+        111 => std::mem::align_of::<u32>(),
+        112 => std::mem::size_of::<ViewSessionSort>(),
+        113 => std::mem::align_of::<ViewSessionSort>(),
+        114 => std::mem::size_of::<Optional<ViewSessionSort>>(),
+        115 => std::mem::align_of::<Optional<ViewSessionSort>>(),
+        116 => std::mem::size_of::<ViewSessionQueryInput>(),
+        117 => std::mem::align_of::<ViewSessionQueryInput>(),
+        118 => std::mem::size_of::<Optional<u32>>(),
+        119 => std::mem::align_of::<Optional<u32>>(),
+        120 => std::mem::size_of::<ViewClientIdentityView>(),
+        121 => std::mem::align_of::<ViewClientIdentityView>(),
+        122 => std::mem::size_of::<u32>(),
+        123 => std::mem::align_of::<u32>(),
+        124 => std::mem::size_of::<Optional<u32>>(),
+        125 => std::mem::align_of::<Optional<u32>>(),
+        126 => std::mem::size_of::<ViewStreamLifetime>(),
+        127 => std::mem::align_of::<ViewStreamLifetime>(),
+        128 => std::mem::size_of::<Optional<ViewStreamLifetime>>(),
+        129 => std::mem::align_of::<Optional<ViewStreamLifetime>>(),
+        130 => std::mem::size_of::<ViewLocalResponseSnapshot>(),
+        131 => std::mem::align_of::<ViewLocalResponseSnapshot>(),
+        132 => std::mem::size_of::<Optional<ViewLocalResponseSnapshot>>(),
+        133 => std::mem::align_of::<Optional<ViewLocalResponseSnapshot>>(),
+        134 => std::mem::size_of::<ViewAutoResponseMatchView>(),
+        135 => std::mem::align_of::<ViewAutoResponseMatchView>(),
+        136 => std::mem::size_of::<Optional<ViewAutoResponseMatchView>>(),
+        137 => std::mem::align_of::<Optional<ViewAutoResponseMatchView>>(),
+        138 => std::mem::size_of::<ViewSessionSummary>(),
+        139 => std::mem::align_of::<ViewSessionSummary>(),
+        140 => std::mem::size_of::<Slice<ViewSessionSummary>>(),
+        141 => std::mem::align_of::<Slice<ViewSessionSummary>>(),
+        142 => std::mem::size_of::<ViewSessionPage>(),
+        143 => std::mem::align_of::<ViewSessionPage>(),
+        144 => std::mem::size_of::<ViewTrafficView>(),
+        145 => std::mem::align_of::<ViewTrafficView>(),
+        146 => std::mem::size_of::<u32>(),
+        147 => std::mem::align_of::<u32>(),
+        148 => std::mem::size_of::<ViewStreamState>(),
+        149 => std::mem::align_of::<ViewStreamState>(),
+        150 => std::mem::size_of::<ViewStreamSummary>(),
+        151 => std::mem::align_of::<ViewStreamSummary>(),
+        152 => std::mem::size_of::<Optional<ViewStreamSummary>>(),
+        153 => std::mem::align_of::<Optional<ViewStreamSummary>>(),
+        154 => std::mem::size_of::<ViewComposerOrigin>(),
+        155 => std::mem::align_of::<ViewComposerOrigin>(),
+        156 => std::mem::size_of::<Optional<ViewComposerOrigin>>(),
+        157 => std::mem::align_of::<Optional<ViewComposerOrigin>>(),
+        158 => std::mem::size_of::<u32>(),
+        159 => std::mem::align_of::<u32>(),
+        160 => std::mem::size_of::<ViewTimingPoint>(),
+        161 => std::mem::align_of::<ViewTimingPoint>(),
+        162 => std::mem::size_of::<Slice<ViewTimingPoint>>(),
+        163 => std::mem::align_of::<Slice<ViewTimingPoint>>(),
+        164 => std::mem::size_of::<u32>(),
+        165 => std::mem::align_of::<u32>(),
+        166 => std::mem::size_of::<ViewConnectionTiming>(),
+        167 => std::mem::align_of::<ViewConnectionTiming>(),
+        168 => std::mem::size_of::<Slice<ViewConnectionTiming>>(),
+        169 => std::mem::align_of::<Slice<ViewConnectionTiming>>(),
+        170 => std::mem::size_of::<Slice<u8>>(),
+        171 => std::mem::align_of::<Slice<u8>>(),
+        172 => std::mem::size_of::<ViewAlpsEvidence>(),
+        173 => std::mem::align_of::<ViewAlpsEvidence>(),
+        174 => std::mem::size_of::<Optional<ViewAlpsEvidence>>(),
+        175 => std::mem::align_of::<Optional<ViewAlpsEvidence>>(),
+        176 => std::mem::size_of::<Optional<ViewNetworkProfileSnapshot>>(),
+        177 => std::mem::align_of::<Optional<ViewNetworkProfileSnapshot>>(),
+        178 => std::mem::size_of::<ViewPublicCertificate>(),
+        179 => std::mem::align_of::<ViewPublicCertificate>(),
+        180 => std::mem::size_of::<Slice<ViewPublicCertificate>>(),
+        181 => std::mem::align_of::<Slice<ViewPublicCertificate>>(),
+        182 => std::mem::size_of::<ViewVerificationResult>(),
+        183 => std::mem::align_of::<ViewVerificationResult>(),
+        184 => std::mem::size_of::<Optional<ViewVerificationResult>>(),
+        185 => std::mem::align_of::<Optional<ViewVerificationResult>>(),
+        186 => std::mem::size_of::<ViewTlsEvidence>(),
+        187 => std::mem::align_of::<ViewTlsEvidence>(),
+        188 => std::mem::size_of::<Optional<ViewTlsEvidence>>(),
+        189 => std::mem::align_of::<Optional<ViewTlsEvidence>>(),
+        190 => std::mem::size_of::<ViewTcpObservation>(),
+        191 => std::mem::align_of::<ViewTcpObservation>(),
+        192 => std::mem::size_of::<Optional<ViewTcpObservation>>(),
+        193 => std::mem::align_of::<Optional<ViewTcpObservation>>(),
+        194 => std::mem::size_of::<Optional<i64>>(),
+        195 => std::mem::align_of::<Optional<i64>>(),
+        196 => std::mem::size_of::<ViewSocketIoObservation>(),
+        197 => std::mem::align_of::<ViewSocketIoObservation>(),
+        198 => std::mem::size_of::<Optional<ViewSocketIoObservation>>(),
+        199 => std::mem::align_of::<Optional<ViewSocketIoObservation>>(),
+        200 => std::mem::size_of::<ViewQuicObservation>(),
+        201 => std::mem::align_of::<ViewQuicObservation>(),
+        202 => std::mem::size_of::<Optional<ViewQuicObservation>>(),
+        203 => std::mem::align_of::<Optional<ViewQuicObservation>>(),
+        204 => std::mem::size_of::<ViewTransportObservation>(),
+        205 => std::mem::align_of::<ViewTransportObservation>(),
+        206 => std::mem::size_of::<Slice<ViewTransportObservation>>(),
+        207 => std::mem::align_of::<Slice<ViewTransportObservation>>(),
+        208 => std::mem::size_of::<ViewProtocolObservation>(),
+        209 => std::mem::align_of::<ViewProtocolObservation>(),
+        210 => std::mem::size_of::<Slice<ViewProtocolObservation>>(),
+        211 => std::mem::align_of::<Slice<ViewProtocolObservation>>(),
+        212 => std::mem::size_of::<ViewWorkTiming>(),
+        213 => std::mem::align_of::<ViewWorkTiming>(),
+        214 => std::mem::size_of::<Slice<ViewWorkTiming>>(),
+        215 => std::mem::align_of::<Slice<ViewWorkTiming>>(),
+        216 => std::mem::size_of::<ViewPerformanceEvidence>(),
+        217 => std::mem::align_of::<ViewPerformanceEvidence>(),
+        218 => std::mem::size_of::<ViewHeaderSummary>(),
+        219 => std::mem::align_of::<ViewHeaderSummary>(),
+        220 => std::mem::size_of::<ViewHeaderView>(),
+        221 => std::mem::align_of::<ViewHeaderView>(),
+        222 => std::mem::size_of::<Slice<ViewHeaderView>>(),
+        223 => std::mem::align_of::<Slice<ViewHeaderView>>(),
+        224 => std::mem::size_of::<ViewHeadView>(),
+        225 => std::mem::align_of::<ViewHeadView>(),
+        226 => std::mem::size_of::<Slice<ViewHeadView>>(),
+        227 => std::mem::align_of::<Slice<ViewHeadView>>(),
+        228 => std::mem::size_of::<ViewBodyView>(),
+        229 => std::mem::align_of::<ViewBodyView>(),
+        230 => std::mem::size_of::<Slice<ViewBodyView>>(),
+        231 => std::mem::align_of::<Slice<ViewBodyView>>(),
+        232 => std::mem::size_of::<u32>(),
+        233 => std::mem::align_of::<u32>(),
+        234 => std::mem::size_of::<ViewStoredBodyMetadata>(),
+        235 => std::mem::align_of::<ViewStoredBodyMetadata>(),
+        236 => std::mem::size_of::<Slice<ViewStoredBodyMetadata>>(),
+        237 => std::mem::align_of::<Slice<ViewStoredBodyMetadata>>(),
+        238 => std::mem::size_of::<ViewLogContext>(),
+        239 => std::mem::align_of::<ViewLogContext>(),
+        240 => std::mem::size_of::<ViewLogValue>(),
+        241 => std::mem::align_of::<ViewLogValue>(),
+        242 => std::mem::size_of::<Slice<ViewLogValue>>(),
+        243 => std::mem::align_of::<Slice<ViewLogValue>>(),
+        244 => std::mem::size_of::<u32>(),
+        245 => std::mem::align_of::<u32>(),
+        246 => std::mem::size_of::<ViewSourceLocation>(),
+        247 => std::mem::align_of::<ViewSourceLocation>(),
+        248 => std::mem::size_of::<Optional<ViewSourceLocation>>(),
+        249 => std::mem::align_of::<Optional<ViewSourceLocation>>(),
+        250 => std::mem::size_of::<u32>(),
+        251 => std::mem::align_of::<u32>(),
+        252 => std::mem::size_of::<Optional<u32>>(),
+        253 => std::mem::align_of::<Optional<u32>>(),
+        254 => std::mem::size_of::<ViewStackFrame>(),
+        255 => std::mem::align_of::<ViewStackFrame>(),
+        256 => std::mem::size_of::<Slice<ViewStackFrame>>(),
+        257 => std::mem::align_of::<Slice<ViewStackFrame>>(),
+        258 => std::mem::size_of::<ViewLogRecord>(),
+        259 => std::mem::align_of::<ViewLogRecord>(),
+        260 => std::mem::size_of::<Slice<ViewLogRecord>>(),
+        261 => std::mem::align_of::<Slice<ViewLogRecord>>(),
+        262 => std::mem::size_of::<ViewLogRun>(),
+        263 => std::mem::align_of::<ViewLogRun>(),
+        264 => std::mem::size_of::<Slice<ViewLogRun>>(),
+        265 => std::mem::align_of::<Slice<ViewLogRun>>(),
+        266 => std::mem::size_of::<u32>(),
+        267 => std::mem::align_of::<u32>(),
+        268 => std::mem::size_of::<ViewScriptAnnotation>(),
+        269 => std::mem::align_of::<ViewScriptAnnotation>(),
+        270 => std::mem::size_of::<Slice<ViewScriptAnnotation>>(),
+        271 => std::mem::align_of::<Slice<ViewScriptAnnotation>>(),
+        272 => std::mem::size_of::<ViewExceptionValue>(),
+        273 => std::mem::align_of::<ViewExceptionValue>(),
+        274 => std::mem::size_of::<Slice<ViewExceptionValue>>(),
+        275 => std::mem::align_of::<Slice<ViewExceptionValue>>(),
+        276 => std::mem::size_of::<ViewExceptionDiagnostic>(),
+        277 => std::mem::align_of::<ViewExceptionDiagnostic>(),
+        278 => std::mem::size_of::<Optional<ViewExceptionDiagnostic>>(),
+        279 => std::mem::align_of::<Optional<ViewExceptionDiagnostic>>(),
+        280 => std::mem::size_of::<ViewScriptReportView>(),
+        281 => std::mem::align_of::<ViewScriptReportView>(),
+        282 => std::mem::size_of::<Slice<ViewScriptReportView>>(),
+        283 => std::mem::align_of::<Slice<ViewScriptReportView>>(),
+        284 => std::mem::size_of::<ViewHeaderChanges>(),
+        285 => std::mem::align_of::<ViewHeaderChanges>(),
+        286 => std::mem::size_of::<ViewHeaderEffectView>(),
+        287 => std::mem::align_of::<ViewHeaderEffectView>(),
+        288 => std::mem::size_of::<Slice<ViewHeaderEffectView>>(),
+        289 => std::mem::align_of::<Slice<ViewHeaderEffectView>>(),
+        290 => std::mem::size_of::<ViewBodyEditReport>(),
+        291 => std::mem::align_of::<ViewBodyEditReport>(),
+        292 => std::mem::size_of::<ViewBodyEditView>(),
+        293 => std::mem::align_of::<ViewBodyEditView>(),
+        294 => std::mem::size_of::<Slice<ViewBodyEditView>>(),
+        295 => std::mem::align_of::<Slice<ViewBodyEditView>>(),
+        296 => std::mem::size_of::<ViewSessionDetail>(),
+        297 => std::mem::align_of::<ViewSessionDetail>(),
+        298 => std::mem::size_of::<ViewSessionHint>(),
+        299 => std::mem::align_of::<ViewSessionHint>(),
+        300 => std::mem::size_of::<u32>(),
+        301 => std::mem::align_of::<u32>(),
+        302 => std::mem::size_of::<ViewAppError>(),
+        303 => std::mem::align_of::<ViewAppError>(),
         _ => 0,
     }
 }

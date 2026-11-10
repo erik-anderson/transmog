@@ -110,7 +110,9 @@ export async function checkTrafficAdvanced(page, root) {
     await picker.getByLabel("Search observed values").fill("host-239");
     await page.waitForFunction(() => !document.querySelector("app-shell").traffic.pickerLoading);
     assert.equal(
-      await picker.getByRole("checkbox", { name: "host-239.test", exact: true }).count(),
+      await picker
+        .getByRole("checkbox", { name: "Pick observed host host-239.test", exact: true })
+        .count(),
       1,
     );
     assert.equal(await picker.locator(".filter-options input").count(), 1);
@@ -121,11 +123,15 @@ export async function checkTrafficAdvanced(page, root) {
     await page.evaluate(() => globalThis.__workspaceFixture.releaseFacets());
     await page.waitForFunction(() => !document.querySelector("app-shell").traffic.pickerLoading);
     assert.equal(
-      await picker.getByRole("checkbox", { name: "host-120.test", exact: true }).count(),
+      await picker
+        .getByRole("checkbox", { name: "Pick observed host host-120.test", exact: true })
+        .count(),
       1,
     );
     assert.equal(
-      await picker.getByRole("checkbox", { name: "host-000.test", exact: true }).count(),
+      await picker
+        .getByRole("checkbox", { name: "Pick observed host host-000.test", exact: true })
+        .count(),
       0,
     );
     await picker.getByLabel("Search observed values").fill("future.test");
@@ -140,12 +146,14 @@ export async function checkTrafficAdvanced(page, root) {
     );
     await open("host");
     assert.equal(
-      await picker.getByRole("checkbox", { name: "future.test", exact: true }).isChecked(),
+      await picker
+        .getByRole("checkbox", { name: "Pick observed host future.test", exact: true })
+        .isChecked(),
       true,
     );
     assert.match(
       await picker
-        .getByRole("checkbox", { name: "future.test", exact: true })
+        .getByRole("checkbox", { name: "Pick observed host future.test", exact: true })
         .locator("..")
         .textContent(),
       /0/,
@@ -256,7 +264,9 @@ export async function checkTrafficAdvanced(page, root) {
       .getByRole("button", { name: "Host: host-239.test…", exact: true })
       .click();
     assert.equal(
-      await picker.getByRole("checkbox", { name: "host-239.test", exact: true }).isChecked(),
+      await picker
+        .getByRole("checkbox", { name: "Pick observed host host-239.test", exact: true })
+        .isChecked(),
       true,
     );
     await apply();
@@ -405,7 +415,7 @@ async function checkAdvancedReviewFixes(page, traffic, picker, open, apply, sett
     ["maximum", "2000"],
   ]);
   await open("duration");
-  await picker.getByRole("button", { name: "Remove minimum condition", exact: true }).click();
+  await picker.getByRole("checkbox", { name: /^Require minimum / }).uncheck();
   assert.equal(await picker.getByLabel("Range from inclusive").inputValue(), "");
   await apply();
   assert.deepEqual(
@@ -415,7 +425,7 @@ async function checkAdvancedReviewFixes(page, traffic, picker, open, apply, sett
     [["maximum", "2000"]],
   );
   await open("duration");
-  await picker.getByRole("button", { name: "Remove maximum condition", exact: true }).click();
+  await picker.getByRole("checkbox", { name: /^Require maximum / }).uncheck();
   assert.equal(await picker.getByLabel("Range to inclusive").inputValue(), "");
   await apply();
   assert.equal(
@@ -456,7 +466,10 @@ async function checkAdvancedReviewFixes(page, traffic, picker, open, apply, sett
   await open("host");
   await picker.getByLabel("Search observed values").fill("host-1");
   await page.waitForFunction(() => !document.querySelector("app-shell").traffic.pickerLoading);
-  const selected = picker.getByRole("checkbox", { name: "host-239.test", exact: true });
+  const selected = picker.getByRole("checkbox", {
+    name: "Pick observed host host-239.test",
+    exact: true,
+  });
   await selected.focus();
   await selected.press("Space");
   assert.equal(await selected.isChecked(), false);
@@ -491,7 +504,9 @@ async function checkAdvancedReviewFixes(page, traffic, picker, open, apply, sett
   await openActionGroup(inspectorMenu, "Filter by");
   await inspectorMenu.getByRole("button", { name: "Host: host-238.test…", exact: true }).click();
   assert.equal(
-    await picker.getByRole("checkbox", { name: "host-238.test", exact: true }).isChecked(),
+    await picker
+      .getByRole("checkbox", { name: "Pick observed host host-238.test", exact: true })
+      .isChecked(),
     true,
   );
   assert.deepEqual(
@@ -510,7 +525,9 @@ async function checkAdvancedReviewFixes(page, traffic, picker, open, apply, sett
   await openActionGroup(rowMenu, "Filter by");
   await rowMenu.getByRole("button", { name: "Host: host-239.test…", exact: true }).click();
   assert.equal(
-    await picker.getByRole("checkbox", { name: "host-239.test", exact: true }).isChecked(),
+    await picker
+      .getByRole("checkbox", { name: "Pick observed host host-239.test", exact: true })
+      .isChecked(),
     true,
   );
   assert.equal(

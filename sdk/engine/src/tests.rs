@@ -64,6 +64,8 @@ fn generated_inputs_preserve_nested_models_and_exact_values() {
         limit: Some(512),
         offset: Some(0),
         filter_groups: vec![TrafficFilterGroup {
+            saved_values: vec![TrafficFilterValue::HostSubdomains("example.test".into())],
+            selection_mode: transmog_app::TrafficSelectionMode::Both,
             dimension: TrafficDimension::Column(TrafficColumn::Status),
             values: vec![
                 TrafficFilterValue::Text("雪\0".into()),

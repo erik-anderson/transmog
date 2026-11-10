@@ -42,6 +42,10 @@ pub use debugging::{
 pub use transmog_script_diagnostics::SourceLocation;
 pub use transmog_script_diagnostics::debugger::DebugAction;
 mod debugger_workspace;
+mod traffic_favorites;
+pub use traffic_favorites::{
+    TrafficFavorite, TrafficFavoritesChange, TrafficFavoritesPage, TrafficFavoritesResult,
+};
 mod experiment_pages;
 mod export_privacy;
 pub mod export_review;
@@ -158,7 +162,7 @@ pub use experiment_pages::{ExperimentPreviewPage, ExperimentPreviewPages};
 pub use inspector::{
     AutoResponseMatchView, BodyEditView, BodyInspection, BodyInspectionRequest, BodyRepresentation,
     BodyView, HeadView, HeaderCopy, HeaderEffectView, HeaderPage, HeaderSummary, HeaderView,
-    SessionDetail,
+    ScriptReportView, SessionDetail,
 };
 pub use lifecycle::{
     CaCreateRequest, CaIdentity, ProxyRoute, ProxyStartRequest, protect_ca_private_key,
@@ -187,7 +191,7 @@ pub use sessions::{
     ClientIdentityView, FilterOperator, SessionColumnFilter, SessionHint, SessionPage,
     SessionQueryInput, SessionSort, SessionSummary, SessionUpdateSubscription, SortDirection,
     TrafficDimension, TrafficFacet, TrafficFacetInput, TrafficFacetOption, TrafficFacetPage,
-    TrafficFilterGroup, TrafficFilterValue, TrafficTimelineRow, TrafficView,
+    TrafficFilterGroup, TrafficFilterValue, TrafficSelectionMode, TrafficTimelineRow, TrafficView,
 };
 use thiserror::Error;
 pub use trace_save::{TraceSaveFormat, TraceSaveOptions, TraceSaveProgress, TraceSaveResult};
@@ -458,6 +462,7 @@ pub struct Application {
     scripts: scripts::ScriptRegistry,
     debuggers: debugging::Debuggers,
     debugger_workspace: debugger_workspace::Workspace,
+    traffic_favorites: traffic_favorites::Library,
     previews: preview::PreviewService,
     traces: traces::TraceRegistry,
     searches: search::SearchRegistry,
@@ -485,6 +490,8 @@ impl Application {
     /// Returns a bounded application error if the owned service cannot start.
     #[allow(clippy::too_many_lines)]
     pub fn new(config: AppConfig) -> Result<Self, AppError> {
+        let traffic_favorites =
+            traffic_favorites::Library::load(config.script_workspace_path.as_deref());
         let debugger_workspace =
             debugger_workspace::Workspace::load(config.script_workspace_path.as_deref());
         let (product_state, mut warning) =
@@ -651,6 +658,7 @@ impl Application {
             scripts,
             debuggers: debugging::Debuggers::default(),
             debugger_workspace,
+            traffic_favorites,
             previews,
             traces: traces::TraceRegistry::default(),
             searches: search::SearchRegistry::default(),

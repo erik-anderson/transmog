@@ -543,6 +543,7 @@ public abstract record TrafficFilterValue
     public sealed record StatusFamily(ushort Item0) : TrafficFilterValue;
     public sealed record Unavailable() : TrafficFilterValue;
     public sealed record Other() : TrafficFilterValue;
+    public sealed record HostSubdomains(string Item0) : TrafficFilterValue;
 }
 [StructLayout(LayoutKind.Sequential)]
 internal struct NativeTrafficFilterValueText
@@ -560,22 +561,39 @@ internal struct NativeTrafficFilterValueStatusFamily
     internal ushort Item0;
 }
 [StructLayout(LayoutKind.Sequential)]
+internal struct NativeTrafficFilterValueHostSubdomains
+{
+    internal NativeText Item0;
+}
+[StructLayout(LayoutKind.Sequential)]
 internal struct NativeTrafficFilterValue
 {
     internal uint Kind;
     internal NativeTrafficFilterValueText Text;
     internal NativeTrafficFilterValueNumber Number;
     internal NativeTrafficFilterValueStatusFamily StatusFamily;
+    internal NativeTrafficFilterValueHostSubdomains HostSubdomains;
+}
+// How two independently selected membership lists combine.
+public enum TrafficSelectionMode : uint
+{
+    Either = 0,
+    Both = 1,
+    IgnoreSaved = 2,
 }
 // OR alternatives in one dimension; distinct dimensions are combined with AND.
 public sealed record TrafficFilterGroup(
     TrafficDimension Dimension,
-    TrafficFilterValue[] Values);
+    TrafficFilterValue[] Values,
+    TrafficFilterValue[] SavedValues,
+    TrafficSelectionMode SelectionMode);
 [StructLayout(LayoutKind.Sequential)]
 internal struct NativeTrafficFilterGroup
 {
     internal NativeTrafficDimension Dimension;
     internal NativeSlice Values;
+    internal NativeSlice SavedValues;
+    internal TrafficSelectionMode SelectionMode;
 }
 // Exact fixed-label alternatives for one extension column (OR within, AND across columns).
 public sealed record ClassificationFilter(
@@ -620,6 +638,7 @@ public sealed record SessionQueryInput(
     string? Method,
     string? Host,
     string? Search,
+    bool ExcludeScriptAnnotations,
     SessionColumnFilter[] Filters,
     TrafficFilterGroup[] FilterGroups,
     ClassificationFilter[] ExtensionFilters,
@@ -639,6 +658,7 @@ internal struct NativeSessionQueryInput
     internal NativeOptionalText Method;
     internal NativeOptionalText Host;
     internal NativeOptionalText Search;
+    internal uint ExcludeScriptAnnotations;
     internal NativeSlice Filters;
     internal NativeSlice FilterGroups;
     internal NativeSlice ExtensionFilters;
@@ -752,6 +772,7 @@ internal struct NativeOptionalAutoResponseMatchView
 }
 // One bounded row in the live-session browser.
 public sealed record SessionSummary(
+    string[] ScriptSearch,
     string RequestNumber,
     string Id,
     ClientIdentityView Caller,
@@ -782,6 +803,7 @@ public sealed record SessionSummary(
 [StructLayout(LayoutKind.Sequential)]
 internal struct NativeSessionSummary
 {
+    internal NativeSlice ScriptSearch;
     internal NativeText RequestNumber;
     internal NativeText Id;
     internal NativeClientIdentityView Caller;
@@ -1389,6 +1411,203 @@ internal struct NativeStoredBodyMetadata
     internal NativeOptionalText Sha256;
     internal NativeOptionalText Reason;
 }
+// Attribution bound by the native supervisor to the exact executing artifact.
+public sealed record LogContext(
+    string? Artifact,
+    string Worker,
+    string Revision,
+    string Callback,
+    ulong Invocation,
+    string? ExchangeId);
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeLogContext
+{
+    internal NativeOptionalText Artifact;
+    internal NativeText Worker;
+    internal NativeText Revision;
+    internal NativeText Callback;
+    internal ulong Invocation;
+    internal NativeOptionalText ExchangeId;
+}
+// One immutable value in a flat, bounded Console snapshot. Parents precede children.
+public sealed record LogValue(
+    string Name,
+    ushort? Parent,
+    string Kind,
+    string Display,
+    bool Truncated);
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeLogValue
+{
+    internal NativeText Name;
+    internal NativeOptionalU16 Parent;
+    internal NativeText Kind;
+    internal NativeText Display;
+    internal uint Truncated;
+}
+// Native console method, without browser-specific formatting behavior.
+public enum LogLevel : uint
+{
+    Info = 0,
+    Debug = 1,
+    Warn = 2,
+    Error = 3,
+    Trace = 4,
+}
+// One position in an immutable executing or mapped source artifact.
+public sealed record SourceLocation(
+    string Source,
+    uint Line,
+    uint Column);
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeSourceLocation
+{
+    internal NativeText Source;
+    internal uint Line;
+    internal uint Column;
+}
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeOptionalSourceLocation
+{
+    internal uint HasValue;
+    internal NativeSourceLocation Value;
+}
+// Static source-map fallback explanations, independent of authored exception text.
+public enum MappingIssue : uint
+{
+    Missing = 0,
+    Invalid = 1,
+    Unmapped = 2,
+    Source = 3,
+    Budget = 4,
+}
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeOptionalMappingIssue
+{
+    internal uint HasValue;
+    internal MappingIssue Value;
+}
+// One engine-owned frame with separately attributed original-source mapping.
+public sealed record StackFrame(
+    string Function,
+    SourceLocation? Generated,
+    SourceLocation? Original,
+    MappingIssue? MappingIssue);
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeStackFrame
+{
+    internal NativeText Function;
+    internal NativeOptionalSourceLocation Generated;
+    internal NativeOptionalSourceLocation Original;
+    internal NativeOptionalMappingIssue MappingIssue;
+}
+// An inert snapshot; ordinary logs never retain live engine objects.
+public sealed record LogRecord(
+    LogValue[] Values,
+    ulong Sequence,
+    ulong TimeUnixMs,
+    LogLevel Level,
+    string Text,
+    StackFrame[] Frames,
+    bool Truncated);
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeLogRecord
+{
+    internal NativeSlice Values;
+    internal ulong Sequence;
+    internal ulong TimeUnixMs;
+    internal LogLevel Level;
+    internal NativeText Text;
+    internal NativeSlice Frames;
+    internal uint Truncated;
+}
+// Supervisor-accepted log records for one bounded operation.
+public sealed record LogRun(
+    LogContext Context,
+    LogRecord[] Records,
+    ulong Dropped,
+    bool Incomplete);
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeLogRun
+{
+    internal NativeLogContext Context;
+    internal NativeSlice Records;
+    internal ulong Dropped;
+    internal uint Incomplete;
+}
+// Finding importance, independent of transport success.
+public enum ScriptSeverity : uint
+{
+    Info = 0,
+    Warning = 1,
+    Error = 2,
+}
+// An inert, bounded script finding retained with exchange evidence.
+public sealed record ScriptAnnotation(
+    string[] Tags,
+    string Note,
+    ScriptSeverity Severity);
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeScriptAnnotation
+{
+    internal NativeSlice Tags;
+    internal NativeText Note;
+    internal ScriptSeverity Severity;
+}
+// Safe-to-copy snapshot of one thrown value. Its text remains untrusted.
+public sealed record ExceptionValue(
+    string? Name,
+    string Message,
+    StackFrame[] Frames,
+    bool Unavailable);
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeExceptionValue
+{
+    internal NativeOptionalText Name;
+    internal NativeText Message;
+    internal NativeSlice Frames;
+    internal uint Unavailable;
+}
+// Bounded exception snapshot, kept separate from host-controlled status text.
+public sealed record ExceptionDiagnostic(
+    string? Artifact,
+    ExceptionValue Exception,
+    ExceptionValue[] Causes,
+    bool Truncated);
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeExceptionDiagnostic
+{
+    internal NativeOptionalText Artifact;
+    internal NativeExceptionValue Exception;
+    internal NativeSlice Causes;
+    internal uint Truncated;
+}
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeOptionalExceptionDiagnostic
+{
+    internal uint HasValue;
+    internal NativeExceptionDiagnostic Value;
+}
+// Attributed script findings, separate from traffic-edit evidence.
+public sealed record ScriptReportView(
+    LogRun[] Logs,
+    string Script,
+    string Phase,
+    ScriptAnnotation[] Annotations,
+    string[] Diagnostics,
+    ExceptionDiagnostic? Exception,
+    bool DetailsOmitted);
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeScriptReportView
+{
+    internal NativeSlice Logs;
+    internal NativeText Script;
+    internal NativeText Phase;
+    internal NativeSlice Annotations;
+    internal NativeSlice Diagnostics;
+    internal NativeOptionalExceptionDiagnostic Exception;
+    internal uint DetailsOmitted;
+}
 // Redacted structural header difference.
 public sealed record HeaderChanges(
     string[] Added,
@@ -1475,6 +1694,7 @@ public sealed record SessionDetail(
     StoredBodyMetadata[] StoredBodies,
     string[] Diagnostics,
     string[] HookEffects,
+    ScriptReportView[] ScriptReports,
     HeaderEffectView[] HeaderEffects,
     BodyEditView[] BodyEdits,
     AutoResponseMatchView? AutoResponse,
@@ -1507,6 +1727,7 @@ internal struct NativeSessionDetail
     internal NativeSlice StoredBodies;
     internal NativeSlice Diagnostics;
     internal NativeSlice HookEffects;
+    internal NativeSlice ScriptReports;
     internal NativeSlice HeaderEffects;
     internal NativeSlice BodyEdits;
     internal NativeOptionalAutoResponseMatchView AutoResponse;
@@ -1548,13 +1769,17 @@ public enum ErrorCategory : uint
 public sealed record AppError(
     ErrorCategory Category,
     string Message,
-    bool Retryable);
+    bool Retryable,
+    ExceptionDiagnostic? Exception,
+    LogRun[] Logs);
 [StructLayout(LayoutKind.Sequential)]
 internal struct NativeAppError
 {
     internal ErrorCategory Category;
     internal NativeText Message;
     internal uint Retryable;
+    internal NativeOptionalExceptionDiagnostic Exception;
+    internal NativeSlice Logs;
 }
 internal static unsafe class ModelMarshal
 {
@@ -1906,6 +2131,7 @@ internal static unsafe class ModelMarshal
             2 => new TrafficFilterValue.StatusFamily(value.StatusFamily.Item0),
             3 => new TrafficFilterValue.Unavailable(),
             4 => new TrafficFilterValue.Other(),
+            5 => new TrafficFilterValue.HostSubdomains(ModelMemory.Text(value.HostSubdomains.Item0)),
             _ => throw new InvalidOperationException("Unknown native TrafficFilterValue discriminant."),
         };
     internal static NativeTrafficFilterValue WriteTrafficFilterValue(TrafficFilterValue value, InputArena arena) =>
@@ -1916,16 +2142,21 @@ internal static unsafe class ModelMarshal
             TrafficFilterValue.StatusFamily option => new() { Kind = 2, StatusFamily = new NativeTrafficFilterValueStatusFamily { Item0 = option.Item0 } },
             TrafficFilterValue.Unavailable option => new() { Kind = 3 },
             TrafficFilterValue.Other option => new() { Kind = 4 },
+            TrafficFilterValue.HostSubdomains option => new() { Kind = 5, HostSubdomains = new NativeTrafficFilterValueHostSubdomains { Item0 = arena.Text(option.Item0) } },
             _ => throw new ArgumentException("Invalid TrafficFilterValue.", nameof(value)),
         };
     internal static TrafficFilterGroup ReadTrafficFilterGroup(NativeTrafficFilterGroup value) =>
         new(ReadTrafficDimension(value.Dimension),
-            ModelMemory.Array<NativeTrafficFilterValue, TrafficFilterValue>(value.Values, static item => ReadTrafficFilterValue(item)));
+            ModelMemory.Array<NativeTrafficFilterValue, TrafficFilterValue>(value.Values, static item => ReadTrafficFilterValue(item)),
+            ModelMemory.Array<NativeTrafficFilterValue, TrafficFilterValue>(value.SavedValues, static item => ReadTrafficFilterValue(item)),
+            value.SelectionMode);
     internal static NativeTrafficFilterGroup WriteTrafficFilterGroup(TrafficFilterGroup value, InputArena arena) =>
         new()
         {
             Dimension = WriteTrafficDimension(value.Dimension, arena),
             Values = arena.Array<TrafficFilterValue, NativeTrafficFilterValue>(value.Values, item => WriteTrafficFilterValue(item, arena)),
+            SavedValues = arena.Array<TrafficFilterValue, NativeTrafficFilterValue>(value.SavedValues, item => WriteTrafficFilterValue(item, arena)),
+            SelectionMode = value.SelectionMode,
         };
     internal static ClassificationFilter ReadClassificationFilter(NativeClassificationFilter value) =>
         new(ModelMemory.Text(value.Column),
@@ -1955,6 +2186,7 @@ internal static unsafe class ModelMarshal
             (value.Method.HasValue != 0 ? ModelMemory.Text(value.Method.Value) : null),
             (value.Host.HasValue != 0 ? ModelMemory.Text(value.Host.Value) : null),
             (value.Search.HasValue != 0 ? ModelMemory.Text(value.Search.Value) : null),
+            value.ExcludeScriptAnnotations != 0,
             ModelMemory.Array<NativeSessionColumnFilter, SessionColumnFilter>(value.Filters, static item => ReadSessionColumnFilter(item)),
             ModelMemory.Array<NativeTrafficFilterGroup, TrafficFilterGroup>(value.FilterGroups, static item => ReadTrafficFilterGroup(item)),
             ModelMemory.Array<NativeClassificationFilter, ClassificationFilter>(value.ExtensionFilters, static item => ReadClassificationFilter(item)),
@@ -1974,6 +2206,7 @@ internal static unsafe class ModelMarshal
             Method = (value.Method is null ? default : new NativeOptionalText { HasValue = 1, Value = arena.Text(value.Method) }),
             Host = (value.Host is null ? default : new NativeOptionalText { HasValue = 1, Value = arena.Text(value.Host) }),
             Search = (value.Search is null ? default : new NativeOptionalText { HasValue = 1, Value = arena.Text(value.Search) }),
+            ExcludeScriptAnnotations = (value.ExcludeScriptAnnotations ? 1u : 0u),
             Filters = arena.Array<SessionColumnFilter, NativeSessionColumnFilter>(value.Filters, item => WriteSessionColumnFilter(item, arena)),
             FilterGroups = arena.Array<TrafficFilterGroup, NativeTrafficFilterGroup>(value.FilterGroups, item => WriteTrafficFilterGroup(item, arena)),
             ExtensionFilters = arena.Array<ClassificationFilter, NativeClassificationFilter>(value.ExtensionFilters, item => WriteClassificationFilter(item, arena)),
@@ -2008,7 +2241,8 @@ internal static unsafe class ModelMarshal
             value.BodyBytes,
             (value.Snapshot.HasValue != 0 ? ReadLocalResponseSnapshot(value.Snapshot.Value) : null));
     internal static SessionSummary ReadSessionSummary(NativeSessionSummary value) =>
-        new(ModelMemory.Text(value.RequestNumber),
+        new(ModelMemory.Array<NativeText, string>(value.ScriptSearch, static item => ModelMemory.Text(item)),
+            ModelMemory.Text(value.RequestNumber),
             ModelMemory.Text(value.Id),
             ReadClientIdentityView(value.Caller),
             ModelMemory.Text(value.Method),
@@ -2219,6 +2453,63 @@ internal static unsafe class ModelMarshal
             ModelMemory.Array<NativeText, string>(value.ContentCodings, static item => ModelMemory.Text(item)),
             (value.Sha256.HasValue != 0 ? ModelMemory.Text(value.Sha256.Value) : null),
             (value.Reason.HasValue != 0 ? ModelMemory.Text(value.Reason.Value) : null));
+    internal static LogContext ReadLogContext(NativeLogContext value) =>
+        new((value.Artifact.HasValue != 0 ? ModelMemory.Text(value.Artifact.Value) : null),
+            ModelMemory.Text(value.Worker),
+            ModelMemory.Text(value.Revision),
+            ModelMemory.Text(value.Callback),
+            value.Invocation,
+            (value.ExchangeId.HasValue != 0 ? ModelMemory.Text(value.ExchangeId.Value) : null));
+    internal static LogValue ReadLogValue(NativeLogValue value) =>
+        new(ModelMemory.Text(value.Name),
+            (value.Parent.HasValue != 0 ? value.Parent.Value : null),
+            ModelMemory.Text(value.Kind),
+            ModelMemory.Text(value.Display),
+            value.Truncated != 0);
+    internal static SourceLocation ReadSourceLocation(NativeSourceLocation value) =>
+        new(ModelMemory.Text(value.Source),
+            value.Line,
+            value.Column);
+    internal static StackFrame ReadStackFrame(NativeStackFrame value) =>
+        new(ModelMemory.Text(value.Function),
+            (value.Generated.HasValue != 0 ? ReadSourceLocation(value.Generated.Value) : null),
+            (value.Original.HasValue != 0 ? ReadSourceLocation(value.Original.Value) : null),
+            (value.MappingIssue.HasValue != 0 ? value.MappingIssue.Value : null));
+    internal static LogRecord ReadLogRecord(NativeLogRecord value) =>
+        new(ModelMemory.Array<NativeLogValue, LogValue>(value.Values, static item => ReadLogValue(item)),
+            value.Sequence,
+            value.TimeUnixMs,
+            value.Level,
+            ModelMemory.Text(value.Text),
+            ModelMemory.Array<NativeStackFrame, StackFrame>(value.Frames, static item => ReadStackFrame(item)),
+            value.Truncated != 0);
+    internal static LogRun ReadLogRun(NativeLogRun value) =>
+        new(ReadLogContext(value.Context),
+            ModelMemory.Array<NativeLogRecord, LogRecord>(value.Records, static item => ReadLogRecord(item)),
+            value.Dropped,
+            value.Incomplete != 0);
+    internal static ScriptAnnotation ReadScriptAnnotation(NativeScriptAnnotation value) =>
+        new(ModelMemory.Array<NativeText, string>(value.Tags, static item => ModelMemory.Text(item)),
+            ModelMemory.Text(value.Note),
+            value.Severity);
+    internal static ExceptionValue ReadExceptionValue(NativeExceptionValue value) =>
+        new((value.Name.HasValue != 0 ? ModelMemory.Text(value.Name.Value) : null),
+            ModelMemory.Text(value.Message),
+            ModelMemory.Array<NativeStackFrame, StackFrame>(value.Frames, static item => ReadStackFrame(item)),
+            value.Unavailable != 0);
+    internal static ExceptionDiagnostic ReadExceptionDiagnostic(NativeExceptionDiagnostic value) =>
+        new((value.Artifact.HasValue != 0 ? ModelMemory.Text(value.Artifact.Value) : null),
+            ReadExceptionValue(value.Exception),
+            ModelMemory.Array<NativeExceptionValue, ExceptionValue>(value.Causes, static item => ReadExceptionValue(item)),
+            value.Truncated != 0);
+    internal static ScriptReportView ReadScriptReportView(NativeScriptReportView value) =>
+        new(ModelMemory.Array<NativeLogRun, LogRun>(value.Logs, static item => ReadLogRun(item)),
+            ModelMemory.Text(value.Script),
+            ModelMemory.Text(value.Phase),
+            ModelMemory.Array<NativeScriptAnnotation, ScriptAnnotation>(value.Annotations, static item => ReadScriptAnnotation(item)),
+            ModelMemory.Array<NativeText, string>(value.Diagnostics, static item => ModelMemory.Text(item)),
+            (value.Exception.HasValue != 0 ? ReadExceptionDiagnostic(value.Exception.Value) : null),
+            value.DetailsOmitted != 0);
     internal static HeaderChanges ReadHeaderChanges(NativeHeaderChanges value) =>
         new(ModelMemory.Array<NativeText, string>(value.Added, static item => ModelMemory.Text(item)),
             ModelMemory.Array<NativeText, string>(value.Removed, static item => ModelMemory.Text(item)),
@@ -2264,6 +2555,7 @@ internal static unsafe class ModelMarshal
             ModelMemory.Array<NativeStoredBodyMetadata, StoredBodyMetadata>(value.StoredBodies, static item => ReadStoredBodyMetadata(item)),
             ModelMemory.Array<NativeText, string>(value.Diagnostics, static item => ModelMemory.Text(item)),
             ModelMemory.Array<NativeText, string>(value.HookEffects, static item => ModelMemory.Text(item)),
+            ModelMemory.Array<NativeScriptReportView, ScriptReportView>(value.ScriptReports, static item => ReadScriptReportView(item)),
             ModelMemory.Array<NativeHeaderEffectView, HeaderEffectView>(value.HeaderEffects, static item => ReadHeaderEffectView(item)),
             ModelMemory.Array<NativeBodyEditView, BodyEditView>(value.BodyEdits, static item => ReadBodyEditView(item)),
             (value.AutoResponse.HasValue != 0 ? ReadAutoResponseMatchView(value.AutoResponse.Value) : null),
@@ -2280,7 +2572,9 @@ internal static unsafe class ModelMarshal
     internal static AppError ReadAppError(NativeAppError value) =>
         new(value.Category,
             ModelMemory.Text(value.Message),
-            value.Retryable != 0);
+            value.Retryable != 0,
+            (value.Exception.HasValue != 0 ? ReadExceptionDiagnostic(value.Exception.Value) : null),
+            ModelMemory.Array<NativeLogRun, LogRun>(value.Logs, static item => ReadLogRun(item)));
     [DllImport("transmog_sdk", CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "transmog_sdk_result_as_app_status")]
     private static extern nint NativeAppStatusResult(nint result);
     internal static AppStatus ReadAppStatusResult(nint result) => ReadAppStatus(ModelMemory.Value<NativeAppStatus>(NativeAppStatusResult(result)));

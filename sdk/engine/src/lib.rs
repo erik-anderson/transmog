@@ -71,6 +71,8 @@ fn error(category: ErrorCategory, message: &str) -> AppError {
         category,
         message: message.into(),
         retryable: false,
+        exception: None,
+        logs: Vec::new(),
     }
 }
 

@@ -63,6 +63,7 @@ import {
   columnDimension,
   canonicalFilterValue,
   hasFilterPresets,
+  parseFilterValues,
   type FilterChoice,
   type FilterChip,
 } from "../traffic-filters.js";
@@ -72,6 +73,8 @@ import type {
   TrafficFilterValue,
   TrafficFacetPage,
   TrafficQuery,
+  TrafficFavorite,
+  TrafficFavoritesPage,
 } from "../models.js";
 import {
   formatDuration,
@@ -105,6 +108,27 @@ import type {
 import { traceMarkers, type MarkerReview, type TraceMarker } from "../markers.js";
 import { MeasuredMenu, menuAnchor, navigateMenu, type MenuPoint } from "../context-menu.js";
 
+type PickerOption = FilterChoice & {
+  selected: boolean;
+  countText: string;
+  favorite: boolean;
+  star: string;
+  favoriteTip: string;
+  checkLabel: string;
+  reason: string;
+};
+type SavedOption = {
+  key: string;
+  label: string;
+  value: TrafficFilterValue | null;
+  condition: TrafficFavorite["condition"];
+  selected: boolean;
+  favorite: boolean;
+  star: string;
+  favoriteTip: string;
+  role: string;
+  countText: string;
+};
 type ContextValue = { dimension: TrafficDimension; label: string; value: TrafficFilterValue };
 type Column = ReturnType<typeof displayColumns>[number] & {
   sortDirection: string;
@@ -1869,10 +1893,33 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable pickerLabel = "Traffic type";
   @observable pickerNumeric = false;
   @observable pickerCustom = false;
+  @observable pickerSettingsOpen = false;
+  private pickerSettingsTouched = false;
   @observable pickerPlaceholder = "";
-  @observable pickerOptions: Array<FilterChoice & { selected: boolean; countText: string }> = [];
-  @observable pickerMoreOptions: Array<FilterChoice & { selected: boolean; countText: string }> =
-    [];
+  @observable pickerOptions: PickerOption[] = [];
+  @observable pickerMoreOptions: PickerOption[] = [];
+  @observable pickerMembership = true;
+  @observable pickerSavedOptions: SavedOption[] = [];
+  @observable pickerSelectedOptions: SavedOption[] = [];
+  @observable pickerRequirements: SavedOption[] = [];
+  @observable pickerMode: NonNullable<TrafficFilterGroup["selectionMode"]> = "either";
+  @observable pickerPaste = "";
+  @observable pickerEntryError = "";
+  @observable pickerLibraryError = "";
+  @observable pickerLibraryLoading = false;
+  @observable pickerFavoriteStatus = "";
+  @observable pickerUndo = "";
+  @observable pickerSaving = false;
+  @observable pickerPreview = "After Apply · Loading…";
+  @observable pickerApplyLabel = "Apply filter";
+  @observable pickerObservedLabel = "Observed values";
+  @observable pickerLiteral = false;
+  filterPaste!: HTMLTextAreaElement;
+  private pickerSavedValues: TrafficFilterValue[] = [];
+  private favorites: TrafficFavorite[] = [];
+  private pickerAuthoredConditions: TrafficFilter[] = [];
+  private favoriteLoad = 0;
+  private pickerReasons = new Map<string, string>();
   @observable pickerConstraints: TrafficFilter[] = [];
   @observable pickerLoading = false;
   @observable pickerError = "";
@@ -1918,6 +1965,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   private pickerCounts = new Map<string, number>();
   private pickerCountOptions: TrafficFacetPage["options"] = [];
   private pickerGeneration = 0;
+  private pickerSession = 0;
   private pickerReturn: HTMLElement | null = null;
   private facetPending: Promise<void> | null = null;
   private facetAgain = false;
@@ -1973,10 +2021,29 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.fitFilterPicker();
     this.filterField.focus({ preventScroll: true });
     void this.loadFacets();
+    void this.loadFavorites();
   }
   private resetPicker(dimension: TrafficDimension): void {
+    this.pickerSession++;
     this.pickerGeneration++;
     this.pickerDimension = dimension;
+    this.pickerMembership = !extensionColumnKey(dimension);
+    this.pickerLiteral = ["url", "path", "process"].includes(dimension);
+    this.pickerObservedLabel = dimension === "host" ? "Observed hosts" : "Observed values";
+    this.pickerPaste = "";
+    this.pickerApplyLabel = "Apply filter";
+    this.pickerEntryError = "";
+    this.pickerLibraryError = "";
+    this.pickerLibraryLoading = false;
+    this.pickerFavoriteStatus = "";
+    this.pickerUndo = "";
+    this.favorites = [];
+    this.pickerSavedValues = structuredClone(
+      this.filterGroups.find((group) => group.dimension === dimension)?.savedValues ?? [],
+    );
+    this.pickerMode =
+      this.filterGroups.find((group) => group.dimension === dimension)?.selectionMode ?? "either";
+    this.pickerPreview = "After Apply · Loading…";
     const field = this.pickerFields.find((field) => field.id === dimension)!;
     this.pickerLabel = field.label;
     this.pickerObserved =
@@ -2035,6 +2102,12 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.pickerConstraints = this.filters
       .filter((filter) => filter.column === dimension)
       .map((filter) => ({ ...filter }));
+    this.pickerAuthoredConditions = structuredClone(this.pickerConstraints);
+    this.pickerSettingsTouched = false;
+    this.pickerSettingsOpen =
+      this.pickerSavedValues.length > 0 ||
+      this.pickerConstraints.length > 0 ||
+      this.pickerMode !== "either";
     this.pickerCounts.clear();
     this.pickerCountOptions = [];
     this.pickerError = "";
@@ -2042,6 +2115,9 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.pickerScope = "Counts include other filters.";
     this.pickerLoading = true;
     this.filterInput.value = "";
+    if (this.filterPaste) {
+      this.filterPaste.value = "";
+    }
     this.filterInput.setCustomValidity("");
     this.filterOperator.value = field.numeric ? "equals" : "contains";
     this.$flushUpdates();
@@ -2057,7 +2133,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     ) {
       this.pickerRange = false;
       this.pickerRangeNotice =
-        "Existing time bounds are outside the calendar range. Custom match preserves their exact Unix milliseconds.";
+        "Existing time bounds are outside the calendar range. Also require preserves their exact Unix milliseconds.";
     }
     this.filterFrom.value = this.pickerTime ? localDateTime(bound("minimum")) : bound("minimum");
     this.filterTo.value = this.pickerTime ? localDateTime(bound("maximum")) : bound("maximum");
@@ -2086,10 +2162,489 @@ export class TrafficWorkspace extends WorkspaceElement {
   changePickerDimension(event: Event): void {
     this.resetPicker((event.currentTarget as HTMLSelectElement).value as TrafficDimension);
     void this.loadFacets();
+    void this.loadFavorites();
+  }
+  private favoriteKey(entry: TrafficFavorite): string {
+    return entry.value
+      ? filterValueKey(entry.value)
+      : entry.condition!.operator + ":" + entry.condition!.value;
+  }
+  private isFavorite(value: TrafficFilterValue): boolean {
+    return this.favorites.some(
+      (entry) => entry.value && filterValueKey(entry.value) === filterValueKey(value),
+    );
+  }
+  private rebuildSavedOptions(): void {
+    const entries = [...this.favorites];
+    for (const value of this.pickerSavedValues) {
+      if (!this.isFavorite(value)) {
+        entries.push({ dimension: this.pickerDimension, value, condition: null });
+      }
+    }
+    for (const filter of this.pickerAuthoredConditions) {
+      if (
+        !entries.some(
+          (entry) =>
+            entry.condition?.operator === filter.operator && entry.condition.value === filter.value,
+        )
+      ) {
+        const { column, operator, value } = filter;
+        entries.push({
+          dimension: this.pickerDimension,
+          value: null,
+          condition: { column, operator, value },
+        });
+      }
+    }
+    const options = entries.map((entry): SavedOption => {
+      const key = this.favoriteKey(entry),
+        favorite = this.favorites.some((value) => this.favoriteKey(value) === key);
+      return {
+        ...entry,
+        key,
+        favorite,
+        label: entry.value
+          ? valueLabel(this.pickerDimension, entry.value)
+          : entry.condition!.operator + " “" + entry.condition!.value + "”",
+        selected: entry.value
+          ? this.pickerSavedValues.some((value) => filterValueKey(value) === key)
+          : this.pickerConstraints.some(
+              (filter) =>
+                filter.operator === entry.condition!.operator &&
+                filter.value === entry.condition!.value,
+            ),
+        star: favorite ? "★" : "☆",
+        favoriteTip: favorite ? "Remove from favorites" : "Add to favorites",
+        role: entry.value ? "Saved selection term" : "Additional requirement",
+        countText:
+          this.pickerLoading || this.pickerError || !this.pickerCounts.has(key)
+            ? "—"
+            : String(this.pickerCounts.get(key)),
+      };
+    });
+    this.pickerSavedOptions = options.filter((entry) => entry.value && entry.favorite);
+    this.pickerSelectedOptions = options.filter((entry) => entry.value && !entry.favorite);
+    this.pickerRequirements = options.filter((entry) => entry.condition);
+  }
+  async loadFavorites(): Promise<void> {
+    const generation = ++this.favoriteLoad,
+      dimension = this.pickerDimension;
+    if (extensionColumnKey(dimension)) {
+      return;
+    }
+    this.pickerLibraryLoading = true;
+    try {
+      const entries: TrafficFavorite[] = [];
+      let offset = 0,
+        revision: number | undefined;
+      do {
+        const page = await invoke<TrafficFavoritesPage>("traffic_favorites", {
+          dimension,
+          offset,
+          limit: 256,
+        });
+        if (
+          !this.pickerOpen ||
+          generation !== this.favoriteLoad ||
+          dimension !== this.pickerDimension
+        ) {
+          return;
+        }
+        if (revision !== undefined && page.revision !== revision) {
+          void this.loadFavorites();
+          return;
+        }
+        revision = page.revision;
+        entries.push(...page.entries);
+        offset = page.nextOffset ?? 0;
+      } while (offset && entries.length < 1024);
+      this.favorites = entries;
+      if (!this.pickerSettingsTouched && entries.length) {
+        this.pickerSettingsOpen = true;
+      }
+      this.pickerLoading = true;
+      void this.loadFacets();
+      this.pickerLibraryError = "";
+      this.rebuildPickerOptions();
+    } catch (error: unknown) {
+      if (generation === this.favoriteLoad && dimension === this.pickerDimension) {
+        this.pickerLibraryError = describeError(error);
+      }
+    } finally {
+      if (generation === this.favoriteLoad) {
+        this.pickerLibraryLoading = false;
+      }
+    }
+  }
+  private async changeFavorites(
+    change: unknown,
+  ): Promise<{ changed: number; undo: string | null } | null> {
+    const session = this.pickerSession;
+    try {
+      const result = await invoke<{ changed: number; undo: string | null }>(
+        "change_traffic_favorites",
+        { change },
+      );
+      // The library is shared; refresh any open field, but keep errors with their origin.
+      if (this.isCurrentPicker(this.pickerSession)) {
+        await this.loadFavorites();
+      }
+      return result;
+    } catch (error: unknown) {
+      if (this.isCurrentPicker(session)) {
+        this.pickerLibraryError = describeError(error);
+      }
+      return null;
+    }
+  }
+  async toggleFavorite(key: string, saved = false): Promise<void> {
+    if (this.pickerSaving) {
+      return;
+    }
+    const row = saved
+      ? [
+          ...this.pickerSavedOptions,
+          ...this.pickerSelectedOptions,
+          ...this.pickerRequirements,
+        ].find((row) => row.key === key)
+      : [...this.pickerOptions, ...this.pickerMoreOptions].find((row) => row.key === key);
+    if (!row) {
+      return;
+    }
+    const entry: TrafficFavorite = {
+      dimension: this.pickerDimension,
+      value: row.value,
+      condition: "condition" in row ? row.condition : null,
+    };
+    this.pickerSaving = true;
+    try {
+      await this.changeFavorites(
+        row.favorite ? { action: "remove", entry } : { action: "add", entries: [entry] },
+      );
+    } finally {
+      this.pickerSaving = false;
+    }
+  }
+  async clearFavorites(): Promise<void> {
+    if (this.pickerSaving) {
+      return;
+    }
+    const dimension = this.pickerDimension,
+      session = this.pickerSession;
+    this.pickerSaving = true;
+    try {
+      const result = await this.changeFavorites({ action: "clear", dimension });
+      if (result && this.isCurrentPicker(session)) {
+        this.pickerFavoriteStatus = `Removed ${result.changed} saved ${this.pickerLabel} values.`;
+        this.pickerUndo = result.undo ?? "";
+      }
+    } finally {
+      this.pickerSaving = false;
+    }
+  }
+  async undoFavorites(): Promise<void> {
+    if (this.pickerSaving || !this.pickerUndo) {
+      return;
+    }
+    const session = this.pickerSession;
+    this.pickerSaving = true;
+    try {
+      const result = await this.changeFavorites({ action: "undo", token: this.pickerUndo });
+      if (result && this.isCurrentPicker(session)) {
+        this.pickerFavoriteStatus = `Restored ${result.changed} saved values.`;
+        this.pickerUndo = "";
+      }
+    } finally {
+      this.pickerSaving = false;
+    }
+  }
+  toggleSavedValue(key: string, event: Event): void {
+    const row = [...this.pickerSavedOptions, ...this.pickerSelectedOptions].find(
+      (row) => row.key === key,
+    );
+    if (!row?.value) {
+      return;
+    }
+    if ((event.currentTarget as HTMLInputElement).checked) {
+      if (this.pickerSavedValues.length + this.pickerValues.length >= 128) {
+        this.pickerEntryError = "Choose at most 128 saved and picked values per field.";
+        this.rebuildPickerOptions();
+        return;
+      }
+      this.pickerSavedValues = [...this.pickerSavedValues, row.value];
+    } else {
+      this.pickerSavedValues = this.pickerSavedValues.filter(
+        (value) => filterValueKey(value) !== key,
+      );
+    }
+    this.rebuildPickerOptions();
+    this.draftChanged();
+  }
+  changePickerMode(event: Event): void {
+    this.pickerMode = (event.currentTarget as HTMLSelectElement).value as typeof this.pickerMode;
+    this.draftChanged();
+  }
+  pasteChanged(event: Event): void {
+    this.pickerPaste = (event.currentTarget as HTMLTextAreaElement).value;
+    this.pickerApplyLabel = this.pickerPaste.trim() ? "Save and apply" : "Apply filter";
+    this.draftChanged();
+  }
+  private previewSavedValues(): TrafficFilterValue[] {
+    try {
+      const values = [
+        ...this.pickerSavedValues,
+        ...parseFilterValues(this.pickerDimension, this.pickerPaste),
+      ];
+      return [...new Map(values.map((value) => [filterValueKey(value), value])).values()];
+    } catch {
+      return this.pickerSavedValues;
+    }
+  }
+  private pickerQuery(): TrafficQuery {
+    const dimension = this.pickerDimension,
+      query = this.trafficQuery();
+    if (extensionColumnKey(dimension)) {
+      return query;
+    }
+    query.filterGroups = [
+      ...query.filterGroups.filter((group) => group.dimension !== dimension),
+      {
+        dimension,
+        values: structuredClone(this.pickerValues),
+        savedValues: this.previewSavedValues(),
+        selectionMode: this.pickerMode,
+      },
+    ];
+    query.filters = [
+      ...query.filters.filter((filter) => filter.column !== dimension),
+      ...this.pickerConstraints.map(({ column, operator, value }) => ({ column, operator, value })),
+    ];
+    if (dimension === "fetch-destination") {
+      query.fetchDestinations = [];
+    }
+    if (this.pickerRange) {
+      try {
+        const bounds = inclusiveRange(
+          columnDimension(dimension)!,
+          this.filterFrom.value,
+          this.filterTo.value,
+          this.pickerRangeUnit,
+          this.pickerOriginalTimeBounds,
+        );
+        query.filters = [
+          ...query.filters.filter(
+            (filter) =>
+              filter.column !== dimension || !["minimum", "maximum"].includes(filter.operator),
+          ),
+          ...bounds,
+        ];
+      } catch {
+        /* Apply reports invalid range bounds without losing the draft. */
+      }
+    }
+    return query;
+  }
+  private draftChanged(): void {
+    this.pickerEntryError = "";
+    try {
+      parseFilterValues(this.pickerDimension, this.pickerPaste);
+    } catch (error) {
+      this.pickerEntryError = describeError(error);
+    }
+    this.pickerGeneration++;
+    this.pickerLoading = true;
+    this.pickerPreview = "After Apply · Loading…";
+    void this.loadFacets();
+  }
+  async savePaste(): Promise<boolean> {
+    if (!this.pickerMembership || !this.pickerPaste.trim()) {
+      return true;
+    }
+    let values: TrafficFilterValue[];
+    try {
+      values = parseFilterValues(this.pickerDimension, this.pickerPaste);
+      const selected = this.previewSavedValues().length + this.pickerValues.length;
+      if (selected > 128) {
+        throw new Error("Choose at most 128 saved and picked values per field; shorten the list.");
+      }
+      const other = this.filterGroups.filter((group) => group.dimension !== this.pickerDimension);
+      if (
+        other.length >= 32 ||
+        other.reduce(
+          (count, group) => count + group.values.length + (group.savedValues?.length ?? 0),
+          0,
+        ) +
+          selected >
+          1024
+      ) {
+        throw new Error("Choose at most 32 fields and 1024 alternatives across fields.");
+      }
+    } catch (error) {
+      this.pickerEntryError = describeError(error);
+      return false;
+    }
+    const generation = this.pickerGeneration,
+      session = this.pickerSession,
+      dimension = this.pickerDimension;
+    this.pickerSaving = true;
+    try {
+      const result = await this.changeFavorites({
+        action: "add",
+        entries: values.map((value) => ({ dimension, value, condition: null })),
+      });
+      if (!result || generation !== this.pickerGeneration || !this.isCurrentPicker(session)) {
+        return false;
+      }
+      this.pickerSavedValues = this.previewSavedValues();
+      this.pickerPaste = "";
+      this.filterPaste.value = "";
+      this.pickerApplyLabel = "Apply filter";
+      this.pickerEntryError = "";
+      this.pickerFavoriteStatus = `Saved ${values.length} values. Apply to update Traffic.`;
+      this.rebuildPickerOptions();
+      this.draftChanged();
+      return true;
+    } finally {
+      this.pickerSaving = false;
+    }
+  }
+  async addRequirement(): Promise<void> {
+    const column = columnDimension(this.pickerDimension),
+      operator = this.filterOperator.value as TrafficFilter["operator"],
+      authoredValue = this.filterInput.value;
+    let value = authoredValue.trim().toLowerCase();
+    if (!column || !value || this.pickerSaving) {
+      return;
+    }
+    if (
+      value.length > 255 ||
+      /[\p{Cc}]/u.test(value) ||
+      (this.pickerNumeric &&
+        (!/^\d+$/.test(value) ||
+          BigInt(value) > 18446744073709551615n ||
+          (column === "request-number" && BigInt(value) === 0n)))
+    ) {
+      this.pickerEntryError = "Enter a valid comparison value within this field's limits.";
+      return;
+    }
+    try {
+      if (operator === "equals" && !this.pickerNumeric) {
+        const canonical = canonicalFilterValue(this.pickerDimension, { kind: "text", value });
+        if (canonical.kind === "text") {
+          value = canonical.value;
+        }
+      } else if (this.pickerNumeric) {
+        value = BigInt(value).toString();
+      }
+    } catch (error) {
+      this.pickerEntryError = describeError(error);
+      return;
+    }
+    const condition = { column, operator, value };
+    if (!this.acceptsRequirement(condition)) {
+      return;
+    }
+    const generation = this.pickerGeneration,
+      session = this.pickerSession;
+    this.pickerSaving = true;
+    try {
+      const result = await this.changeFavorites({
+        action: "add",
+        entries: [{ dimension: this.pickerDimension, value: null, condition }],
+      });
+      if (!result || generation !== this.pickerGeneration || !this.isCurrentPicker(session)) {
+        return;
+      }
+      this.enableRequirement(condition);
+      if (this.filterInput.value === authoredValue && this.filterOperator.value === operator) {
+        this.filterInput.value = "";
+      }
+    } finally {
+      this.pickerSaving = false;
+    }
+  }
+  private enableRequirement(condition: NonNullable<TrafficFavorite["condition"]>): void {
+    if (!this.acceptsRequirement(condition)) {
+      return;
+    }
+    if (
+      !this.pickerAuthoredConditions.some(
+        (filter) => filter.operator === condition.operator && filter.value === condition.value,
+      )
+    ) {
+      this.pickerAuthoredConditions.push({ ...condition, label: "" });
+    }
+    this.pickerEntryError = "";
+    this.pickerConstraints = this.requirementsWith(condition);
+    if (["minimum", "maximum"].includes(condition.operator)) {
+      this.pickerRangeUnit = this.pickerRangeUnits[0]!.value;
+      const bound = (operator: string) =>
+        this.pickerConstraints.find((filter) => filter.operator === operator)?.value ?? "";
+      this.filterFrom.value = this.pickerTime ? localDateTime(bound("minimum")) : bound("minimum");
+      this.filterTo.value = this.pickerTime ? localDateTime(bound("maximum")) : bound("maximum");
+    }
+    this.rebuildPickerOptions();
+    this.draftChanged();
+  }
+  private requirementsWith(condition: NonNullable<TrafficFavorite["condition"]>): TrafficFilter[] {
+    return [
+      ...this.pickerConstraints.filter((filter) =>
+        condition.operator === "contains"
+          ? filter.operator !== condition.operator || filter.value !== condition.value
+          : filter.operator !== condition.operator,
+      ),
+      { ...condition, label: "" },
+    ];
+  }
+  private acceptsRequirement(condition: NonNullable<TrafficFavorite["condition"]>): boolean {
+    if (
+      this.filters.filter((filter) => filter.column !== condition.column).length +
+        this.requirementsWith(condition).length >
+      14
+    ) {
+      this.pickerEntryError = "Use at most 14 additional requirements.";
+      this.rebuildPickerOptions();
+      return false;
+    }
+    return true;
+  }
+  settingsToggled(event: ToggleEvent): void {
+    const open = event.newState === "open";
+    if (open !== this.pickerSettingsOpen) {
+      this.pickerSettingsTouched = true;
+      this.pickerSettingsOpen = open;
+    }
+  }
+  toggleRequirement(key: string, event: Event): void {
+    const row = this.pickerRequirements.find((row) => row.key === key);
+    if (!row?.condition) {
+      return;
+    }
+    if ((event.currentTarget as HTMLInputElement).checked) {
+      this.enableRequirement(row.condition);
+    } else {
+      this.pickerEntryError = "";
+      this.pickerConstraints = this.pickerConstraints.filter(
+        (filter) =>
+          filter.operator !== row.condition!.operator || filter.value !== row.condition!.value,
+      );
+      if (row.condition.operator === "minimum") {
+        this.filterFrom.value = "";
+      }
+      if (row.condition.operator === "maximum") {
+        this.filterTo.value = "";
+      }
+      this.rebuildPickerOptions();
+      this.draftChanged();
+    }
   }
   private rebuildPickerOptions(): void {
     const focused = (this.getRootNode() as ShadowRoot).activeElement as HTMLElement | null;
-    const restore = focused?.matches(".filter-options input") ? focused.id : "";
+    const restore = focused?.matches(
+      ".filter-options input, .filter-options button, .filter-saved input, .filter-saved button",
+    )
+      ? focused.id
+      : "";
     const choices = this.pickerChoices().filter(
       (choice) =>
         choice.value.kind !== "other" ||
@@ -2122,13 +2677,19 @@ export class TrafficWorkspace extends WorkspaceElement {
         });
       }
     }
-    const retained = [...this.pickerOptions, ...this.pickerMoreOptions].find(
-      (option) => "filter-option-" + option.key === restore,
+    const retained = [...this.pickerOptions, ...this.pickerMoreOptions].find((option) =>
+      ["filter-option-", "observed-star-"].some((prefix) => prefix + option.key === restore),
     );
     if (retained && !choices.some((option) => option.key === retained.key)) {
       choices.push(retained);
     }
     const options = choices.map((choice) => ({
+      favorite: this.isFavorite(choice.value),
+      star: this.isFavorite(choice.value) ? "★" : "☆",
+      favoriteTip: this.isFavorite(choice.value) ? "Remove from favorites" : "Add to favorites",
+      checkLabel:
+        this.pickerDimension === "host" ? "Pick observed host " + choice.label : choice.label,
+      reason: this.pickerReasons.get(choice.key) ?? "",
       ...choice,
       selected: this.pickerValues.some((value) => filterValueKey(value) === choice.key),
       countText:
@@ -2142,12 +2703,20 @@ export class TrafficWorkspace extends WorkspaceElement {
       !long ||
       option.selected ||
       option.countText !== "0" ||
-      restore === "filter-option-" + option.key;
+      restore === "filter-option-" + option.key ||
+      restore === "observed-star-" + option.key;
     this.pickerOptions = options.filter(primary);
     this.pickerMoreOptions = options.filter((option) => !primary(option));
+    this.rebuildSavedOptions();
     this.$flushUpdates();
     if (restore && focused && !focused.isConnected) {
-      (this.getRootNode() as ShadowRoot).getElementById(restore)?.focus({ preventScroll: true });
+      const root = this.getRootNode() as ShadowRoot;
+      const fallback = restore.startsWith("saved-")
+        ? restore.replace("saved-", "selected-")
+        : restore.replace("selected-", "saved-");
+      (root.getElementById(restore) ?? root.getElementById(fallback) ?? this.filterField).focus({
+        preventScroll: true,
+      });
     }
   }
   togglePickerValue(key: string, event: Event): void {
@@ -2158,7 +2727,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       return;
     }
     if ((event.currentTarget as HTMLInputElement).checked) {
-      if (this.pickerValues.length >= 128) {
+      if (this.pickerValues.length + this.pickerSavedValues.length >= 128) {
         this.pickerError = "Choose at most 128 values in one field.";
         this.rebuildPickerOptions();
         return;
@@ -2169,9 +2738,15 @@ export class TrafficWorkspace extends WorkspaceElement {
     }
     // Keep every selected value visible, restoring its focused checkbox if it moves.
     this.rebuildPickerOptions();
+    this.draftChanged();
   }
   clearPicker(): void {
     this.pickerValues = [];
+    this.pickerSavedValues = [];
+    this.pickerPaste = "";
+    this.filterPaste.value = "";
+    this.pickerApplyLabel = "Apply filter";
+    this.pickerEntryError = "";
     this.pickerConstraints = [];
     this.filterInput.value = "";
     this.filterInput.setCustomValidity("");
@@ -2179,6 +2754,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.filterTo.value = "";
     this.filterFrom.setCustomValidity("");
     this.rebuildPickerOptions();
+    this.draftChanged();
   }
   removePickerConstraint(operator: string): void {
     this.pickerConstraints = this.pickerConstraints.filter(
@@ -2209,8 +2785,25 @@ export class TrafficWorkspace extends WorkspaceElement {
     });
   }
   closePicker(): void {
+    this.endPicker();
     this.filterPicker.hidePopover();
     this.restorePickerFocus();
+  }
+  private isCurrentPicker(session: number): boolean {
+    return (
+      session === this.pickerSession &&
+      this.isConnected &&
+      this.pickerOpen &&
+      this.filterPicker.matches(":popover-open")
+    );
+  }
+  private endPicker(): void {
+    if (this.pickerOpen) {
+      this.pickerOpen = false;
+      this.pickerSession++;
+      this.pickerGeneration++;
+      this.pickerLoading = false;
+    }
   }
   private restorePickerFocus(): void {
     const target = this.pickerReturn;
@@ -2220,10 +2813,8 @@ export class TrafficWorkspace extends WorkspaceElement {
     });
   }
   pickerToggled(event: ToggleEvent): void {
-    if (event.newState === "closed") {
-      this.pickerOpen = false;
-      this.pickerGeneration++;
-      this.pickerLoading = false;
+    if (event.newState === "closed" && !this.filterPicker.matches(":popover-open")) {
+      this.endPicker();
       const active = (this.getRootNode() as ShadowRoot).activeElement;
       if (active && this.filterPicker.contains(active)) {
         this.restorePickerFocus();
@@ -2266,17 +2857,23 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.pickerError = "Enter a value of 1–255 characters without control characters.";
       return;
     }
-    const alternative = canonicalFilterValue(this.pickerDimension, { kind: "text", value }),
-      key = filterValueKey(alternative);
+    let alternative: TrafficFilterValue;
+    try {
+      alternative = canonicalFilterValue(this.pickerDimension, { kind: "text", value });
+    } catch (error) {
+      this.pickerEntryError = describeError(error);
+      return;
+    }
+    const key = filterValueKey(alternative);
     if (!this.pickerValues.some((item) => filterValueKey(item) === key)) {
-      if (this.pickerValues.length >= 128) {
+      if (this.pickerValues.length + this.pickerSavedValues.length >= 128) {
         this.pickerError = "Choose at most 128 values in one field.";
         return;
       }
       this.pickerValues = [...this.pickerValues, alternative];
     }
     this.rebuildPickerOptions();
-    void this.loadFacets();
+    this.draftChanged();
   }
   loadMoreFacets(): void {
     if (!this.pickerCanMore || this.pickerLoading) {
@@ -2296,6 +2893,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     } else {
       this.pickerOriginalTimeBounds = {};
     }
+    this.draftChanged();
   }
   changeRangeUnit(event: Event): void {
     this.pickerRangeUnit = (event.currentTarget as HTMLSelectElement).value;
@@ -2321,6 +2919,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.filterFrom.value = localDateTime(String(date.valueOf()));
     }
     (event.currentTarget as HTMLSelectElement).value = "";
+    this.draftChanged();
   }
   async loadFacets(): Promise<void> {
     this.facetAgain = true;
@@ -2335,7 +2934,7 @@ export class TrafficWorkspace extends WorkspaceElement {
           dimension = this.pickerDimension,
           search = this.pickerObserved ? this.pickerSearch : null;
         const captureRevision = this.trafficRevision,
-          query = this.trafficQuery(),
+          query = this.pickerQuery(),
           observed = this.pickerObserved;
         const append = observed && this.facetMore && this.pickerNextOffset !== null;
         this.facetMore = false;
@@ -2349,9 +2948,11 @@ export class TrafficWorkspace extends WorkspaceElement {
             [
               ...this.pickerChoices(dimension).map((option) => option.value),
               ...this.pickerValues,
+              ...this.previewSavedValues(),
+              ...this.favorites.flatMap((entry) => (entry.value ? [entry.value] : [])),
             ].map((value) => [filterValueKey(value), value]),
           ).values(),
-        ];
+        ].slice(0, 256);
         try {
           const offset = append ? this.pickerNextOffset! : 0,
             limit = observed
@@ -2416,6 +3017,13 @@ export class TrafficWorkspace extends WorkspaceElement {
           this.pickerCounts = new Map(
             [...this.pickerCountOptions, ...included].map((option) => [option.key, option.count]),
           );
+          this.pickerReasons = new Map(
+            this.pickerCountOptions.map((option) => [option.key, option.matchReason ?? ""]),
+          );
+          this.pickerPreview =
+            page.draftEntries === undefined
+              ? "After Apply · Count unavailable"
+              : `After Apply · ${page.draftEntries} of ${page.matchingEntries} requests`;
           this.pickerNextOffset = observed ? page.nextOffset : null;
           this.pickerObservedTotal = page.totalOptions;
           this.pickerObservedShown = this.pickerCountOptions.length;
@@ -2435,7 +3043,7 @@ export class TrafficWorkspace extends WorkspaceElement {
           this.pickerError = "";
           this.pickerOmission = page.omittedEntries
             ? `${page.omittedEntries.toLocaleString()} ${page.omittedEntries === 1 ? "entry has a value" : "entries have values"} outside exact filter limits.` +
-              (this.pickerCustom ? " Use a custom contains match." : "")
+              (this.pickerCustom ? " Use Contains under Also require." : "")
             : "";
           if (extensionKey && page.omittedEntries) {
             this.pickerOmission =
@@ -2455,6 +3063,7 @@ export class TrafficWorkspace extends WorkspaceElement {
         } catch (error: unknown) {
           if (current()) {
             this.pickerLoading = false;
+            this.pickerPreview = "After Apply · Count unavailable";
             this.pickerError = "Counts unavailable: " + describeError(error);
             this.rebuildPickerOptions();
           }
@@ -2465,6 +3074,11 @@ export class TrafficWorkspace extends WorkspaceElement {
       await this.facetPending;
     } finally {
       this.facetPending = null;
+      // A library refresh can queue after the worker loop exits but before its
+      // promise's cleanup runs. Do not strand that final request in Loading.
+      if (this.facetAgain && this.pickerOpen && this.isConnected) {
+        void this.loadFacets();
+      }
     }
   }
   private contextFilterValues(row: SessionSummary): ContextValue[] {
@@ -2564,7 +3178,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     if ([...text].length > 255 || /[\p{Cc}]/u.test(text)) {
       this.pickerValues = [];
       this.pickerConstraints = [];
-      this.pickerError = "This value exceeds exact filter limits. Use a custom contains match.";
+      this.pickerError = "This value exceeds exact filter limits. Use Contains under Also require.";
     } else {
       this.pickerValues = [option.value];
       this.pickerConstraints = [];
@@ -2866,6 +3480,16 @@ export class TrafficWorkspace extends WorkspaceElement {
 
   private async watchOpenedTraces(): Promise<void> {
     try {
+      const favorites = await listen("traffic-favorites-changed", () => {
+        if (this.pickerOpen) {
+          void this.loadFavorites();
+        }
+      });
+      if (!this.isConnected) {
+        favorites();
+        return;
+      }
+      this.nativeUnlisteners.push(favorites);
       const closing = await listen("trace-close-requested", () => {
         this.markerPendingAction = "close";
         if (!this.markerUnsaved.open) {
@@ -4021,8 +4645,17 @@ export class TrafficWorkspace extends WorkspaceElement {
   async applyFilter(event: Event): Promise<void> {
     event.preventDefault();
     const dimension = this.pickerDimension,
-      column = columnDimension(dimension),
-      value = this.filterInput.value.trim();
+      session = this.pickerSession,
+      column = columnDimension(dimension);
+    const savedPending = !!this.pickerPaste.trim();
+    if (
+      !this.isCurrentPicker(session) ||
+      this.pickerSaving ||
+      !(await this.savePaste()) ||
+      !this.isCurrentPicker(session)
+    ) {
+      return;
+    }
     let constraints = [...this.pickerConstraints];
     if (column && this.pickerRange) {
       try {
@@ -4044,37 +4677,15 @@ export class TrafficWorkspace extends WorkspaceElement {
       }
     }
 
-    if (value && column) {
-      const operator = this.filterOperator.value as TrafficFilter["operator"];
-      if (
-        this.pickerNumeric &&
-        (!/^[0-9]+$/.test(value) ||
-          BigInt(value) > 18446744073709551615n ||
-          (column === "request-number" && BigInt(value) < 1n))
-      ) {
-        this.filterInput.setCustomValidity(
-          column === "request-number"
-            ? "Enter a positive decimal request number up to 18446744073709551615."
-            : "Enter an unsigned decimal integer up to 18446744073709551615.",
-        );
-        this.filterInput.reportValidity();
-        return;
-      }
-      if (/[\p{Cc}]/u.test(value)) {
-        this.filterInput.setCustomValidity("Remove control characters from the value.");
-        this.filterInput.reportValidity();
-        return;
-      }
-      constraints = [
-        ...constraints.filter((filter) => filter.operator !== operator),
-        { column, operator, value, label: "" },
-      ];
-    }
     if (
       this.filterGroups
         .filter((group) => group.dimension !== dimension)
-        .reduce((total, group) => total + group.values.length, 0) +
-        this.pickerValues.length >
+        .reduce(
+          (total, group) => total + group.values.length + (group.savedValues?.length ?? 0),
+          0,
+        ) +
+        this.pickerValues.length +
+        this.pickerSavedValues.length >
       1024
     ) {
       this.pickerError = "Choose at most 1024 values across all fields.";
@@ -4084,20 +4695,32 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.filters.filter((filter) => filter.column !== dimension).length + constraints.length >
       14
     ) {
-      this.pickerError = "Remove a custom condition before adding another (maximum 14).";
+      this.pickerError = "Remove a requirement before adding another (maximum 14).";
       return;
     }
     this.clearDimension(dimension);
     this.filters = [...this.filters, ...constraints];
-    if (this.pickerValues.length) {
+    if (this.pickerValues.length || this.pickerSavedValues.length) {
       this.filterGroups = [
         ...this.filterGroups,
-        { dimension, values: structuredClone(this.pickerValues) },
+        {
+          dimension,
+          values: structuredClone(this.pickerValues),
+          ...(this.pickerSavedValues.length || this.pickerMode !== "either"
+            ? {
+                savedValues: structuredClone(this.pickerSavedValues),
+                selectionMode: this.pickerMode,
+              }
+            : {}),
+        },
       ];
     }
     this.queryRevision++;
     this.closePicker();
     await this.refreshSessions(undefined, true);
+    if (savedPending && this.queryError) {
+      this.diagnostic = "Favorites saved. " + this.queryError;
+    }
   }
   async removeFilter(column: ColumnId, operator: string): Promise<void> {
     this.filters = this.filters.filter(

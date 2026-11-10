@@ -397,6 +397,7 @@ impl Application {
         let mut options = counts
             .into_iter()
             .map(|(key, (label, count))| crate::TrafficFacetOption {
+                match_reason: String::new(),
                 key: format!("text:{key}"),
                 label,
                 value: crate::TrafficFilterValue::Text(key),
@@ -404,6 +405,7 @@ impl Application {
             })
             .collect::<Vec<_>>();
         options.push(crate::TrafficFacetOption {
+            match_reason: String::new(),
             key: "unavailable".into(),
             label: "No match".into(),
             value: crate::TrafficFilterValue::Unavailable,

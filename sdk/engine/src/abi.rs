@@ -220,6 +220,12 @@ impl<T: Project> Project for [T] {
         Ok(arena.keep(values))
     }
 }
+impl<T: Project + ?Sized> Project for Box<T> {
+    type View = T::View;
+    fn project(&self, arena: &mut Arena) -> Result<Self::View, AppError> {
+        self.as_ref().project(arena)
+    }
+}
 impl<T: Project> Project for Vec<T> {
     type View = Slice<T::View>;
     fn project(&self, arena: &mut Arena) -> Result<Self::View, AppError> {

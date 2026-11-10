@@ -14,11 +14,11 @@ use transmog_session::{
 };
 
 use crate::workspace::TrafficColumn;
-mod facets;
+pub(crate) mod facets;
 use crate::{AppError, AutoResponseMatchView, ErrorCategory, inspector::auto_response_match};
 pub use facets::{
     TrafficDimension, TrafficFacet, TrafficFacetInput, TrafficFacetOption, TrafficFacetPage,
-    TrafficFilterGroup, TrafficFilterValue,
+    TrafficFilterGroup, TrafficFilterValue, TrafficSelectionMode,
 };
 pub(crate) use facets::{facet_counts, unrestricted_query};
 
@@ -57,7 +57,7 @@ pub enum FilterOperator {
 }
 
 /// One bounded column filter.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SessionColumnFilter {
     /// Metadata field.
@@ -754,7 +754,7 @@ fn numeric_value(row: &SessionSummary, column: TrafficColumn) -> Option<u64> {
     }
 }
 
-fn numeric_column(column: TrafficColumn) -> bool {
+pub(crate) fn numeric_column(column: TrafficColumn) -> bool {
     matches!(
         column,
         TrafficColumn::RequestNumber
@@ -1095,10 +1095,15 @@ fn matches_query_row(
             .method
             .as_ref()
             .is_none_or(|method| row.method.eq_ignore_ascii_case(method))
-        && input
-            .host
-            .as_ref()
-            .is_none_or(|host| row.host.eq_ignore_ascii_case(host))
+        && input.host.as_ref().is_none_or(|host| {
+            facets::canonical_host(&row.host)
+                .ok()
+                .zip(facets::canonical_host(host).ok())
+                .map_or_else(
+                    || row.host.eq_ignore_ascii_case(host),
+                    |(candidate, host)| candidate == host,
+                )
+        })
         && input
             .terminal
             .is_none_or(|terminal| (row.terminal != "active") == terminal)
@@ -1122,7 +1127,7 @@ pub(crate) fn matching_ids(
     Ok(rows.into_iter().map(|row| row.id).collect())
 }
 
-struct PreparedFilter {
+pub(crate) struct PreparedFilter {
     column: TrafficColumn,
     operator: FilterOperator,
     text: String,
@@ -1130,7 +1135,7 @@ struct PreparedFilter {
 }
 
 impl PreparedFilter {
-    fn new(filter: &SessionColumnFilter) -> Result<Self, AppError> {
+    pub(crate) fn new(filter: &SessionColumnFilter) -> Result<Self, AppError> {
         validate_filter(Some(&filter.value))?;
         let numeric = filter.value.parse::<u64>().ok();
         if filter.column == TrafficColumn::RequestNumber
@@ -1166,6 +1171,10 @@ impl PreparedFilter {
                 && filter.operator == FilterOperator::Equals
             {
                 facets::canonical_protocol(&filter.value)
+            } else if filter.column == TrafficColumn::Host
+                && filter.operator == FilterOperator::Equals
+            {
+                facets::canonical_host(&filter.value)?
             } else {
                 filter.value.to_lowercase()
             },
@@ -1183,6 +1192,9 @@ impl PreparedFilter {
             }
             FilterOperator::Equals if self.column == TrafficColumn::Protocol => {
                 facets::canonical_protocol(&row.protocol) == self.text
+            }
+            FilterOperator::Equals if self.column == TrafficColumn::Host => {
+                facets::canonical_host(&row.host).is_ok_and(|host| host == self.text)
             }
             FilterOperator::Equals => text_value(row, self.column).to_lowercase() == self.text,
             FilterOperator::Minimum => numeric_value(row, self.column)
@@ -2217,6 +2229,8 @@ mod tests {
     }
     fn exact_group(column: TrafficColumn, values: Vec<TrafficFilterValue>) -> TrafficFilterGroup {
         TrafficFilterGroup {
+            saved_values: Vec::new(),
+            selection_mode: TrafficSelectionMode::default(),
             dimension: TrafficDimension::Column(column),
             values,
         }
@@ -2335,6 +2349,8 @@ mod tests {
             );
             let query = SessionQueryInput {
                 filter_groups: vec![TrafficFilterGroup {
+                    saved_values: Vec::new(),
+                    selection_mode: TrafficSelectionMode::default(),
                     dimension,
                     values: vec![value],
                 }],
@@ -2453,6 +2469,8 @@ mod tests {
         ] {
             assert_eq!(
                 TrafficFilterGroup {
+                    saved_values: Vec::new(),
+                    selection_mode: TrafficSelectionMode::default(),
                     dimension,
                     values: vec![TrafficFilterValue::Other]
                 }
@@ -2492,6 +2510,8 @@ mod tests {
         ] {
             assert!(
                 TrafficFilterGroup {
+                    saved_values: Vec::new(),
+                    selection_mode: TrafficSelectionMode::default(),
                     dimension,
                     values: vec![TrafficFilterValue::Other]
                 }
@@ -2719,7 +2739,9 @@ mod tests {
         assert!(matching_ids(&service, &zero, &traces, None).is_err());
         zero.filter_groups[0] = exact_group(
             TrafficColumn::Status,
-            vec![TrafficFilterValue::Number("200".into()); 129],
+            (100..229)
+                .map(|status| TrafficFilterValue::Number(status.to_string()))
+                .collect(),
         );
         assert!(matching_ids(&service, &zero, &traces, None).is_err());
         zero.filter_groups[0] = exact_group(
@@ -2801,6 +2823,8 @@ mod tests {
         }
         let query = SessionQueryInput {
             filter_groups: vec![TrafficFilterGroup {
+                saved_values: Vec::new(),
+                selection_mode: TrafficSelectionMode::default(),
                 dimension: TrafficDimension::Facet(TrafficFacet::TrafficType),
                 values: vec![TrafficFilterValue::Text("websocket".into())],
             }],
@@ -2966,6 +2990,8 @@ mod tests {
             for option in page.options {
                 let query = SessionQueryInput {
                     filter_groups: vec![TrafficFilterGroup {
+                        saved_values: Vec::new(),
+                        selection_mode: TrafficSelectionMode::default(),
                         dimension,
                         values: vec![option.value],
                     }],
@@ -3106,6 +3132,140 @@ mod tests {
         assert_eq!(
             rows.iter().map(|row| row.stream_sent).collect::<Vec<_>>(),
             vec![Some(17), Some(0), None]
+        );
+    }
+    fn saved_selection_fixture() -> ApplicationSessionService {
+        let service =
+            ApplicationSessionService::new(transmog_session::ServiceConfig::default()).unwrap();
+        for (index, (host, method)) in [
+            ("api.example.test", "GET"),
+            ("api.example.test", "POST"),
+            ("cdn.domain.example", "GET"),
+            ("eu.cdn.domain.example", "GET"),
+            ("domain.example", "POST"),
+            ("otherdomain.example", "GET"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let id = index as u128 + 1;
+            let mut event = started(id);
+            if let ObserverEventKind::ExchangeStarted { metadata } = &mut event.kind {
+                let mut target = metadata.original_target.as_target().clone();
+                target.host = host.into();
+                target.authority = host.into();
+                Arc::make_mut(metadata).original_target =
+                    transmog_core::intercept::OriginalTarget::new(target);
+            }
+            service.catalog().apply(event);
+            observe_request(
+                &service,
+                id,
+                2,
+                transmog_core::observe::ExchangeBoundary::ClientRequest,
+                method,
+                transmog_core::HeaderBlock::default(),
+            );
+        }
+        service
+    }
+    #[test]
+    fn saved_host_selections_share_preview_list_timeline_and_id_predicates() {
+        let service = saved_selection_fixture();
+        let traces = crate::traces::TraceRegistry::default();
+        let base = vec![
+            TrafficFilterValue::Text("API.EXAMPLE.TEST.".into()),
+            TrafficFilterValue::HostSubdomains("DOMAIN.EXAMPLE.".into()),
+        ];
+        for (mode, picked, add_apex, expected) in [
+            (TrafficSelectionMode::Either, None, false, 4),
+            (
+                TrafficSelectionMode::Either,
+                Some("domain.example"),
+                false,
+                5,
+            ),
+            (TrafficSelectionMode::Both, Some("domain.example"), false, 0),
+            (TrafficSelectionMode::Both, Some("domain.example"), true, 1),
+            (
+                TrafficSelectionMode::Both,
+                Some("cdn.domain.example"),
+                false,
+                1,
+            ),
+            (
+                TrafficSelectionMode::Either,
+                Some("cdn.domain.example"),
+                false,
+                4,
+            ),
+            (
+                TrafficSelectionMode::IgnoreSaved,
+                Some("domain.example"),
+                false,
+                1,
+            ),
+            (TrafficSelectionMode::IgnoreSaved, None, false, 6),
+        ] {
+            let mut saved = base.clone();
+            if add_apex {
+                saved.push(TrafficFilterValue::Text("domain.example".into()));
+            }
+            let query = SessionQueryInput {
+                filter_groups: vec![TrafficFilterGroup {
+                    dimension: TrafficDimension::Column(TrafficColumn::Host),
+                    values: picked
+                        .map(|value| vec![TrafficFilterValue::Text(value.into())])
+                        .unwrap_or_default(),
+                    saved_values: saved,
+                    selection_mode: mode,
+                }],
+                limit: Some(1),
+                ..Default::default()
+            };
+            let ids = matching_ids(&service, &query, &traces, None).unwrap();
+            assert_eq!(ids.len(), expected);
+            let request = TrafficFacetInput {
+                query: query.clone(),
+                dimension: TrafficDimension::Column(TrafficColumn::Host),
+                search: Some("other".into()),
+                include_values: base.clone(),
+                offset: 0,
+                limit: Some(1),
+            };
+            let page = facet_counts(&service, &request, &traces, None).unwrap();
+            assert_eq!((page.draft_entries, page.matching_entries), (expected, 6));
+            assert_eq!(
+                page.included_options
+                    .iter()
+                    .map(|option| option.count)
+                    .sum::<usize>(),
+                4
+            );
+            let views = Arc::new(Mutex::new(TrafficViews::default()));
+            let view = traffic_view(&service, &views, &query, &traces, None).unwrap();
+            assert_eq!(view.page.total_matched, expected);
+            let timeline =
+                traffic_timeline_rows(&service, &views, &view.id, 0, 100, &traces).unwrap();
+            assert_eq!(timeline.len(), expected);
+        }
+        let query = SessionQueryInput {
+            filter_groups: vec![TrafficFilterGroup {
+                dimension: TrafficDimension::Column(TrafficColumn::Host),
+                values: vec![],
+                saved_values: base,
+                selection_mode: TrafficSelectionMode::Either,
+            }],
+            filters: vec![SessionColumnFilter {
+                column: TrafficColumn::Host,
+                operator: FilterOperator::Contains,
+                value: "cdn".into(),
+            }],
+            ..Default::default()
+        };
+        assert_eq!(
+            matching_ids(&service, &query, &traces, None).unwrap().len(),
+            2
         );
     }
 }
