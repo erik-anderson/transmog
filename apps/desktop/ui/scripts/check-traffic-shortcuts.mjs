@@ -30,6 +30,10 @@ export async function checkTrafficShortcuts(page, root) {
         traceId: null,
         streamProtocol: null,
       }));
+      // Exercise history independently of the default display order.
+      t.sort = { column: "started-at", direction: "descending" };
+      t.followLatest = false;
+      t.sessionScroller.scrollTop = 0;
       await t.refreshSessions(undefined, true);
     }, count);
     await settled(count);
@@ -533,7 +537,12 @@ export async function checkTrafficShortcuts(page, root) {
   );
   await page.waitForFunction(() => {
     const t = document.querySelector("app-shell").traffic;
-    return t.followLatest && !t.queryPending && t.sessionScroller.scrollTop === 0;
+    return (
+      t.followLatest &&
+      !t.queryPending &&
+      t.sessionScroller.scrollTop + t.sessionScroller.clientHeight >=
+        t.sessionScroller.scrollHeight - 1
+    );
   });
   await page.evaluate(() => globalThis.__workspaceFixture.finishHeldCommand());
   await page.waitForFunction(
@@ -545,7 +554,11 @@ export async function checkTrafficShortcuts(page, root) {
   assert.equal(
     await page.evaluate(() => {
       const t = document.querySelector("app-shell").traffic;
-      return t.followLatest && t.sessionScroller.scrollTop === 0;
+      return (
+        t.followLatest &&
+        t.sessionScroller.scrollTop + t.sessionScroller.clientHeight >=
+          t.sessionScroller.scrollHeight - 1
+      );
     }),
     true,
     "A late row navigation canceled F5 following",
@@ -567,8 +580,9 @@ export async function checkTrafficShortcuts(page, root) {
     return (
       t.followLatest &&
       !t.queryPending &&
-      t.virtualList.ids[0] === "shortcut-249" &&
-      t.sessionScroller.scrollTop === 0
+      t.virtualList.ids.at(-1) === "shortcut-249" &&
+      t.sessionScroller.scrollTop + t.sessionScroller.clientHeight >=
+        t.sessionScroller.scrollHeight - 1
     );
   });
   await page.evaluate(() => {
@@ -584,7 +598,10 @@ export async function checkTrafficShortcuts(page, root) {
   await page.waitForFunction(() => {
     const t = document.querySelector("app-shell").traffic;
     return (
-      t.followLatest && t.sessions[0]?.id === "newest-event" && t.sessionScroller.scrollTop === 0
+      t.followLatest &&
+      t.sessions.at(-1)?.id === "newest-event" &&
+      t.sessionScroller.scrollTop + t.sessionScroller.clientHeight >=
+        t.sessionScroller.scrollHeight - 1
     );
   });
   for (const [width, height] of [

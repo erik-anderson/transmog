@@ -31,7 +31,7 @@ export async function checkAppSelection(page, root) {
     "",
     "Dragging selected row text",
   );
-  await cells.nth(3).click();
+  await traffic.locator('#session-first td[data-column-id="host"]').click();
   const header = traffic
     .locator('message-inspector[side="request"] .headers-table tbody td')
     .first();

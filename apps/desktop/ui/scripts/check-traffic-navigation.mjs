@@ -43,7 +43,8 @@ export async function checkTrafficNavigation(page) {
       t.preferences = { ...t.preferences, wrapCells: false, compactRows: true, listSplit: 45 };
       t.sort = { column: "started-at", direction: "ascending" };
       t.sortLabel = "Oldest first";
-      t.followLatest = true;
+      t.followLatest = false;
+      t.sessionScroller.scrollTop = 0;
       t.queryRevision++;
       t.selectSearchMatches = false;
       await t.refreshSessions(undefined, true);

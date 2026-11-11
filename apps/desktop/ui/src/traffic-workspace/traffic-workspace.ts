@@ -829,8 +829,12 @@ export class TrafficWorkspace extends WorkspaceElement {
 
   @observable incidentWindow: IncidentWindow | null = null;
   @observable incidentWindowLabel = "";
-  private incidentReturn: { scroll: number; selection: ListSelection; follow: boolean } | null =
-    null;
+  private incidentReturn: {
+    scroll: number;
+    anchor: ReturnType<VirtualList["anchor"]>;
+    selection: ListSelection;
+    follow: boolean;
+  } | null = null;
   async onIncidentWindow(
     event: CustomEvent<{ window: IncidentWindow; label: string }>,
   ): Promise<void> {
@@ -838,6 +842,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     if (!this.incidentReturn) {
       this.incidentReturn = {
         scroll: this.sessionScroller.scrollTop,
+        anchor: this.virtualList.anchor(this.sessionScroller.scrollTop),
         selection: this.trafficSelection.clone(),
         follow: this.followLatest,
       };
@@ -868,6 +873,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     }
     this.queryRevision++;
     this.followLatest = previous?.follow ?? false;
+    this.scrollToLatest();
     await this.refreshSessions(undefined, true);
     if (previous && !all) {
       this.trafficSelection = previous.selection;
@@ -877,7 +883,10 @@ export class TrafficWorkspace extends WorkspaceElement {
         }
       }
       this.updateTrafficSelection();
-      this.sessionScroller.scrollTop = previous.scroll;
+      if (!previous.follow) {
+        this.sessionScroller.scrollTop =
+          this.virtualList.restore(previous.anchor) ?? previous.scroll;
+      }
       this.scheduleViewport();
     }
     this.focusTraffic();
@@ -1809,6 +1818,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   private compactInspection: {
     id: string | null;
     listTop: number;
+    listAnchor: ReturnType<VirtualList["anchor"]>;
     listLeft: number;
     scroll: Array<{ element: HTMLElement; top: number; left: number }>;
   } | null = null;
@@ -1820,6 +1830,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.compactInspection = {
         id: this.selectedSessionId,
         listTop: this.sessionScroller.scrollTop,
+        listAnchor: this.virtualList.anchor(this.sessionScroller.scrollTop),
         listLeft: this.sessionScroller.scrollLeft,
         scroll: Array.from(this.querySelectorAll<HTMLElement>(".details-pane *"))
           .filter(
@@ -1842,7 +1853,8 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.requestShare = this.preferences.requestSplit + "%";
       this.$flushUpdates();
       if (previous) {
-        this.sessionScroller.scrollTop = previous.listTop;
+        this.sessionScroller.scrollTop =
+          this.virtualList.restore(previous.listAnchor) ?? previous.listTop;
         this.sessionScroller.scrollLeft = previous.listLeft;
         if (previous.id === this.selectedSessionId) {
           for (const position of previous.scroll) {
@@ -1868,8 +1880,6 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable sessionKind = "progress";
   @observable followLatest = true;
   @observable followText = "Showing captured traffic";
-  @observable newTrafficCount = 0;
-  @observable updatesPending = false;
   @observable totalMatched = 0;
   @observable rowCount = 2;
   @observable topSpace = "0px";
@@ -1877,7 +1887,6 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable activeRowId = "";
   private virtualList = new VirtualList();
   private trafficView: TrafficView | null = null;
-  private pendingView: TrafficView | null = null;
   private rowCache = new Map<string, SessionSummary>();
   private rowRevision = 0;
   private rowRequests = new Map<string, Promise<void>>();
@@ -1888,8 +1897,9 @@ export class TrafficWorkspace extends WorkspaceElement {
   private refreshTimer: number | undefined;
   private rowLayout = "";
   private scrollGeneration = 0;
-  @observable sort: TrafficSort = { column: "started-at", direction: "descending" };
-  @observable sortLabel = "Newest first";
+  private latestScrollTop = 0;
+  @observable sort: TrafficSort = { column: "request-number", direction: "ascending" };
+  @observable sortLabel = "Request order";
   @observable filters: TrafficFilter[] = [];
   @observable filterGroups: TrafficFilterGroup[] = [];
   @observable filterChips: FilterChip[] = [];
@@ -3490,6 +3500,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       if (this.view !== "traffic" || !this.sessionScroller.clientHeight) {
         return;
       }
+      this.pauseFollowingForScroll();
       const anchor = this.virtualList.anchor(this.sessionScroller.scrollTop);
       let changed = false;
       for (const entry of entries) {
@@ -3508,6 +3519,7 @@ export class TrafficWorkspace extends WorkspaceElement {
         if (top !== null) {
           this.sessionScroller.scrollTop = top;
         }
+        this.scrollToLatest();
         this.scheduleViewport();
       }
     });
@@ -4296,6 +4308,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     if (!this.sessionScroller?.clientHeight || this.view !== "traffic") {
       return;
     }
+    this.pauseFollowingForScroll();
     const font = parseFloat(getComputedStyle(this.sessionScroller).fontSize) || 13;
     const layout = [
       this.preferences.compactRows,
@@ -4312,11 +4325,14 @@ export class TrafficWorkspace extends WorkspaceElement {
         rootFont * (this.preferences.compactRows ? 2.05 : 2.6),
         true,
       );
+      this.updateSpacers();
+      this.$flushUpdates();
       const restored = this.virtualList.restore(anchor);
       if (restored !== null) {
         this.sessionScroller.scrollTop = restored;
       }
     }
+    this.scrollToLatest();
     const header = this.trafficTable.tHead?.getBoundingClientRect().height ?? 35;
     const range = this.virtualList.range(
       this.sessionScroller.scrollTop,
@@ -4363,6 +4379,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.rebuildRows(rows);
     this.updateSpacers();
     this.$flushUpdates();
+    this.scrollToLatest();
     if (this.extensionTableColumns.length) {
       this.classifications.schedule(ids);
     }
@@ -4425,19 +4442,13 @@ export class TrafficWorkspace extends WorkspaceElement {
   private applyView(view: TrafficView, resetScroll = false): void {
     const anchor = resetScroll ? null : this.virtualList.anchor(this.sessionScroller.scrollTop);
     this.releaseView(this.trafficView);
-    if (this.pendingView !== view) {
-      this.releaseView(this.pendingView);
-    }
     this.trafficView = view;
-    this.pendingView = null;
     this.rowRevision++;
     this.rowCache.clear();
     this.cacheRows(view.page.sessions);
     this.virtualList.reset(view.ids);
     this.totalMatched = view.ids.length;
     this.rowCount = Math.max(2, view.ids.length + 1);
-    this.updatesPending = false;
-    this.newTrafficCount = 0;
     for (const id of this.trafficSelection.ids) {
       if (!this.virtualList.indexes.has(id)) {
         this.trafficSelection.ids.delete(id);
@@ -4460,7 +4471,19 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.updateSpacers();
     this.$flushUpdates();
     this.sessionScroller.scrollTop = resetScroll ? 0 : (this.virtualList.restore(anchor) ?? 0);
+    this.scrollToLatest();
     this.renderViewport();
+  }
+  private scrollToLatest(): void {
+    if (
+      this.followLatest &&
+      !this.inspectorExpanded &&
+      !this.timelineMode &&
+      this.view === "traffic"
+    ) {
+      this.sessionScroller.scrollTop = this.sessionScroller.scrollHeight;
+      this.latestScrollTop = this.sessionScroller.scrollTop;
+    }
   }
   private async revealCurrent(
     id: string,
@@ -4657,9 +4680,9 @@ export class TrafficWorkspace extends WorkspaceElement {
     await this.refreshSessions(undefined, true);
   }
   async clearSort(): Promise<void> {
-    this.menuColumn = columnDefinitions.find((column) => column.id === "started-at")!;
-    await this.applySort("descending", "started-at");
-    this.sortLabel = "Newest first";
+    this.menuColumn = columnDefinitions.find((column) => column.id === "request-number")!;
+    await this.applySort("ascending", "request-number");
+    this.sortLabel = "Request order";
   }
   pinColumn(): void {
     const id = this.menuColumn.id;
@@ -5505,25 +5528,8 @@ export class TrafficWorkspace extends WorkspaceElement {
         this.contentMatchCount = view.ids.length;
         this.matchRevision = revision;
       }
-      const existing = this.trafficView,
-        ids = new Set(view.ids);
-      if (force || this.followLatest || !existing || existing.ids.some((id) => !ids.has(id))) {
-        this.applyView(view, this.followLatest);
-      } else {
-        this.releaseView(this.pendingView);
-        this.pendingView = view;
-        this.newTrafficCount = view.ids.filter((id) => !this.virtualList.indexes.has(id)).length;
-        this.updatesPending =
-          this.newTrafficCount > 0 || view.ids.some((id, index) => existing.ids[index] !== id);
-        this.rowRevision++;
-        this.rowCache.clear();
-        this.cacheRows(view.page.sessions);
-        await this.loadWindow(Math.floor(this.viewportStart / 100) * 100, true);
-        if (!this.isConnected || revision !== this.queryRevision) {
-          return;
-        }
-        this.renderViewport();
-      }
+      this.pauseFollowingForScroll();
+      this.applyView(view, this.followLatest);
       this.canCancelRequests = [...this.trafficSelection.ids].some((id) => {
         const row = this.rowCache.get(id);
         return !row || (row.terminal === "active" && !row.traceId);
@@ -5597,11 +5603,56 @@ export class TrafficWorkspace extends WorkspaceElement {
     if (this.inspectorExpanded) {
       return;
     }
-    if (this.followLatest && this.sessionScroller.scrollTop > 8) {
+    this.pauseFollowingForScroll();
+    this.scheduleViewport();
+  }
+  private pauseFollowingForScroll(): void {
+    if (
+      this.followLatest &&
+      this.sessionScroller.clientHeight &&
+      this.sessionScroller.scrollTop !== this.latestScrollTop &&
+      this.sessionScroller.scrollTop + this.sessionScroller.clientHeight <
+        this.sessionScroller.scrollHeight - 1
+    ) {
       this.followLatest = false;
       this.renderFollowState();
     }
-    this.scheduleViewport();
+  }
+  private trackListScrollInput(): { changed: () => boolean; dispose: () => void } {
+    const list = this.sessionScroller,
+      events = new AbortController();
+    let changed = false;
+    list.addEventListener(
+      "wheel",
+      (event) => {
+        if (event.ctrlKey || event.metaKey || !event.deltaY) {
+          return;
+        }
+        if (
+          event.deltaY < 0
+            ? list.scrollTop > 0
+            : list.scrollTop + list.clientHeight < list.scrollHeight - 1
+        ) {
+          changed = true;
+        }
+      },
+      { passive: true, signal: events.signal },
+    );
+    list.addEventListener(
+      "pointerdown",
+      (event) => {
+        if (
+          list.scrollHeight > list.clientHeight &&
+          (event.pointerType === "touch" ||
+            event.button === 1 ||
+            (event.button === 0 && event.target === list))
+        ) {
+          changed = true;
+        }
+      },
+      { passive: true, signal: events.signal },
+    );
+    return { changed: () => changed, dispose: () => events.abort() };
   }
   private updateTrafficSelection(): void {
     this.trafficSelectionRevision++;
@@ -5772,10 +5823,16 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.updateTrafficSelection();
     this.$flushUpdates();
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
+      if (this.trafficSelection.ids.size) {
+        this.followLatest = false;
+        this.renderFollowState();
+      }
       return;
     }
     const focused = this.trafficSelection.focused;
     if (focused) {
+      this.followLatest = false;
+      this.renderFollowState();
       if (this.trafficSelection.ids.has(focused)) {
         void this.inspectTraffic(
           focused,
@@ -5912,6 +5969,12 @@ export class TrafficWorkspace extends WorkspaceElement {
     if (this.removingTraffic) {
       return;
     }
+    const query = this.queryRevision,
+      selection = this.trafficSelectionRevision,
+      inspection = this.inspectionGeneration,
+      navigation = this.scrollGeneration,
+      following = this.followLatest;
+    const scrollInput = this.trackListScrollInput();
     this.beginTrafficRemoval();
     try {
       const result = await invoke<{
@@ -5962,9 +6025,17 @@ export class TrafficWorkspace extends WorkspaceElement {
         this.trafficUndoText += ` ${result.preservedWebSockets} open or connecting ${result.preservedWebSockets === 1 ? "WebSocket was" : "WebSockets were"} kept for inspection.`;
       }
       this.scheduleTrafficUndoExpiry();
-      void this.clearContentSearch(false);
-      this.followLatest = true;
-      this.renderFollowState();
+      const resume =
+        query === this.queryRevision &&
+        selection === this.trafficSelectionRevision &&
+        inspection === this.inspectionGeneration &&
+        navigation === this.scrollGeneration &&
+        following === this.followLatest &&
+        !scrollInput.changed();
+      if (resume) {
+        void this.clearContentSearch(false);
+        this.startFollowingLatest();
+      }
       const removedIds = new Set(result.ids);
       this.trafficSelection.ids = new Set(
         [...this.trafficSelection.ids].filter((id) => !removedIds.has(id)),
@@ -5981,9 +6052,13 @@ export class TrafficWorkspace extends WorkspaceElement {
       }
       this.queryRevision++;
       await this.refreshSessions(undefined, true);
+      if (resume && this.selectedSessionId && !this.selectedDetail) {
+        await this.refreshInspection();
+      }
     } catch (error: unknown) {
       await this.showError("Traffic could not be cleared", describeError(error));
     } finally {
+      scrollInput.dispose();
       this.removingTraffic = false;
     }
   }
@@ -6754,28 +6829,26 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.commandBusy = false;
     }
   }
-  async resumeLatest(): Promise<void> {
+  private startFollowingLatest(): void {
     this.scrollGeneration++;
     this.inspectionGeneration++;
-    // Pending scroll events from older navigation must see the new top position
+    // Pending scroll events from older navigation must see the bottom position
     // before following starts, including while the refreshed query is loading.
-    this.sessionScroller.scrollTop = 0;
+    this.sessionScroller.scrollTop = this.sessionScroller.scrollHeight;
+    this.latestScrollTop = this.sessionScroller.scrollTop;
     this.followLatest = true;
-    this.sort = { column: "started-at", direction: "descending" };
-    this.sortLabel = "Newest first";
+    this.sort = { column: "request-number", direction: "ascending" };
+    this.sortLabel = "Request order";
     this.rebuildColumns();
-    this.queryRevision++;
     this.renderFollowState();
+  }
+  async resumeLatest(): Promise<void> {
+    this.startFollowingLatest();
+    this.queryRevision++;
     await this.refreshSessions(undefined, true);
     if (this.selectedSessionId && !this.selectedDetail) {
       await this.refreshInspection();
     }
-  }
-  showUpdates(): void {
-    if (this.pendingView) {
-      this.applyView(this.pendingView);
-    }
-    this.renderSessionState();
   }
   private renderSessionState(): void {
     const state = this.pending || this.lifecycle;
@@ -6795,9 +6868,7 @@ export class TrafficWorkspace extends WorkspaceElement {
             ? "No matching saved traffic. Adjust filters or import another capture."
             : this.lifecycle !== "running" && this.lifecycle !== "draining"
               ? "No matching traffic. Adjust or clear your filters."
-              : this.followLatest
-                ? "No matching traffic. New matches appear while following; adjust or clear filters."
-                : "No matching traffic. Auto-scroll is paused; new matches appear in Show updates."
+              : "No matching traffic. New matches appear automatically; adjust or clear filters."
         : this.viewerMode
           ? "Import a saved capture to view traffic."
           : state === "running"
@@ -7706,7 +7777,6 @@ export class TrafficWorkspace extends WorkspaceElement {
       cancelAnimationFrame(this.renderFrame);
     }
     this.releaseView(this.trafficView);
-    this.releaseView(this.pendingView);
     this.scrollGeneration++;
     if (this.previewPageOperation) {
       void invoke("cancel_captured_page", { operationId: this.previewPageOperation }).catch(

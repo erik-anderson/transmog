@@ -18,12 +18,15 @@ export async function checkTrafficPresentation(page, root) {
       s.sessions = Array.from({ length: 240 }, (_, i) => ({
         ...s.sessions[1],
         id: "presentation-" + i,
+        requestNumber: String(i + 1),
         path: "/api/catalog/" + i,
         url: "https://example.test/api/catalog/" + i,
         startedAt: i + 1,
       }));
       t.preferences = { ...t.preferences, layout: "stacked", listSplit: 45 };
-      t.followLatest = true;
+      // Inspect header/first-row geometry independently of automatic following.
+      t.followLatest = false;
+      t.sessionScroller.scrollTop = 0;
       await t.refreshSessions(undefined, true);
     });
     await traffic.locator(".session-link").first().click();

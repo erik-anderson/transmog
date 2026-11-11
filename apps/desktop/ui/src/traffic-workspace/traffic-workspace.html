@@ -71,8 +71,7 @@
         <div class="list-footer" ?hidden="{{timelineMode}}">
           <span ?hidden="{{timelineMode}}">{{followText}}</span><span ?hidden="{{!timelineMode}}">Timeline reflects retained traffic · adjusted ranges stay fixed</span>
           <div class="list-footer-actions" ?hidden="{{timelineMode}}">
-            <if condition="updatesPending"><button type="button" class="new-traffic-button compact-button" @click="{showUpdates()}"><if condition="newTrafficCount">{{newTrafficCount}} new · </if>Show updates</button></if>
-            <button type="button" class="secondary compact-button" ?hidden="{{viewerMode}}" @click="{resumeLatest()}" ?disabled="{{followLatest}}" aria-keyshortcuts="F5" title="Show the newest traffic and keep it updated as requests arrive (F5 while the traffic list is focused). Selecting an entry pauses this.">Follow newest</button>
+            <button type="button" class="secondary compact-button" ?hidden="{{viewerMode}}" @click="{resumeLatest()}" ?disabled="{{followLatest}}" aria-keyshortcuts="F5" title="Scroll to the newest traffic and follow arrivals at the bottom (F5 while the traffic list is focused). Selecting an entry or scrolling away pauses automatic scrolling; traffic keeps loading.">Follow newest</button>
 
           </div>
         </div>
@@ -248,7 +247,7 @@
       <button type="button" autofocus @click="{applySort('ascending')}">↑ {{ascendingLabel}}</button>
       <button type="button" @click="{applySort('descending')}">↓ {{descendingLabel}}</button>
       <if condition="menuColumn.id == 'process'"><button type="button" @click="{applySort('ascending','pid')}">Sort by PID</button></if>
-      <button type="button" @click="{clearSort()}">Reset to newest first</button>
+      <button type="button" @click="{clearSort()}">Reset to request order</button>
       <button type="button" @click="{openFilterPicker(menuColumn.id,e)}">Filter {{menuColumn.label}}…</button>
       <button type="button" @click="{pinColumn()}">{{pinLabel}}</button><button type="button" @click="{hideColumn()}">Hide column</button>
       <div class="column-menu-moves"><button type="button" @click="{moveColumn(-1)}">Move left</button><button type="button" @click="{moveColumn(1)}">Move right</button></div>

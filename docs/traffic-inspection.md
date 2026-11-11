@@ -11,7 +11,8 @@ tokens, masking and source coverage alongside Headers and Body. See
 interpretation, related traffic and limits.
 
 Traffic uses one selected-item inspector for live requests and imported captures.
-Selection and scroll position remain stable while new traffic arrives. Inspect
+By default, new entries appear at the bottom and scroll into view while following. Selecting
+a request or scrolling away pauses following while entries keep loading. Inspect
 request and response together in a wide pane or use the Request/Response pill
 when space is limited. The pill switches in one click. In very narrow inspectors,
 the controls wrap together to keep the full URL accessible. Incomplete,
@@ -174,8 +175,10 @@ across all retained matches before the visible rows are selected.
 Numbers survive response completion, filtering, scrolling, dismissal and Undo.
 Clear, eviction, and stopping/restarting the proxy do not reuse numbers in the same
 workspace. Gaps are normal and do not establish capture loss or causal order.
-Independent workspaces assign their own numbers. **Start time** remains a separate
-column, the default newest-first sort, and the sort used by **Follow latest**.
+Independent workspaces assign their own numbers. Traffic defaults to ascending
+**Request order**, so newly admitted entries appear at the bottom even when their
+timestamps are older. **Follow newest** restores this order. **Start time** remains
+a separate column with its own sorting choices.
 
 | Source | Admission order within an import |
 | --- | --- |
@@ -495,10 +498,11 @@ ordinary HTTP entries show unavailable. **Request size** and **Response size**
 continue to describe HTTP bodies. New stream columns start hidden and unpinned;
 upgrades preserve existing widths, order, visibility, pins and pane splits.
 
-Filtering preserves Follow newest or the paused inspection state. A following
-empty live view automatically displays later matches; a paused view offers new
-matches through **Show updates**. Saved viewers remain static, and Search contents
-keeps its completed snapshot until searched again. Filters never clear themselves.
+Filtering preserves Follow newest or the paused inspection state. Empty live views
+automatically display later matches in either state. New traffic always loads;
+pausing holds the reading position instead of withholding arrivals. Saved viewers
+remain static, and Search contents keeps its completed snapshot until searched
+again. Filters never clear themselves.
 Duration uses established stream lifetime for WebSocket/SSE and the HTTP interval
 for ordinary requests; **HTTP duration** remains available as a separate column.
 The HTTP waterfall and Timeline retain their original HTTP timing boundaries.
@@ -577,9 +581,17 @@ focus changes while Undo is pending, the restored entries appear without replaci
 the newer selection or moving focus. Text fields retain their ordinary editing shortcuts.
 These actions do not delete source capture files or saved responses.
 
-With the traffic list focused, F5 resumes **Follow newest**: newest-first ordering,
-the latest entries in view, and automatic updates as matching requests arrive.
-Existing filters still apply; selecting an entry or scrolling away pauses following.
+With the traffic list focused, F5 resumes **Follow newest**: ascending request order,
+the latest entries at the bottom, and automatic scrolling as matching requests arrive.
+Existing filters still apply; selecting an entry or scrolling away pauses automatic
+scrolling while new entries continue loading. Scrolling back to the bottom leaves
+following paused until you click **Follow newest**, press F5, or use **Clear all**.
+Choosing a different column sort pauses following and keeps that sort as traffic
+arrives, preserving the visible request anchor. **Follow newest** and **Clear all**
+restore ascending request order and resume automatic scrolling.
+Keyboard navigation also pauses following, including moving focus with Ctrl+arrow,
+Ctrl+Home or Ctrl+End without selecting a request. A delayed Clear all preserves
+column-sorting, scrolling and list-selection choices made after clearing began.
 Resuming supersedes older row navigation that is still loading, while allowing its
 selected request's inspector to finish without scrolling away from the newest traffic.
 

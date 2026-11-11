@@ -207,19 +207,18 @@ export async function checkTrafficFilters(page, root) {
       });
       s.channel.onmessage({ exchangeId: "second-socket", sequence: 1, lagged: false });
     });
-    await page.waitForFunction(
-      () => document.querySelector("app-shell").traffic.newTrafficCount === 1,
+    await page.waitForFunction(() =>
+      document.querySelector("app-shell").traffic.virtualList.ids.includes("second-socket"),
     );
     assert.equal(
       await page.locator("#session-second-socket").count(),
-      0,
-      "Paused view inserted arrivals",
+      1,
+      "Paused view did not load arrivals automatically",
     );
     assert.equal(
       await page.evaluate(() => document.querySelector("app-shell").traffic.selectedSessionId),
       selected,
     );
-    await traffic.getByRole("button", { name: /Show updates/ }).click();
     await settle();
     assert.equal(await page.locator("#session-second-socket").count(), 1);
     // An excluded quiet stream crosses a duration threshold without any message hint.

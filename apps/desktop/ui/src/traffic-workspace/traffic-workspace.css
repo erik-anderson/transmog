@@ -126,7 +126,6 @@ traffic-workspace { display:contents; }
   .compact-inspector-side label:has(input:checked) { color:HighlightText; background:Highlight; forced-color-adjust:none; }
 }
 .selection-actions button { min-height:1.7rem; padding:.2rem .45rem; }
-.new-traffic-button { color:var(--accent-strong); background:var(--accent-soft); }
 .page-controls { display:flex; gap:.3rem; }
 .table-popover { box-sizing:border-box; width:280px; max-height:min(80vh,680px); margin:0; padding:.5rem; overflow:auto; border:1px solid var(--line); border-radius:.5rem; color:var(--text); background:var(--panel); box-shadow:0 .4rem 1.6rem #0003; font-size:.78rem; }
 .column-menu { inset:5rem auto auto 20%; }

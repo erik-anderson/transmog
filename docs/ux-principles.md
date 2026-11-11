@@ -153,6 +153,11 @@ when changing the experience.
   Check a requested destination before offering to discard a draft. If navigation
   aborts after Discard, still-visible typed fields remain dirty; do not overwrite
   newer work. A completed Save stays saved even when navigation is superseded.
+- Traffic appends arrivals in request admission order and follows the bottom by
+  default. Selecting a request or scrolling away pauses automatic scrolling;
+  arrivals keep loading in place. Scrolling back to the bottom does not resume
+  following. Choosing a column sort pauses following and retains that order during
+  updates. Follow newest and Clear all restore request order and resume following.
 - Reject stale asynchronous results. Late validation, previews or responses cannot
   overwrite newer edits, restore obsolete selection or steal focus. Prevent
   duplicate submissions and retain useful input after failure.

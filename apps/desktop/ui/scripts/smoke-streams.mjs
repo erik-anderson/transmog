@@ -2,12 +2,18 @@ import assert from "node:assert/strict";
 import { createServer, request } from "node:http";
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
+import { smokeTrafficFollowing } from "./smoke-traffic-following.mjs";
 
 // Real proxy traffic and native IPC; no fixture command overrides.
 export async function smokeStreams(call, evaluate, screenshotPath) {
   const sockets = new Set();
   let events;
   const origin = createServer((incoming, response) => {
+    if (incoming.url.startsWith("/native-following/")) {
+      response.writeHead(200, { "Content-Type": "text/plain" });
+      response.end("native following");
+      return;
+    }
     response.writeHead(200, { "Content-Type": "text/event-stream; charset=utf-8" });
     response.write('id: first\nevent: update\ndata: {"native":1}\n\n');
     events = response;
@@ -63,6 +69,21 @@ export async function smokeStreams(call, evaluate, screenshotPath) {
       agent: false,
       headers: { Host: new URL(base).host },
     });
+    await smokeTrafficFollowing(
+      call,
+      evaluate,
+      (path) =>
+        new Promise((resolve, reject) => {
+          const outgoing = request(options(path), (response) => {
+            response.on("error", reject);
+            response.on("end", resolve);
+            response.resume();
+          });
+          outgoing.on("error", reject);
+          outgoing.end();
+        }),
+      screenshotPath,
+    );
     const openSocket = () =>
       new Promise((resolve, reject) => {
         const opts = options("/native-stream-socket");

@@ -102,7 +102,7 @@ export async function checkRequestOrder(page, root) {
     await settle();
     assert.equal(
       await header.getByRole("button", { name: "Request order", exact: true }).textContent(),
-      "#⌄",
+      "#↑⌄",
     );
     await header.getByRole("button", { name: "Request order", exact: true }).click();
     assert.match(await menu.textContent(), /Order requests were added to this workspace/);

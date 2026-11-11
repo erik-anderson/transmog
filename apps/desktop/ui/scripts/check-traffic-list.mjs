@@ -31,7 +31,8 @@ export async function checkTrafficList(page, outputDirectory) {
       state.dismissedIds = [];
       t.sort = { column: "started-at", direction: "ascending" };
       t.sortLabel = "Oldest first";
-      t.followLatest = true;
+      t.followLatest = false;
+      t.sessionScroller.scrollTop = 0;
       t.clearTrafficSelection();
       t.queryRevision++;
       await t.refreshSessions(undefined, true);

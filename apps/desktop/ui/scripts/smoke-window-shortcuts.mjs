@@ -37,7 +37,7 @@ export async function smokeWindowShortcuts(main, viewer, targets, connect, waitF
   await waitFor(
     () =>
       main.evaluate(
-        `${traffic}.followLatest && ${traffic}.sort.column==='started-at' && ${traffic}.sort.direction==='descending' && ${traffic}.sessionScroller.scrollTop===0 && !${traffic}.queryPending`,
+        `${traffic}.followLatest && ${traffic}.sort.column==='request-number' && ${traffic}.sort.direction==='ascending' && ${traffic}.sessionScroller.scrollTop + ${traffic}.sessionScroller.clientHeight >= ${traffic}.sessionScroller.scrollHeight - 1 && !${traffic}.queryPending`,
       ),
     "Native F5 did not resume Follow newest",
   );

@@ -882,14 +882,12 @@
   "selectedDetail": null,
   "selectedTone": "pending",
   "matchedRuleId": "",
-  "newTrafficCount": 0,
-  "updatesPending": false,
   "totalMatched": 0,
   "sort": {
-    "column": "started-at",
-    "direction": "descending"
+    "column": "request-number",
+    "direction": "ascending"
   },
-  "sortLabel": "Newest first",
+  "sortLabel": "Request order",
   "pickerMembership": true,
   "pickerSavedOptions": [],
   "pickerSelectedOptions": [],
@@ -1196,8 +1194,8 @@
       "placeholder": "Positive request number",
       "widthCss": "72px",
       "offsetCss": "0px",
-      "sortDirection": "none",
-      "sortArrow": ""
+      "sortDirection": "ascending",
+      "sortArrow": "↑"
     },
     {
       "id": "method",

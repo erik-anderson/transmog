@@ -337,6 +337,7 @@ mod tests {
         assert!(html.contains("Start the proxy to capture traffic."));
         assert!(html.contains("Process / PID"));
         assert!(html.contains("aria-label=\"Request order\""));
+        assert!(html.contains("aria-sort=\"ascending\""));
         assert!(html.contains("Request order (#)"));
         assert!(html.contains("popovertarget=\"table-settings\""));
         assert!(html.contains("popovertarget=\"proxy-status-tools\""));

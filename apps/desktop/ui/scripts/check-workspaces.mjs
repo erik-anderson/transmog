@@ -5,6 +5,7 @@ import { checkResponseSetFollowups } from "./check-response-set-followups.mjs";
 import { checkFormatConverter } from "./check-format-converter.mjs";
 import { checkRequestControls } from "./check-request-controls.mjs";
 import { checkTrafficShortcuts } from "./check-traffic-shortcuts.mjs";
+import { checkTrafficFollowing } from "./check-traffic-following.mjs";
 import {
   checkResponseSetWorkspaces,
   checkResponseSetDraftRegressions,
@@ -4857,6 +4858,15 @@ try {
     );
     process.exit(0);
   }
+  if (process.argv.includes("--traffic-following-only")) {
+    await checkTrafficFollowing(page, root);
+    assert.deepEqual(errors, []);
+    process.stdout.write(
+      "Traffic appending, automatic scrolling and paused live updates verified.\n",
+    );
+    await browser.close();
+    process.exit(0);
+  }
   if (process.argv.includes("--traffic-shortcuts-only")) {
     await checkTrafficShortcuts(page, root);
     assert.deepEqual(errors, []);
@@ -5087,6 +5097,7 @@ try {
   if (process.argv.includes("--navigation-only")) {
     await page.goto("https://workspace.test/");
     await page.waitForFunction(() => document.querySelector("app-shell")?.traffic?.queryLoaded);
+    await checkRequestOrder(page, root);
     await checkTrafficNavigation(page);
     assert.deepEqual(errors, []);
     await browser.close();
@@ -6766,6 +6777,7 @@ try {
     state.sessions.push({
       ...state.sessions[0],
       id: "new",
+      requestNumber: "5",
       url: "http://example.test/new",
       path: "/new",
       startedAt: 9999,
@@ -6778,19 +6790,15 @@ try {
   assert.deepEqual(
     await page
       .locator(".traffic-table tbody tr[data-session-id]")
-      .evaluateAll((rows) => rows.map((row) => row.dataset.sessionId)),
+      .evaluateAll((rows) => rows.map((row) => row.dataset.sessionId).filter((id) => id !== "new")),
     heldOrder,
-    "Live arrival moved rows during inspection",
+    "Live arrival reordered existing rows during inspection",
   );
-  await page.locator(".new-traffic-button").waitFor({ state: "visible" });
-  assert.match(await page.locator(".new-traffic-button").textContent(), /1\s+new/);
-  await page.locator(".new-traffic-button").click();
+  await page.locator("#session-new").waitFor({ state: "visible" });
   assert.equal(
-    await page
-      .locator(".traffic-table tbody tr[data-session-id]")
-      .first()
-      .getAttribute("data-session-id"),
-    "new",
+    await page.evaluate(() => document.querySelector("app-shell").traffic.selectedSessionId),
+    "second",
+    "Live arrival replaced the inspected request",
   );
   await page.evaluate(async () => {
     const state = globalThis.__workspaceFixture;
@@ -10566,6 +10574,7 @@ try {
   await runBrowserCheck(checkResponseSetPreview, page, root);
   await runBrowserCheck(checkHeaderRules, page, root);
   await runBrowserCheck(checkTextEdits, page, root);
+  await runBrowserCheck(checkTrafficFollowing, page, root);
   assert.deepEqual(errors, []);
   process.stdout.write(
     JSON.stringify({
