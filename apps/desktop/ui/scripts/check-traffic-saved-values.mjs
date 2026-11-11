@@ -46,9 +46,28 @@ export async function checkTrafficSavedValues(
     await customSettings.focus();
     await page.keyboard.press("Enter");
     assert.equal(await picker.getByRole("checkbox", { name: /^Require / }).count(), 0);
+    assert.equal(await picker.locator(".filter-list-entry label > span").innerText(), "Is in");
+    assert.equal(
+      await picker.getByLabel("Is in", { exact: true }).getAttribute("placeholder"),
+      "Enter values separated by commas or newlines",
+    );
+    assert.equal(
+      await picker
+        .getByText("Example: exact-domain.example, *.include-subdomains.example", { exact: true })
+        .isVisible(),
+      true,
+    );
+    assert.deepEqual(
+      await picker.getByLabel("Combine selections").locator("option").allTextContents(),
+      ["Match either list", "Require a match in both lists", "Use observed values only"],
+    );
     await picker
       .getByLabel("Is in", { exact: true })
       .fill("API.EXAMPLE.TEST., *.domain.example, future.example.test, api.example.test");
+    assert.equal(
+      await picker.locator(".filter-list-entry label > span").innerText(),
+      "Is in (values separated by commas or newlines)",
+    );
     await preview(0, 0);
     await picker.getByRole("button", { name: "Save and apply", exact: true }).click();
     await settle();
@@ -81,7 +100,7 @@ export async function checkTrafficSavedValues(
     await settle();
     assert.equal(
       await page.evaluate(() => document.querySelector("app-shell").traffic.totalMatched),
-      4,
+      5,
     );
     await open("host");
     assert.equal(
@@ -102,14 +121,14 @@ export async function checkTrafficSavedValues(
     );
     await customSettings.click();
     await reset();
-    await preview(4);
+    await preview(5);
     await picked("domain.example").check();
     await preview(5);
     await picker.getByRole("button", { name: "Cancel", exact: true }).click();
     await settle();
     assert.equal(
       await page.evaluate(() => document.querySelector("app-shell").traffic.totalMatched),
-      4,
+      5,
     );
     await open("host");
     assert.equal(await picked("domain.example").isChecked(), false);
@@ -120,13 +139,25 @@ export async function checkTrafficSavedValues(
     await settle();
     assert.equal(
       await page.evaluate(() => document.querySelector("app-shell").traffic.totalMatched),
-      4,
+      5,
     );
     await open("host");
     assert.equal(await picked("domain.example").isChecked(), false);
+    for (const host of ["domain.example", "cdn.domain.example", "eu.cdn.domain.example"])
+      assert.match(
+        await picked(host).locator("..").locator("..").textContent(),
+        /Included by \*\.domain.example/,
+      );
+    assert.equal(
+      await savedTerm("*.domain.example")
+        .locator("..")
+        .locator(".filter-option-count")
+        .textContent(),
+      "3",
+    );
     assert.match(
-      await picked("cdn.domain.example").locator("..").locator("..").textContent(),
-      /Included by \*\.domain.example/,
+      await picked("otherdomain.example").locator("..").locator("..").textContent(),
+      /Outside Host filter/,
     );
     assert.equal(await picked("otherdomain.example").isVisible(), true);
     await picked("domain.example").check();
@@ -148,11 +179,12 @@ export async function checkTrafficSavedValues(
     await open("host");
     assert.equal(await savedTerm("domain.example").isChecked(), false);
     for (const [mode, pick, expected] of [
-      ["either", null, 4],
+      ["either", null, 5],
       ["either", "domain.example", 5],
-      ["both", "domain.example", 0],
+      ["both", "domain.example", 1],
+      ["both", "otherdomain.example", 0],
       ["both", "cdn.domain.example", 1],
-      ["either", "cdn.domain.example", 4],
+      ["either", "cdn.domain.example", 5],
       ["ignore-saved", "domain.example", 1],
       ["ignore-saved", null, 6],
     ]) {
@@ -170,6 +202,8 @@ export async function checkTrafficSavedValues(
     await reset("both", "domain.example");
     await savedTerm("domain.example").check();
     await preview(1);
+    await picker.getByLabel("Combine selections").selectOption("either");
+    await preview(5);
     await reset();
     await page.evaluate(() => {
       const t = document.querySelector("app-shell").traffic;
@@ -198,7 +232,7 @@ export async function checkTrafficSavedValues(
       "Counts collapsed the authored requirement editor",
     );
     await picker.getByLabel("Column filter value").fill("cdn");
-    await preview(4);
+    await preview(5);
     await picker.getByRole("button", { name: "Add requirement", exact: true }).click();
     await preview(2);
     await apply();
@@ -244,15 +278,15 @@ export async function checkTrafficSavedValues(
     await wait();
     assert.equal(
       await picker
-        .getByRole("group", { name: "Selected for this filter", exact: true })
+        .getByRole("group", { name: "Other filter values", exact: true })
         .getByRole("checkbox", { name: "Use saved term api.example.test", exact: true })
         .isChecked(),
       true,
     );
-    await preview(4);
+    await preview(5);
     await picker.getByRole("button", { name: "Clear saved Host values", exact: true }).click();
     await wait();
-    await preview(4);
+    await preview(5);
     await picker.getByLabel("Is in", { exact: true }).fill("intervening.test");
     await picker.getByRole("button", { name: "Save and select", exact: true }).click();
     await wait();
@@ -264,7 +298,7 @@ export async function checkTrafficSavedValues(
     await page.waitForFunction(() => globalThis.__workspaceFixture.facetPending);
     await picker.getByLabel("Is in", { exact: true }).fill("newer.test");
     await page.evaluate(() => globalThis.__workspaceFixture.releaseFacets());
-    await preview(4);
+    await preview(5);
     assert.equal(await picker.getByLabel("Is in", { exact: true }).inputValue(), "newer.test");
     assert.equal(
       await picker
@@ -302,6 +336,9 @@ export async function checkTrafficSavedValues(
         .textContent(),
       "0",
     );
+    await picker
+      .getByLabel("Is in", { exact: true })
+      .fill("exact-domain.example, *.include-subdomains.example");
     for (const [width, height] of [
       [1440, 900],
       [960, 720],
@@ -361,6 +398,9 @@ export async function checkTrafficSavedValues(
     });
     await page.emulateMedia({ forcedColors: "none" });
     await checkFavoriteReviewRegressions(page, { picker, open, wait, settle });
+    await checkPickerPresentation(page, { picker, open, wait, apply });
+    await checkRetainedChoiceCounts(page, { picker, open, wait, preview });
+    await checkPickerEditingReview(page, { picker, open, wait, apply });
     await page.evaluate(async () => {
       const t = document.querySelector("app-shell").traffic;
       t.closePicker();
@@ -393,6 +433,318 @@ export async function checkTrafficSavedValues(
       await t.clearFilters();
     }, saved);
     await page.setViewportSize({ width: 1440, height: 900 });
+  }
+}
+
+async function checkPickerPresentation(page, { picker, open, wait, apply }) {
+  await page.evaluate(async () => {
+    const t = document.querySelector("app-shell").traffic,
+      s = globalThis.__workspaceFixture;
+    t.closePicker();
+    await t.clearFilters();
+    s.favorites = [
+      ...["future.example.test", "api.example.test"].map((value) => ({
+        dimension: "host",
+        value: { kind: "text", value },
+        condition: null,
+      })),
+      ...["cdn", "domain"].map((value) => ({
+        dimension: "host",
+        value: null,
+        condition: { column: "host", operator: "contains", value },
+      })),
+    ];
+    t.filterGroups = [
+      {
+        dimension: "host",
+        values: [{ kind: "text", value: "otherdomain.example" }],
+        savedValues: [{ kind: "text", value: "api.example.test" }],
+      },
+    ];
+    t.filters = [{ column: "host", operator: "contains", value: "domain", label: "" }];
+    t.queryRevision++;
+    await t.refreshSessions(undefined, true);
+  });
+  await open("host");
+  await wait();
+  const rows = (selector) =>
+    picker
+      .locator(selector)
+      .locator('input[type="checkbox"]')
+      .evaluateAll((inputs) => inputs.map((input) => input.id));
+  const saved = ".filter-custom > .filter-saved[aria-label='Saved values']";
+  const observed = ".filter-options";
+  const requirements = ".filter-requirements .filter-saved";
+  const before = await Promise.all([saved, observed, requirements].map(rows));
+  assert.equal(before[0][0], "saved-option-text:api.example.test");
+  assert.equal(before[1][0], "filter-option-text:otherdomain.example");
+  assert.equal(before[2][0], "requirement-contains:domain");
+  const field = picker.getByLabel("Filter field", { exact: true });
+  assert.equal(await field.locator('[value="host"]').textContent(), "● Host");
+  assert.equal(await field.locator('[value="host"]').getAttribute("aria-label"), "Host (filtered)");
+  assert.equal(await field.locator('[value="method"]').textContent(), "Method");
+  assert.equal(
+    await field.evaluate(
+      (select) =>
+        getComputedStyle(select).color ===
+        getComputedStyle(select.querySelector('[value="host"]')).color,
+    ),
+    true,
+  );
+  const scope = picker.locator(
+    '[role="status"][title="Other column filters and searches still apply."]',
+  );
+  assert.match(await scope.innerText(), /Counts ignore this field’s filters/);
+  for (const [name, checked] of [
+    ["Use saved term api.example.test", false],
+    ["Use saved term future.example.test", true],
+    ["Pick observed host otherdomain.example", false],
+    ["Pick observed host api.example.test", true],
+    ["Require contains “domain”", false],
+    ["Require contains “cdn”", true],
+  ])
+    await picker.getByRole("checkbox", { name, exact: true }).setChecked(checked);
+  await wait();
+  assert.deepEqual(
+    await Promise.all([saved, observed, requirements].map(rows)),
+    before,
+    "Editing checkboxes moved rows before reopening",
+  );
+  await apply();
+  await open("host");
+  await wait();
+  assert.equal((await rows(saved))[0], "saved-option-text:future.example.test");
+  assert.equal((await rows(observed))[0], "filter-option-text:api.example.test");
+  assert.equal((await rows(requirements))[0], "requirement-contains:cdn");
+  await field.selectOption("method");
+  await wait();
+  assert.equal(
+    await picker
+      .getByText("Example: exact-domain.example, *.include-subdomains.example", { exact: true })
+      .count(),
+    0,
+  );
+  await picker.getByRole("checkbox", { name: "POST", exact: true }).check();
+  assert.equal(
+    await field.locator('[value="method"]').textContent(),
+    "Method",
+    "An unapplied draft marked a field as filtered",
+  );
+  await picker.getByRole("button", { name: "Cancel", exact: true }).click();
+  await open("process");
+  await picker.locator(".filter-custom > summary").click();
+  assert.equal(
+    await picker.getByLabel("Is in", { exact: true }).getAttribute("placeholder"),
+    "Enter one literal value; commas are kept",
+  );
+  await picker.getByLabel("Is in", { exact: true }).fill("app,helper.exe");
+  assert.equal(
+    await picker.locator(".filter-list-entry label > span").innerText(),
+    "Is in (one literal value; commas are kept)",
+  );
+  await picker.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.evaluate(async () => {
+    const t = document.querySelector("app-shell").traffic;
+    await t.clearFilters();
+    t.filterGroups = [
+      {
+        dimension: "host",
+        values: [],
+        savedValues: [{ kind: "text", value: "api.example.test" }],
+        selectionMode: "ignore-saved",
+      },
+    ];
+  });
+  await open("status");
+  await wait();
+  assert.equal(
+    await field.locator('[value="host"]').textContent(),
+    "Host",
+    "Paused saved-only filters were marked active",
+  );
+  const more = picker.locator(".filter-options details");
+  await more.locator("summary").click();
+  const zero = more.getByRole("checkbox").first();
+  const id = await zero.getAttribute("id");
+  const order = await rows(observed);
+  await zero.check();
+  await wait();
+  await field.focus();
+  assert.deepEqual(
+    await rows(observed),
+    order,
+    "A checked zero-count row jumped out of More values",
+  );
+  await apply();
+  await open("status");
+  await wait();
+  assert.equal(
+    (await rows(observed))[0],
+    id,
+    "A reopened zero-count selection was not promoted above More values",
+  );
+}
+
+async function checkRetainedChoiceCounts(page, { picker, open, wait, preview }) {
+  const original = await page.evaluate(() =>
+    structuredClone(globalThis.__workspaceFixture.sessions),
+  );
+  try {
+    await page.evaluate(async () => {
+      const t = document.querySelector("app-shell").traffic,
+        s = globalThis.__workspaceFixture,
+        seed = s.sessions[0];
+      t.closePicker();
+      await t.clearFilters();
+      s.sessions = ["A", "Z"].flatMap((prefix) =>
+        Array.from({ length: 128 }, (_, index) => ({
+          ...seed,
+          id: prefix + index,
+          method: prefix + String(index).padStart(3, "0"),
+        })),
+      );
+      s.favorites = [];
+      t.filterGroups = [
+        {
+          dimension: "method",
+          values: Array.from({ length: 128 }, (_, index) => ({
+            kind: "text",
+            value: "a" + String(index).padStart(3, "0"),
+          })),
+        },
+      ];
+      t.queryRevision++;
+      await t.refreshSessions(undefined, true);
+    });
+    await open("method");
+    await wait();
+    await picker.locator(".filter-custom > summary").click();
+    await picker.getByRole("button", { name: "Clear selection", exact: true }).click();
+    await picker
+      .getByLabel("Is in", { exact: true })
+      .fill(
+        Array.from({ length: 128 }, (_, index) => "Z" + String(index).padStart(3, "0")).join(","),
+      );
+    await picker.getByRole("button", { name: "Save and select", exact: true }).click();
+    await preview(128, 256);
+    const count = (name) =>
+      picker
+        .getByRole("checkbox", { name, exact: true })
+        .locator("..")
+        .locator(".filter-option-count")
+        .innerText();
+    assert.equal(await count("A000"), "1");
+    assert.equal(
+      await count("A127"),
+      "—",
+      "A retained row outside the bounded count request falsely showed zero",
+    );
+  } finally {
+    await page.evaluate(async (sessions) => {
+      const t = document.querySelector("app-shell").traffic,
+        s = globalThis.__workspaceFixture;
+      t.closePicker();
+      s.sessions = sessions;
+      s.favorites = [];
+      t.trafficRevision++;
+      await t.clearFilters();
+    }, original);
+  }
+}
+
+async function checkPickerEditingReview(page, { picker, open, wait, apply }) {
+  const original = await page.evaluate(() => ({
+    sessions: structuredClone(globalThis.__workspaceFixture.sessions),
+    favorites: structuredClone(globalThis.__workspaceFixture.favorites),
+  }));
+  const findings = [];
+  try {
+    await page.evaluate(async () => {
+      const t = document.querySelector("app-shell").traffic,
+        s = globalThis.__workspaceFixture;
+      t.closePicker();
+      await t.clearFilters();
+      s.sessions = [
+        ...s.sessions,
+        { ...s.sessions[0], id: "review-extra-method", method: "UNLISTED" },
+      ];
+      s.favorites = [];
+      t.trafficRevision++;
+      await t.refreshSessions(undefined, true);
+    });
+    await open("method");
+    await wait();
+    const more = picker.locator(".filter-options details");
+    assert.equal(await more.evaluate((details) => details.open), false);
+    await picker.getByLabel("Search observed values").fill("PATCH");
+    await wait();
+    await picker.getByRole("button", { name: "Use exact value “PATCH”", exact: true }).click();
+    await wait();
+    const patch = picker.getByRole("checkbox", { name: "PATCH", exact: true, includeHidden: true });
+    assert.equal(await patch.isChecked(), true);
+    if (!(await patch.isVisible()))
+      findings.push(
+        "Use exact value leaves its selected zero-count choice hidden under collapsed More values",
+      );
+    await picker.getByLabel("Filter field", { exact: true }).selectOption("host");
+    await wait();
+    await picker.locator(".filter-custom > summary").click();
+    await picker.getByLabel("Is in", { exact: true }).fill("editing-review.test");
+    const cdp = await page.context().newCDPSession(page);
+    try {
+      const ax = await cdp.send("Accessibility.getFullAXTree");
+      const input = ax.nodes.find(
+        (node) => node.role?.value === "textbox" && node.name?.value === "Is in",
+      );
+      assert.ok(input, "Is in is missing from the accessibility tree");
+      if (input.description?.value !== "Enter values separated by commas or newlines")
+        findings.push(
+          "Filled Is in input does not expose its value-format guidance as an accessible description",
+        );
+    } finally {
+      await cdp.detach();
+    }
+    await picker.getByRole("button", { name: "Save and select", exact: true }).click();
+    await wait();
+    await picker
+      .getByRole("group", { name: "Saved values", exact: true })
+      .getByRole("button", { name: "Favorite editing-review.test", exact: true })
+      .click();
+    await wait();
+    const term = picker.getByRole("checkbox", {
+      name: "Use saved term editing-review.test",
+      exact: true,
+    });
+    assert.equal(await term.isChecked(), true);
+    await term.click();
+    await wait();
+    if (!(await term.isVisible()))
+      findings.push("Unchecking a newly authored unstarred value removes its row before reopening");
+    assert.deepEqual(findings, []);
+    assert.equal(await term.isChecked(), false);
+    assert.equal(
+      await term.evaluate((input) => input === input.getRootNode().activeElement),
+      true,
+      "Unchecking the retained term lost focus",
+    );
+    await apply();
+    assert.equal(
+      await page.evaluate(() => document.querySelector("app-shell").traffic.totalMatched),
+      original.sessions.length + 1,
+    );
+    await open("host");
+    await wait();
+    assert.equal(await term.count(), 0, "The temporary unchecked term survived reopening");
+  } finally {
+    await page.evaluate(async ({ sessions, favorites }) => {
+      const t = document.querySelector("app-shell").traffic,
+        s = globalThis.__workspaceFixture;
+      t.closePicker();
+      s.sessions = sessions;
+      s.favorites = favorites;
+      t.trafficRevision++;
+      await t.clearFilters();
+    }, original);
   }
 }
 

@@ -277,14 +277,19 @@ when changing the experience.
   Subtle borderless stars persist authored values without changing membership;
   use muted outlines, accent fills for Favorites and a visible keyboard focus ring.
   Align primary row text and counts with the checkbox and star; put explanations
-  on a separate line. Saved and observed
+  on a separate line. Put checked choices first when opening or switching fields,
+  and keep their positions stable while checking and unchecking. Explicit value
+  authoring reveals the chosen row. Mark applied fields in the field
+  chooser with accent color and a textual indicator; drafts and paused selections
+  do not imply an active filter. Saved and observed
   selections retain their roles after removal or clearing of Favorites. Preview
   unique requests across the full surrounding scope, and apply explicit additional
   requirements after membership. Preserve drafts and focus during shared-library
   refreshes; save pending values successfully before applying their query.
-- Count and match filter choices with the same definitions. Common choices must
-  not hide unfamiliar observed values; expose a counted Other choice when useful
-  and distinguish it from missing evidence. Use canonical names for app-owned
+- Count and match filter choices with the same definitions. Host wildcards include
+  the base domain and its descendants at whole DNS label boundaries. Common
+  choices must not hide unfamiliar observed values; expose a counted Other choice
+  when useful and distinguish it from missing evidence. Use canonical names for app-owned
   values, normalizing external spellings without changing captured evidence.
 - Keep comparison findings focused on changed content. Reordering identical
   headers does not create a change finding; retain original positions in source

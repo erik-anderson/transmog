@@ -479,7 +479,7 @@ async function checkAdvancedReviewFixes(page, traffic, picker, open, apply, sett
     "Deselected searched-out observation lost keyboard focus",
   );
   await selected.press("Tab");
-  await selected.waitFor({ state: "detached" });
+  assert.equal(await selected.isVisible(), true, "An unchecked row disappeared before reopening");
   await page.keyboard.press("Escape");
   await set("duration", []);
   const a = page.locator("#session-advanced-239"),

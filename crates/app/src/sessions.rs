@@ -3171,6 +3171,7 @@ mod tests {
     }
     #[test]
     fn saved_host_selections_share_preview_list_timeline_and_id_predicates() {
+        use TrafficSelectionMode::{Both, Either, IgnoreSaved};
         let service = saved_selection_fixture();
         let traces = crate::traces::TraceRegistry::default();
         let base = vec![
@@ -3178,34 +3179,16 @@ mod tests {
             TrafficFilterValue::HostSubdomains("DOMAIN.EXAMPLE.".into()),
         ];
         for (mode, picked, add_apex, expected) in [
-            (TrafficSelectionMode::Either, None, false, 4),
-            (
-                TrafficSelectionMode::Either,
-                Some("domain.example"),
-                false,
-                5,
-            ),
-            (TrafficSelectionMode::Both, Some("domain.example"), false, 0),
-            (TrafficSelectionMode::Both, Some("domain.example"), true, 1),
-            (
-                TrafficSelectionMode::Both,
-                Some("cdn.domain.example"),
-                false,
-                1,
-            ),
-            (
-                TrafficSelectionMode::Either,
-                Some("cdn.domain.example"),
-                false,
-                4,
-            ),
-            (
-                TrafficSelectionMode::IgnoreSaved,
-                Some("domain.example"),
-                false,
-                1,
-            ),
-            (TrafficSelectionMode::IgnoreSaved, None, false, 6),
+            (Either, None, false, 5),
+            (Either, None, true, 5),
+            (Either, Some("domain.example"), false, 5),
+            (Both, Some("domain.example"), false, 1),
+            (Both, Some("domain.example"), true, 1),
+            (Both, Some("otherdomain.example"), false, 0),
+            (Both, Some("cdn.domain.example"), false, 1),
+            (Either, Some("cdn.domain.example"), false, 5),
+            (IgnoreSaved, Some("domain.example"), false, 1),
+            (IgnoreSaved, None, false, 6),
         ] {
             let mut saved = base.clone();
             if add_apex {
@@ -3240,7 +3223,7 @@ mod tests {
                     .iter()
                     .map(|option| option.count)
                     .sum::<usize>(),
-                4
+                5
             );
             let views = Arc::new(Mutex::new(TrafficViews::default()));
             let view = traffic_view(&service, &views, &query, &traces, None).unwrap();

@@ -381,7 +381,19 @@ condition individually. Every enabled Contains condition must pass. Equals and
 each numeric endpoint have one active value; previous authored values remain
 available unchecked for reuse.
 
-Counts describe the surrounding filters across all retained entries. Zero values
+Fields with an applied filter have an accent-colored dot in **Filter by**;
+unapplied drafts and paused saved-only selections do not mark a field. Reopening
+the picker or switching fields puts checked choices first within each list.
+Checkbox edits keep rows in place until the next opening, including zero-count
+choices under **More values**.
+Using **Use exact value** reveals its selected row even when it previously lived
+under collapsed **More values**. Unstarred filter values stay available when
+unchecked during editing; reopening drops unused values that are not Favorites.
+
+Option counts apply other column filters and searches across all retained entries,
+but ignore this field’s saved selections, observed selections and requirements.
+The short count note provides a tooltip explaining the surrounding scope.
+**After Apply** includes this field’s complete draft. Zero values
 stay selectable; longer zero lists use **More values**, and selected values stay
 visible when the picker is reopened. Loading or failed counts are shown as
 unavailable rather than zero. Values outside exact filter limits are disclosed;
@@ -414,7 +426,7 @@ explicit evidence states, distinct from zero or the literal text of those labels
 viewers. A star adds or removes a Favorite immediately; it never changes either
 selection. Saved checkboxes select reusable terms, while observed checkboxes pick
 exact captured values independently. Removing an active Favorite keeps its term
-under **Selected for this filter**. **Clear saved Host values** clears only Host
+under **Other filter values**. **Clear saved Host values** clears only Host
 Favorites, including saved comparisons, reports the removed count and offers
 **Undo**. Undo preserves intervening additions and later explicit removals.
 Favorites are separate from layouts, capture files and case exports; first run
@@ -428,8 +440,8 @@ Invalid or over-limit batches keep the complete text editable and save nothing.
 A zero-match filter stays active and includes later matching requests.
 
 Host terms canonicalize case, IDNs and a trailing DNS dot without changing
-captured evidence. `*.domain.example` includes both `cdn.domain.example` and
-`eu.cdn.domain.example`, while the apex `domain.example` needs its own term.
+captured evidence. `*.domain.example` includes `domain.example` itself,
+`cdn.domain.example` and deeper descendants such as `eu.cdn.domain.example`.
 `otherdomain.example` does not match. Exact IPv4 and IPv6 literals are accepted;
 ports, URLs, paths, credentials, malformed hosts and wildcard IPs are rejected.
 Other built-in fields use their typed exact choices, including missing values,
@@ -439,8 +451,8 @@ literal value, preserving commas. Wildcards are reserved for Host.
 When an outside host appears, search **Observed hosts**, pick its checkbox and
 Apply to include it alongside the saved terms. Starring that row adds an unchecked
 saved row while preserving the observed checkbox and focus. **Combine selections**
-offers **Match either selection** (default), **Match both selections**, and
-**Ignore saved selection**. Each nonempty side matches any checked term of its
+offers **Match either list** (default), **Require a match in both lists**, and
+**Use observed values only**. Each nonempty side matches any checked term of its
 own. Both requires membership in both populated sides; an empty side imposes no
 restriction. Ignore pauses the saved side while retaining its checkmarks. A
 saved-only ignored selection has no active-filter chip. Enabled **Also require**

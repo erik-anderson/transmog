@@ -165,6 +165,15 @@ type PreviewPageChoices = {
 };
 type AuthReturn = { id: string; boundary: string; interpretation: string; scrollTop: number };
 
+function pickerFieldChoice(field: (typeof filterDimensions)[number], filtered = false) {
+  return {
+    ...field,
+    filtered,
+    optionLabel: (filtered ? "● " : "") + field.label,
+    accessibleLabel: field.label + (filtered ? " (filtered)" : ""),
+  };
+}
+
 export class TrafficWorkspace extends WorkspaceElement {
   requestMessage!: MessageInspector;
   responseMessage!: MessageInspector;
@@ -1692,7 +1701,7 @@ export class TrafficWorkspace extends WorkspaceElement {
         placeholder: "",
       });
     }
-    this.pickerFields = [...filterDimensions, ...fields];
+    this.pickerFields = [...filterDimensions, ...fields].map((field) => pickerFieldChoice(field));
     this.refreshChips();
     this.extensionColumnError = this.classifications.error;
     this.rebuildExtensionOptions();
@@ -1888,7 +1897,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable fetchDestinations: string[] = [];
   @observable fetchDestinationSummary = "All destinations";
   @observable fetchDestinationOptions = structuredClone(initialState.fetchDestinationOptions);
-  @observable pickerFields = filterDimensions;
+  @observable pickerFields = filterDimensions.map((field) => pickerFieldChoice(field));
   @observable pickerDimension: TrafficDimension = "traffic-type";
   @observable pickerLabel = "Traffic type";
   @observable pickerNumeric = false;
@@ -1914,6 +1923,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable pickerApplyLabel = "Apply filter";
   @observable pickerObservedLabel = "Observed values";
   @observable pickerLiteral = false;
+  @observable pickerPastePlaceholder = "Enter values separated by commas or newlines";
   filterPaste!: HTMLTextAreaElement;
   private pickerSavedValues: TrafficFilterValue[] = [];
   private favorites: TrafficFavorite[] = [];
@@ -1962,6 +1972,11 @@ export class TrafficWorkspace extends WorkspaceElement {
   filterField!: HTMLSelectElement;
   filterButton!: HTMLButtonElement;
   private pickerValues: TrafficFilterValue[] = [];
+  private pickerInitialValues = new Map<string, TrafficFilterValue>();
+  private pickerInitialSavedValues = new Map<string, TrafficFilterValue>();
+  private pickerRetainedSavedValues = new Map<string, TrafficFilterValue>();
+  private pickerInitialRequirements = new Set<string>();
+  private pickerOptionSections = new Map<string, boolean>();
   private pickerCounts = new Map<string, number>();
   private pickerCountOptions: TrafficFacetPage["options"] = [];
   private pickerGeneration = 0;
@@ -2029,6 +2044,9 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.pickerDimension = dimension;
     this.pickerMembership = !extensionColumnKey(dimension);
     this.pickerLiteral = ["url", "path", "process"].includes(dimension);
+    this.pickerPastePlaceholder = this.pickerLiteral
+      ? "Enter one literal value; commas are kept"
+      : "Enter values separated by commas or newlines";
     this.pickerObservedLabel = dimension === "host" ? "Observed hosts" : "Observed values";
     this.pickerPaste = "";
     this.pickerApplyLabel = "Apply filter";
@@ -2103,6 +2121,17 @@ export class TrafficWorkspace extends WorkspaceElement {
       .filter((filter) => filter.column === dimension)
       .map((filter) => ({ ...filter }));
     this.pickerAuthoredConditions = structuredClone(this.pickerConstraints);
+    this.pickerInitialValues = new Map(
+      this.pickerValues.map((value) => [filterValueKey(value), value]),
+    );
+    this.pickerInitialSavedValues = new Map(
+      this.pickerSavedValues.map((value) => [filterValueKey(value), value]),
+    );
+    this.pickerRetainedSavedValues.clear();
+    this.pickerInitialRequirements = new Set(
+      this.pickerConstraints.map((filter) => filter.operator + ":" + filter.value),
+    );
+    this.pickerOptionSections.clear();
     this.pickerSettingsTouched = false;
     this.pickerSettingsOpen =
       this.pickerSavedValues.length > 0 ||
@@ -2112,7 +2141,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.pickerCountOptions = [];
     this.pickerError = "";
     this.pickerOmission = "";
-    this.pickerScope = "Counts include other filters.";
+    this.pickerScope = "Counts ignore this field’s filters.";
     this.pickerLoading = true;
     this.filterInput.value = "";
     if (this.filterPaste) {
@@ -2175,9 +2204,22 @@ export class TrafficWorkspace extends WorkspaceElement {
     );
   }
   private rebuildSavedOptions(): void {
-    const entries = [...this.favorites];
     for (const value of this.pickerSavedValues) {
       if (!this.isFavorite(value)) {
+        this.pickerRetainedSavedValues.set(filterValueKey(value), value);
+      }
+    }
+    const entries = [...this.favorites];
+    for (const value of [
+      ...this.pickerInitialSavedValues.values(),
+      ...this.pickerRetainedSavedValues.values(),
+      ...this.pickerSavedValues,
+    ]) {
+      if (
+        !entries.some(
+          (entry) => entry.value && filterValueKey(entry.value) === filterValueKey(value),
+        )
+      ) {
         entries.push({ dimension: this.pickerDimension, value, condition: null });
       }
     }
@@ -2215,12 +2257,20 @@ export class TrafficWorkspace extends WorkspaceElement {
             ),
         star: favorite ? "★" : "☆",
         favoriteTip: favorite ? "Remove from favorites" : "Add to favorites",
-        role: entry.value ? "Saved selection term" : "Additional requirement",
+        role: entry.value ? "Not in saved values" : "Additional requirement",
         countText:
           this.pickerLoading || this.pickerError || !this.pickerCounts.has(key)
             ? "—"
             : String(this.pickerCounts.get(key)),
       };
+    });
+    // Rank by the applied selection captured on opening, not the changing draft.
+    options.sort((left, right) => {
+      const selected = (entry: SavedOption) =>
+        entry.value
+          ? this.pickerInitialSavedValues.has(entry.key)
+          : this.pickerInitialRequirements.has(entry.key);
+      return Number(selected(right)) - Number(selected(left));
     });
     this.pickerSavedOptions = options.filter((entry) => entry.value && entry.favorite);
     this.pickerSelectedOptions = options.filter((entry) => entry.value && !entry.favorite);
@@ -2668,7 +2718,7 @@ export class TrafficWorkspace extends WorkspaceElement {
         }
       }
     }
-    for (const value of this.pickerValues) {
+    for (const value of [...this.pickerInitialValues.values(), ...this.pickerValues]) {
       if (!choices.some((option) => option.key === filterValueKey(value))) {
         choices.push({
           key: filterValueKey(value),
@@ -2693,18 +2743,27 @@ export class TrafficWorkspace extends WorkspaceElement {
       ...choice,
       selected: this.pickerValues.some((value) => filterValueKey(value) === choice.key),
       countText:
-        this.pickerLoading || this.pickerError
+        this.pickerLoading || this.pickerError || !this.pickerCounts.has(choice.key)
           ? "—"
-          : String(this.pickerCounts.get(choice.key) ?? 0),
+          : String(this.pickerCounts.get(choice.key)),
     }));
+    options.sort(
+      (left, right) =>
+        Number(this.pickerInitialValues.has(right.key)) -
+        Number(this.pickerInitialValues.has(left.key)),
+    );
     const long = options.length > 10;
-    // Keep a keyboard target visible when unchecking moves a zero value.
-    const primary = (option: (typeof options)[number]) =>
-      !long ||
-      option.selected ||
-      option.countText !== "0" ||
-      restore === "filter-option-" + option.key ||
-      restore === "observed-star-" + option.key;
+    // Keep rows in their original section while editing, including zero-count
+    // choices under More values. Reopening captures the new applied selection.
+    const primary = (option: (typeof options)[number]) => {
+      const visible =
+        this.pickerOptionSections.get(option.key) ??
+        (!long || option.selected || option.countText !== "0");
+      if (!this.pickerLoading && !this.pickerError) {
+        this.pickerOptionSections.set(option.key, visible);
+      }
+      return visible;
+    };
     this.pickerOptions = options.filter(primary);
     this.pickerMoreOptions = options.filter((option) => !primary(option));
     this.rebuildSavedOptions();
@@ -2736,7 +2795,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     } else {
       this.pickerValues = this.pickerValues.filter((value) => filterValueKey(value) !== key);
     }
-    // Keep every selected value visible, restoring its focused checkbox if it moves.
+    // Preserve row placement and focus while changing the draft.
     this.rebuildPickerOptions();
     this.draftChanged();
   }
@@ -2872,6 +2931,9 @@ export class TrafficWorkspace extends WorkspaceElement {
       }
       this.pickerValues = [...this.pickerValues, alternative];
     }
+    // Explicit authoring must reveal the chosen row even when it previously
+    // lived in collapsed More values. Checkbox edits retain their section.
+    this.pickerOptionSections.set(key, true);
     this.rebuildPickerOptions();
     this.draftChanged();
   }
@@ -2949,6 +3011,9 @@ export class TrafficWorkspace extends WorkspaceElement {
               ...this.pickerChoices(dimension).map((option) => option.value),
               ...this.pickerValues,
               ...this.previewSavedValues(),
+              ...this.pickerInitialValues.values(),
+              ...this.pickerInitialSavedValues.values(),
+              ...this.pickerRetainedSavedValues.values(),
               ...this.favorites.flatMap((entry) => (entry.value ? [entry.value] : [])),
             ].map((value) => [filterValueKey(value), value]),
           ).values(),
@@ -3052,7 +3117,8 @@ export class TrafficWorkspace extends WorkspaceElement {
           }
           this.pickerScope =
             page.matchingEntries.toLocaleString() +
-            " entries with this field unrestricted. Counts include other filters." +
+            (page.matchingEntries === 1 ? " request." : " requests.") +
+            " Counts ignore this field’s filters." +
             ((this.pickerCounts.get("other") ?? 0) > 0 ||
             this.pickerValues.some((value) => value.kind === "other")
               ? dimension === "status"
@@ -3196,6 +3262,10 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.pickerFields,
     );
     this.filterCount = this.filterChips.length;
+    const filtered = new Set(this.filterChips.map((chip) => chip.dimension));
+    this.pickerFields = this.pickerFields.map((field) =>
+      pickerFieldChoice(field, filtered.has(field.id)),
+    );
   }
   filterGroupsChanged(): void {
     this.rebuildExtensionColumns();
@@ -3409,7 +3479,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     if (this.view === "traffic") {
       void this.classifications.connect();
     }
-    this.pickerFields = filterDimensions;
+    this.pickerFields = filterDimensions.map((field) => pickerFieldChoice(field));
     this.layoutObserver = new ResizeObserver(() => {
       this.measurePinnedColumns();
       this.scheduleViewport();

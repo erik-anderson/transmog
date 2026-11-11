@@ -400,12 +400,19 @@ export async function checkTrafficFilters(page, root) {
       await picker
         .getByRole("checkbox", { name: "Stylesheet", exact: true })
         .evaluate((input) => !input.closest("details")),
-      true,
-      "A selected zero value remained hidden inside More values",
+      false,
+      "Checking a zero value moved it out of the expanded More values list",
     );
     await apply();
     // Unchecking a selected zero value must keep the keyboard target visible.
     await open("fetch-destination");
+    assert.equal(
+      await picker
+        .getByRole("checkbox", { name: "Stylesheet", exact: true })
+        .evaluate((input) => !input.closest("details")),
+      true,
+      "A reopened selection remained hidden inside More values",
+    );
     const moreValues = picker.locator(".filter-options details");
     if (await moreValues.evaluate((details) => details.open))
       await moreValues.locator("summary").click();
@@ -494,7 +501,7 @@ export async function checkTrafficFilters(page, root) {
       "1",
       "A selected method count beyond the first facet page appeared as zero",
     );
-    assert.match(await picker.textContent(), /601 entries with this field unrestricted/);
+    assert.match(await picker.textContent(), /601 requests\. Counts ignore this field’s filters\./);
     await page.keyboard.press("Escape");
     await page.evaluate(async () => {
       const s = globalThis.__workspaceFixture,

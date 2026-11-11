@@ -906,6 +906,7 @@
   "pickerApplyLabel": "Apply filter",
   "pickerObservedLabel": "Observed values",
   "pickerLiteral": false,
+  "pickerPastePlaceholder": "Enter values separated by commas or newlines",
   "pickerObserved": false,
   "pickerSearch": "",
   "pickerNextOffset": null,
@@ -990,6 +991,9 @@
     {
       "id": "traffic-type",
       "label": "Traffic type",
+      "filtered": false,
+      "optionLabel": "Traffic type",
+      "accessibleLabel": "Traffic type",
       "numeric": false,
       "placeholder": "HTTP, WebSocket or SSE"
     }

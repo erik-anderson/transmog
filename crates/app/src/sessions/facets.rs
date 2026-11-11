@@ -106,7 +106,7 @@ pub enum TrafficFilterValue {
     Unavailable,
     /// Present values outside the shared presets (status: outside 100–599).
     Other,
-    /// One or more whole DNS labels below this Host suffix, excluding its apex.
+    /// This Host DNS name and its descendants at whole-label boundaries.
     HostSubdomains(String),
 }
 
@@ -422,20 +422,21 @@ impl PreparedSelection {
         self.count == 0
     }
 }
-fn below(host: &str, suffix: &str) -> bool {
-    host.strip_suffix(suffix).is_some_and(|prefix| {
-        prefix.strip_suffix('.').is_some_and(|labels| {
-            labels.split('.').all(|label| {
-                !label.is_empty()
-                    && label.len() <= 63
-                    && !label.starts_with('-')
-                    && !label.ends_with('-')
-                    && label
-                        .bytes()
-                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+fn host_matches_domain(host: &str, suffix: &str) -> bool {
+    host == suffix
+        || host.strip_suffix(suffix).is_some_and(|prefix| {
+            prefix.strip_suffix('.').is_some_and(|labels| {
+                labels.split('.').all(|label| {
+                    !label.is_empty()
+                        && label.len() <= 63
+                        && !label.starts_with('-')
+                        && !label.ends_with('-')
+                        && label
+                            .bytes()
+                            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                })
             })
         })
-    })
 }
 impl PreparedGroup {
     fn new(group: &TrafficFilterGroup) -> Result<Self, AppError> {
@@ -476,7 +477,7 @@ impl PreparedGroup {
                 .status
                 .is_some_and(|status| values.families.contains(&(status / 100)))
             || values.other && is_other(self.dimension, candidate)
-            || matches!(candidate, TrafficFilterValue::Text(host) if values.suffixes.iter().any(|suffix| below(host, suffix)))
+            || matches!(candidate, TrafficFilterValue::Text(host) if values.suffixes.iter().any(|suffix| host_matches_domain(host, suffix)))
     }
     pub(super) fn matches(&self, row: &SessionSummary) -> bool {
         let candidate = value_for(row, self.dimension);
@@ -510,7 +511,8 @@ impl PreparedGroup {
         }
         if self.mode != TrafficSelectionMode::IgnoreSaved {
             for suffix in &self.saved.suffixes {
-                if matches!(&candidate, TrafficFilterValue::Text(host) if below(host, suffix)) {
+                if matches!(&candidate, TrafficFilterValue::Text(host) if host_matches_domain(host, suffix))
+                {
                     return format!("Included by *.{suffix}");
                 }
             }
@@ -538,11 +540,7 @@ fn count_included(
                 counts
                     .iter()
                     .filter_map(|(candidate, count)| match candidate {
-                        TrafficFilterValue::Text(host)
-                            if host.strip_suffix(suffix).is_some_and(|prefix| {
-                                prefix.len() > 1 && prefix.ends_with('.')
-                            }) =>
-                        {
+                        TrafficFilterValue::Text(host) if host_matches_domain(host, suffix) => {
                             Some(count)
                         }
                         _ => None,
@@ -794,19 +792,45 @@ mod tests {
     use super::*;
     #[test]
     fn wildcard_suffixes_require_whole_valid_labels_in_retained_hosts() {
-        for host in ["cdn.domain.example", "eu.cdn.domain.example"] {
-            assert!(below(host, "domain.example"));
-        }
         for host in [
             "domain.example",
+            "cdn.domain.example",
+            "eu.cdn.domain.example",
+        ] {
+            assert!(host_matches_domain(host, "domain.example"));
+        }
+        for host in [
             "otherdomain.example",
             ".domain.example",
             "bad..domain.example",
             "-bad.domain.example",
             "bad_.domain.example",
         ] {
-            assert!(!below(host, "domain.example"), "{host}");
+            assert!(!host_matches_domain(host, "domain.example"), "{host}");
         }
+    }
+    #[test]
+    fn wildcard_counts_include_the_apex_and_reject_invalid_label_boundaries() {
+        let value = TrafficFilterValue::HostSubdomains("domain.example".into());
+        let counts = [
+            ("domain.example", 2),
+            ("cdn.domain.example", 1),
+            ("eu.cdn.domain.example", 1),
+            ("otherdomain.example", 10),
+            (".domain.example", 20),
+            ("bad..domain.example", 30),
+            ("-bad.domain.example", 40),
+            ("bad_.domain.example", 50),
+        ]
+        .into_iter()
+        .map(|(host, count)| (TrafficFilterValue::Text(host.into()), count))
+        .collect();
+        let options = count_included(
+            TrafficDimension::Column(TrafficColumn::Host),
+            BTreeSet::from([value]),
+            &counts,
+        );
+        assert_eq!(options[0].count, 4);
     }
     #[test]
     fn hosts_are_canonical_and_wildcards_are_typed_and_bounded_in_both_roles() {

@@ -189,12 +189,19 @@ export async function smokeTrafficFavorites({
     't.filterPaste.value="api.example.test, *.domain.example, future.example.test";t.filterPaste.dispatchEvent(new Event("input"));',
   );
   await preview(main, 0, 0);
+  assert.equal(
+    await evaluate(
+      main,
+      "return t.filterPicker.querySelector('.filter-list-entry label > span').textContent;",
+    ),
+    "Is in (values separated by commas or newlines)",
+  );
   await apply(main, 0);
   for (const client of [main, viewer]) {
     await evaluate(client, `await t.importTrace(${JSON.stringify(fixturePath)});`);
     await ready(client);
   }
-  assert.equal(await evaluate(main, "return t.totalMatched;"), 4);
+  assert.equal(await evaluate(main, "return t.totalMatched;"), 5);
   assert.equal(await evaluate(viewer, "return t.totalMatched;"), 6);
   for (const [role, client] of [
     ["main", main],
@@ -203,13 +210,21 @@ export async function smokeTrafficFavorites({
     await open(client);
     const appliedBefore = await evaluate(client, "return t.totalMatched;");
     await reset(client);
-    await preview(client, 4);
+    await preview(client, 5);
+    for (const host of ["domain.example", "cdn.domain.example", "eu.cdn.domain.example"])
+      assert.equal(
+        await evaluate(
+          client,
+          `return t.pickerOptions.find(row=>row.label===${JSON.stringify(host)}).reason;`,
+        ),
+        "Included by *.domain.example",
+      );
     assert.equal(
       await evaluate(
         client,
-        'return t.pickerOptions.find(row=>row.label==="cdn.domain.example").reason;',
+        'return t.pickerSavedOptions.find(row=>row.label==="*.domain.example").countText;',
       ),
-      "Included by *.domain.example",
+      "3",
     );
     await click(client, "Pick observed host domain.example");
     await preview(client, 5);
@@ -280,11 +295,12 @@ export async function smokeTrafficFavorites({
       false,
     );
     for (const [mode, pick, expected] of [
-      ["either", null, 4],
+      ["either", null, 5],
       ["either", "domain.example", 5],
-      ["both", "domain.example", 0],
+      ["both", "domain.example", 1],
+      ["both", "otherdomain.example", 0],
       ["both", "cdn.domain.example", 1],
-      ["either", "cdn.domain.example", 4],
+      ["either", "cdn.domain.example", 5],
       ["ignore-saved", "domain.example", 1],
       ["ignore-saved", null, 6],
     ]) {
@@ -293,15 +309,87 @@ export async function smokeTrafficFavorites({
       await apply(client, expected);
       await open(client);
     }
+    await reset(client, "either", "otherdomain.example");
+    await apply(client, 6);
+    await open(client);
+    const order = (client) =>
+      evaluate(
+        client,
+        "return [t.pickerSavedOptions.map(row=>row.key),t.pickerOptions.map(row=>row.key)];",
+      );
+    const beforeOrder = await order(client);
+    assert.equal(beforeOrder[1][0], "text:otherdomain.example");
+    const presentation = await evaluate(
+      client,
+      `
+      const field=t.filterPicker.querySelector('[aria-label="Filter field"]');
+      const host=field.querySelector('[value="host"]');
+      return {
+        field:host.textContent, accessible:host.getAttribute('aria-label'),
+        accent:getComputedStyle(field).color===getComputedStyle(host).color,
+        label:t.filterPicker.querySelector('.filter-list-entry label > span').textContent,
+        example:t.filterPicker.querySelector('.filter-list-entry .filter-picker-hint').textContent,
+        modes:[...t.filterPicker.querySelector('[aria-label="Combine selections"]').options].map(option=>option.textContent),
+        countNote:t.pickerScope,
+      };
+    `,
+    );
+    assert.equal(presentation.field, "● Host");
+    assert.equal(presentation.accessible, "Host (filtered)");
+    assert.equal(presentation.accent, true);
+    assert.equal(presentation.label, "Is in");
+    assert.equal(
+      presentation.example,
+      "Example: exact-domain.example, *.include-subdomains.example",
+    );
+    assert.deepEqual(presentation.modes, [
+      "Match either list",
+      "Require a match in both lists",
+      "Use observed values only",
+    ]);
+    assert.match(presentation.countNote, /Counts ignore this field’s filters/);
+    await click(client, "Use saved term api.example.test");
+    await click(client, "Use saved term future.example.test");
+    await click(client, "Pick observed host otherdomain.example");
+    await click(client, "Pick observed host domain.example");
+    await ready(client);
+    assert.deepEqual(
+      await order(client),
+      beforeOrder,
+      "Native checkbox edits moved rows before reopening",
+    );
+    await apply(client, 3);
+    await open(client);
+    assert.equal((await order(client))[1][0], "text:domain.example");
+    assert.equal(
+      await evaluate(client, "return t.pickerSavedOptions.slice(0,2).every(row=>row.selected);"),
+      true,
+    );
     await reset(client, "both", "domain.example");
     await click(client, "Use saved term domain.example");
     await preview(client, 1);
-    await apply(client, 1);
+    await evaluate(
+      client,
+      'const select=t.filterPicker.querySelector(\'[aria-label="Combine selections"]\');select.value="either";select.dispatchEvent(new Event("change"));',
+    );
+    await preview(client, 5);
+    await apply(client, 5);
     await evaluate(client, "await t.clearFilters();t.openFilterPicker('method');");
     await ready(client);
+    assert.equal(
+      await evaluate(
+        client,
+        "return t.filterPicker.querySelector('.filter-list-entry .filter-picker-hint');",
+      ),
+      null,
+    );
     await click(client, "GET");
     await apply(client, 4);
     await open(client);
+    assert.equal(
+      await evaluate(client, "return t.filterField.querySelector('[value=method]').textContent;"),
+      "● Method",
+    );
     await reset(client);
     await preview(client, 3, 4);
     await evaluate(
@@ -337,14 +425,86 @@ export async function smokeTrafficFavorites({
         Buffer.from(image.data, "base64"),
       );
     }
+    await evaluate(
+      client,
+      "t.closePicker();await t.clearFilters();t.openFilterPicker('fetch-destination');",
+    );
+    await ready(client);
+    assert.equal(
+      await evaluate(client, "return t.pickerMoreOptions.some(row=>row.key==='text:style');"),
+      true,
+    );
+    await evaluate(
+      client,
+      't.observedSearch.value="style";t.observedSearch.dispatchEvent(new Event("input"));',
+    );
+    await ready(client);
+    await evaluate(client, "t.filterPicker.querySelector('.filter-observed button').click();");
+    await ready(client);
+    assert.equal(
+      await evaluate(
+        client,
+        `
+      const input=t.filterPicker.querySelector('[aria-label="Stylesheet"]');
+      return !!input?.checked && !!input.getClientRects().length && !input.closest('details');
+    `,
+      ),
+      true,
+      "Native exact authoring left a checked choice hidden inside More values",
+    );
+    await apply(client, 0);
+    await evaluate(client, "await t.clearFilters();");
+    await open(client);
+    const authored = `editing-review-${role}.test`;
+    await evaluate(
+      client,
+      `t.filterPaste.value=${JSON.stringify(authored)};t.filterPaste.dispatchEvent(new Event('input'));`,
+    );
+    const editingAccessibility = await client.call("Accessibility.getFullAXTree");
+    assert.equal(
+      editingAccessibility.nodes.find(
+        (node) => node.role?.value === "textbox" && node.name?.value === "Is in",
+      )?.description?.value,
+      "Enter values separated by commas or newlines",
+    );
+    await evaluate(client, "await t.savePaste();");
+    await ready(client);
+    await evaluate(client, `await t.toggleFavorite(${JSON.stringify("text:" + authored)},true);`);
+    await ready(client);
+    await click(client, "Use saved term " + authored);
+    await ready(client);
+    assert.equal(
+      await evaluate(
+        client,
+        `
+      const input=[...t.filterPicker.querySelectorAll('input')].find(input=>input.getAttribute('aria-label')===${JSON.stringify("Use saved term " + authored)});
+      return !!input && !input.checked && !!input.getClientRects().length;
+    `,
+      ),
+      true,
+      "Native uncheck removed the newly authored unstarred row",
+    );
+    assert.equal(
+      (await list(client)).entries.some((entry) => entry.value?.value === authored),
+      false,
+    );
+    await apply(client, 6);
+    await open(client);
+    assert.equal(
+      await evaluate(
+        client,
+        `return t.pickerSelectedOptions.some(row=>row.value?.value===${JSON.stringify(authored)});`,
+      ),
+      false,
+    );
     await evaluate(client, "t.closePicker();await t.clearFilters();");
   }
   await open(main);
   await reset(main);
-  await apply(main, 4);
+  await apply(main, 5);
   await open(main);
   await open(viewer);
-  await reset(viewer, "both", "domain.example");
+  await reset(viewer, "both", "otherdomain.example");
   await preview(viewer, 0);
   await evaluate(main, "await t.clearFavorites();");
   await ready(viewer);
@@ -364,7 +524,7 @@ export async function smokeTrafficFavorites({
     true,
   );
   await apply(viewer, 0);
-  assert.equal(await evaluate(main, "return t.totalMatched;"), 4);
+  assert.equal(await evaluate(main, "return t.totalMatched;"), 5);
   assert.equal(await evaluate(viewer, "return t.totalMatched;"), 0);
   await writeFile(expectedPath, JSON.stringify((await list(main)).entries));
   return {
@@ -378,5 +538,7 @@ export async function smokeTrafficFavorites({
     pendingSaveCancel: true,
     preservesRequirementDraft: true,
     idempotentRetries: true,
+    pickerEditingReview: true,
+    wildcardApex: true,
   };
 }

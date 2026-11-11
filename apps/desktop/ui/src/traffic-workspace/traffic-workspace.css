@@ -271,6 +271,9 @@ traffic-workspace .trace-export-facts{display:grid;gap:.4rem;overflow-wrap:anywh
 .filter-picker-heading { border-bottom:1px solid var(--line); }
 .filter-picker-heading label { display:flex;align-items:baseline;gap:.5rem;flex:1;min-width:0;padding:0; }
 .filter-picker-heading select { flex:1;min-width:0;width:auto; }
+.filter-picker-heading option {color:var(--text);background:var(--panel);}
+.filter-picker-heading option[data-filtered],.filter-picker-heading select:has(option:checked[data-filtered]) {color:var(--accent-strong);font-weight:600;}
+@media(forced-colors:active) {.filter-picker-heading option[data-filtered],.filter-picker-heading select:has(option:checked[data-filtered]) {color:LinkText;}}
 .filter-picker-heading button { flex-shrink:0; }
 .filter-picker-hint,.filter-picker-error { padding:0 .65rem;margin:.2rem 0;font-size:.72rem;overflow-wrap:anywhere; }
 .filter-picker-error { color:var(--danger); }

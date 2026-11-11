@@ -455,7 +455,8 @@ await page.addInitScript(
             : value.kind === "number"
               ? candidate != null && BigInt(candidate) === BigInt(value.value)
               : value.kind === "host-subdomains"
-                ? String(candidate)
+                ? String(candidate).toLowerCase() === value.value ||
+                  String(candidate)
                     .toLowerCase()
                     .endsWith("." + value.value)
                 : String(candidate).toLowerCase() === value.value.toLowerCase();
