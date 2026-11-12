@@ -17,7 +17,7 @@ transmog-extensions = { version = "=0.1.23", path = "../extensions" }
 transmog-extension-supervisor = { version = "=0.1.23", path = "../extension-supervisor" }
 
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "=1.1.5", features = ["fs"] }
+rustix = { version = "=1.1.6", features = ["fs"] }
 
 [target.'cfg(windows)'.dependencies]
 transmog-directory-watch = { version = "=0.1.23", path = "../directory-watch" }
