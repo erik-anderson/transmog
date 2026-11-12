@@ -1,5 +1,7 @@
 use std::{
+    collections::BTreeSet,
     ffi::OsString,
+    io,
     mem::size_of,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     os::windows::ffi::OsStringExt as _,
@@ -15,13 +17,43 @@ use windows_sys::Win32::{
         TCP_TABLE_OWNER_PID_CONNECTIONS,
     },
     Networking::WinSock::{AF_INET, AF_INET6},
-    System::Threading::{
-        OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+    System::{
+        ProcessStatus::K32EnumProcesses,
+        Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW},
     },
 };
 
 const MAX_TABLE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_IMAGE_PATH_UNITS: usize = 32_768;
+const MAX_PROCESSES: usize = 32_768;
+
+pub(super) fn running_process_names() -> io::Result<Vec<String>> {
+    let mut processes = vec![0_u32; MAX_PROCESSES];
+    let capacity = u32::try_from(processes.len() * size_of::<u32>())
+        .map_err(|_| io::Error::other("Process inventory buffer is too large."))?;
+    let mut returned = 0_u32;
+    // SAFETY: the process-ID allocation is writable for `capacity` bytes and
+    // `returned` is a live u32. Both remain valid for the duration of this call.
+    if unsafe { K32EnumProcesses(processes.as_mut_ptr(), capacity, &raw mut returned) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if returned > capacity || !returned.is_multiple_of(4) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Windows returned an invalid process inventory.",
+        ));
+    }
+    // A full buffer may be incomplete. Suggestions deliberately remain bounded;
+    // manual process names are always accepted independently of this snapshot.
+    let count = usize::try_from(returned / 4)
+        .map_err(|_| io::Error::other("Process inventory size is invalid."))?;
+    let names = processes[..count]
+        .iter()
+        .filter_map(|pid| process_name(*pid))
+        .map(|name| name.to_lowercase())
+        .collect::<BTreeSet<_>>();
+    Ok(names.into_iter().collect())
+}
 
 pub(super) fn resolve(client_addr: SocketAddr, proxy_addr: SocketAddr) -> Option<ClientIdentity> {
     let pid = match (client_addr, proxy_addr) {
@@ -154,7 +186,7 @@ fn decode_port(value: u32) -> u16 {
     u16::from_be_bytes([bytes[0], bytes[1]])
 }
 
-fn process_name(pid: u32) -> Option<String> {
+pub(super) fn process_name(pid: u32) -> Option<String> {
     // SAFETY: OpenProcess receives a PID reported by the TCP table and requests
     // query-only access. A null result is handled without dereferencing it.
     let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
@@ -216,5 +248,14 @@ mod tests {
         let name = process_name(std::process::id()).expect("current process is queryable");
         assert_ne!(name, "");
         assert!(!name.contains(['\\', '/']));
+    }
+
+    #[test]
+    fn running_inventory_contains_current_executable_without_paths_or_duplicates() {
+        let current = process_name(std::process::id()).unwrap().to_lowercase();
+        let names = running_process_names().unwrap();
+        assert!(names.contains(&current));
+        assert!(names.windows(2).all(|pair| pair[0] < pair[1]));
+        assert!(names.iter().all(|name| !name.contains(['\\', '/'])));
     }
 }

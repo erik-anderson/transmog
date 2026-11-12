@@ -73,6 +73,8 @@ pub struct DiagnosticsReport {
     pub events: Vec<DiagnosticEvent>,
     /// Explicit statement of omitted sensitive evidence.
     pub privacy_notice: String,
+    /// Current-run connections bypassed because caller executable resolution was unavailable.
+    pub unresolved_process_connections: u64,
 }
 
 /// Create-new support-bundle request.
@@ -167,6 +169,7 @@ impl DiagnosticLog {
             product_state_schema: state.schema_version,
             events: self.events.lock().unwrap().iter().cloned().collect(),
             privacy_notice: "Bodies, header values, credentials, private keys, and paths are excluded by default.".to_owned(),
+            unresolved_process_connections: 0,
         }
     }
 }

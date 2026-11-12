@@ -1,0 +1,22 @@
+<template>
+<div class="process-inspection">
+  <label class="process-scope-label">Inspect traffic from
+    <select aria-label="Inspect traffic from" @change="{chooseMode(e)}">
+      <option value="all" ?selected="{{processMode == 'all'}}">All processes</option>
+      <option value="only" ?selected="{{processMode == 'only'}}">Only these processes</option>
+      <option value="except" ?selected="{{processMode == 'except'}}">All except these processes</option>
+    </select>
+  </label>
+  <div class="process-list-editor" ?hidden="{{processMode == 'all'}}">
+    <ul class="process-names" aria-label="Process names">
+      <for each="name in processNames"><li key="{{name}}"><span>{{name}}</span><button type="button" class="secondary" aria-label="Remove {{name}}" @click="{removeName(name)}">×</button></li></for>
+    </ul>
+    <div class="process-entry"><label>Executable name<input w-ref="{processNameInput}" aria-label="Executable name" placeholder="e.g. chrome.exe" list="running-process-names" autocomplete="off" spellcheck="false" @input="{editName()}" @keydown="{nameKeyboard(e)}" @focus="{refreshProcesses()}" aria-describedby="process-name-help process-name-error"></label><button type="button" class="secondary" @click="{addName()}">Add process</button><button type="button" class="secondary" ?disabled="{{processLoading}}" @click="{refreshProcesses()}">Refresh suggestions</button></div>
+    <datalist id="running-process-names"><for each="name in processSuggestions"><option value="{{name}}"></option></for></datalist>
+    <p id="process-name-help" class="field-help">{{processSuggestionStatus}}</p>
+  </div>
+  <p id="process-name-error" class="field-error" role="status" ?hidden="{{!processError}}">{{processError}}</p>
+  <p class="field-help">Applies to new connections after saving.</p>
+  <details class="process-disclosure"><summary>How process inspection works</summary><p class="field-help">Matches every instance by executable filename. Process names are case insensitive; extensionless names use .exe. Add helper processes separately.</p><p class="field-help">Other traffic bypasses rules and capture, including HTTPS summaries. With a filter, remote callers and callers without a process name also bypass inspection. Diagnostics counts unresolved connections.</p></details>
+</div>
+</template>

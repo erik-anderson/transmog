@@ -98,6 +98,17 @@ body store.
 
 Settings provides Save, Revert and Ctrl+S. Narrow layout saves merge with other
 settings so a stale workspace snapshot cannot overwrite newer preferences.
+Process inspection saves check the editor's baseline, preserve the inactive
+include/exclude lists, and publish the policy to new connections only after
+persistence succeeds. Unrelated settings and window saves preserve the current
+process policy and HTTPS decryption choice, including a saved tunnel-only run.
+Enabling HTTPS decryption validates the run's certificate before persistence;
+successful saves publish the certificate and mode together for new CONNECT
+requests on the same listener. Disabling retires intercepted connections without
+interrupting admitted requests; later requests cannot reuse their HTTP/2 or
+HTTP/3 upstream connections. Existing opaque tunnels retain their mode.
+Failed validation or persistence leaves the saved mode and active capture intact.
+Conflicting edits or a proxy start in progress leave the draft available to retry.
 Each save writes and flushes a temporary file, then atomically publishes a new
 numbered generation. Startup validates the newest generation and quarantines
 corrupt state, falling back to a retained valid generation or safe defaults.

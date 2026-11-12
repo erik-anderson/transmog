@@ -70,6 +70,10 @@ when changing the experience.
   and concise disclosure are sufficient for routine saves; avoid redundant
   acknowledgement checkboxes. Describe capture limitations without implying
   that normal protocol or retention behavior is a failed export.
+- Runtime UI and help describe the current platform directly. Omit qualifiers
+  such as “On Windows”; select the applicable copy when behavior varies by
+  platform. Keep OS product names that identify a setting or feature.
+  Documentation may compare platforms.
 
 ## Make layout and input predictable
 
@@ -223,6 +227,15 @@ when changing the experience.
 - Keep inspection and repair available when a saved configuration becomes invalid.
   Preserve authored choices and explain recovery instead of silently substituting
   a configuration with different trust, privacy or authorization consequences.
+- Keep caller selection separate from HTTPS decryption. Default to all callers;
+  distinguish uninspected passthrough from selected callers' opaque connection
+  evidence. Offer certificate-free HTTPS tunnels explicitly, preserve that
+  choice after certificate setup, and keep interception certificate setup beside
+  the decryption control. Saving HTTPS changes updates new CONNECT requests
+  without restarting capture. Disabling retires intercepted connections for new
+  requests while admitted work finishes; enabling leaves existing opaque tunnels
+  alone. Keep this timing concise and visible. See
+  [process inspection](network-profiles.md#choose-processes-to-inspect).
 - Startup discards obsolete script workspace schemas rather than migrating them.
   Never treat malformed data or a newer schema as obsolete.
 - Preserve explicit evidence associations independently of saved content revisions

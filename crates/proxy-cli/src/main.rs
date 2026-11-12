@@ -4,6 +4,7 @@ mod arguments;
 mod circular;
 mod context;
 mod help;
+mod inspection;
 mod mcp;
 mod mcp_logging;
 mod output;
@@ -56,8 +57,9 @@ use transmog_runtime::{
 };
 use transmog_saz::{SazExporter, SazLimits, SazMode};
 use transmog_tls::{
-    CachedMitmCertificateResolver, CompositeTrustSource, EndpointIdentity, PemTrustSource, ProxyCa,
-    SystemTrustSource, TrustSnapshot, TrustSource,
+    CachedMitmCertificateResolver, CertificateResolverError, CompositeTrustSource,
+    DownstreamCertificateResolver, EndpointIdentity, PemTrustSource, ProxyCa, SystemTrustSource,
+    TrustSnapshot, TrustSource,
 };
 
 fn main() {
@@ -139,8 +141,8 @@ async fn run() -> Result<(), Box<dyn Error>> {
     }
 }
 
-async fn serve(arguments: &[String]) -> Result<(), Box<dyn Error>> {
-    arguments::validate(
+fn validate_serve_options(arguments: &[String]) -> io::Result<()> {
+    arguments::validate_repeatable(
         arguments,
         &[
             "--ca-cert",
@@ -151,10 +153,26 @@ async fn serve(arguments: &[String]) -> Result<(), Box<dyn Error>> {
             "--proof-id",
             "--capture",
         ],
-        &["--capture-bodies", "--allow-remote"],
+        &["--capture-bodies", "--allow-remote", "--no-decrypt-https"],
+        inspection::PROCESS_OPTIONS,
     )?;
-    let certificate_path = required_option(arguments, "--ca-cert")?;
-    let key_path = required_option(arguments, "--ca-key")?;
+    inspection::process_policy(arguments)?;
+    if inspection::decrypt_https(arguments) {
+        required_option(arguments, "--ca-cert")?;
+        required_option(arguments, "--ca-key")?;
+    } else if option(arguments, "--ca-cert").is_some() || option(arguments, "--ca-key").is_some() {
+        return Err(invalid_input(
+            "--no-decrypt-https cannot be combined with --ca-cert or --ca-key; opaque HTTPS uses no interception CA",
+        ));
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_lines)] // One standalone proxy lifecycle and outcome report.
+async fn serve(arguments: &[String]) -> Result<(), Box<dyn Error>> {
+    validate_serve_options(arguments)?;
+    let decrypt_https = inspection::decrypt_https(arguments);
+    let process_inspection = inspection::process_policy(arguments)?;
     let listen_addr = option(arguments, "--listen")
         .unwrap_or("127.0.0.1:0")
         .parse::<SocketAddr>()?;
@@ -169,20 +187,29 @@ async fn serve(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         return Err(invalid_input("--capture-bodies requires --capture PATH").into());
     }
     let allow_remote_clients = arguments.iter().any(|value| value == "--allow-remote");
-
-    let certificate_pem = fs::read(certificate_path)?;
-    let ca = load_ca(&certificate_pem, Path::new(key_path))?;
-    let thumbprint = ca.sha256_thumbprint()?;
+    let listener = ListenerConfig {
+        listen_addr,
+        allow_remote_clients,
+    };
+    listener.validate()?;
+    let ca = if decrypt_https {
+        Some(load_ca(
+            &fs::read(required_option(arguments, "--ca-cert")?)?,
+            Path::new(required_option(arguments, "--ca-key")?),
+        )?)
+    } else {
+        None
+    };
+    let thumbprint = ca.as_ref().map(ProxyCa::sha256_thumbprint).transpose()?;
     let trust = load_upstream_trust(arguments)?;
     let interceptor: Arc<dyn InterceptorFactory> = proof.map_or_else(
         || Arc::new(NoopInterceptorFactory) as Arc<dyn InterceptorFactory>,
         |proof| Arc::new(proof),
     );
     let config = ProxyConfig {
-        listener: ListenerConfig {
-            listen_addr,
-            allow_remote_clients,
-        },
+        listener,
+        decrypt_https,
+        process_inspection,
         route_policy,
         limits: transmog_runtime::RuntimeLimits {
             max_request_body_bytes: usize::MAX,
@@ -199,6 +226,7 @@ async fn serve(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         capture_bodies,
     )
     .await?;
+    inspection::print_policy(&config.process_inspection, decrypt_https);
     let proxy = ProxyServer::bind_with_components(config, trust, components).await?;
     let actual_addr = proxy.local_addr()?;
     let mut evidence = proxy.subscribe_evidence();
@@ -222,7 +250,9 @@ async fn serve(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     });
 
     println!("LISTEN_ADDR={actual_addr}");
-    println!("CA_SHA256={thumbprint}");
+    if let Some(thumbprint) = thumbprint {
+        println!("CA_SHA256={thumbprint}");
+    }
     println!("ROUTE_POLICY={route_policy:?}");
     println!("Press Ctrl+C to stop the proxy and save any active capture.");
     let result = proxy
@@ -259,7 +289,7 @@ fn load_upstream_trust(arguments: &[String]) -> Result<Arc<TrustSnapshot>, Box<d
 
 async fn build_components(
     config: &ProxyConfig,
-    ca: ProxyCa,
+    ca: Option<ProxyCa>,
     interceptor: Arc<dyn InterceptorFactory>,
     enable_content_processing: bool,
     capture_path: Option<&Path>,
@@ -273,11 +303,15 @@ async fn build_components(
         )],
         config.limits.hooks,
     );
-    let certificates = Arc::new(CachedMitmCertificateResolver::new(
-        ca,
-        config.limits.leaf_cache_capacity,
-        config.limits.leaf_validity_days,
-    )?);
+    let certificates: Arc<dyn DownstreamCertificateResolver> = if let Some(ca) = ca {
+        Arc::new(CachedMitmCertificateResolver::new(
+            ca,
+            config.limits.leaf_cache_capacity,
+            config.limits.leaf_validity_days,
+        )?)
+    } else {
+        Arc::new(NoInterceptionCertificates)
+    };
     let mut components = ProxyComponents::new(hooks, certificates);
     if enable_content_processing {
         components = components.with_content_policy(ContentPolicy::preserve_original_output(
@@ -287,7 +321,7 @@ async fn build_components(
     let capture = if let Some(path) = capture_path {
         let mut policy = CapturePolicy::default();
         policy.retain_body_samples = capture_bodies;
-        let state = open_live_capture(path, policy).await?;
+        let state = open_live_capture(path, policy, config).await?;
         let observer = Arc::new(FileCaptureObserver {
             state: state.clone(),
         });
@@ -322,6 +356,21 @@ async fn build_components(
     Ok((components, capture))
 }
 
+/// Opaque HTTPS never creates or loads interception certificate material.
+struct NoInterceptionCertificates;
+
+impl DownstreamCertificateResolver for NoInterceptionCertificates {
+    fn resolve(
+        &self,
+        _identity: &EndpointIdentity,
+        _now: std::time::SystemTime,
+    ) -> Result<transmog_tls::IssuedLeaf, CertificateResolverError> {
+        Err(CertificateResolverError::Provider(
+            "HTTPS decryption is disabled for this run".into(),
+        ))
+    }
+}
+
 type LiveCapture = transmog_session::CaptureManager;
 
 struct FileCaptureObserver {
@@ -341,6 +390,7 @@ impl Observer for FileCaptureObserver {
 async fn open_live_capture(
     path: &Path,
     policy: CapturePolicy,
+    config: &ProxyConfig,
 ) -> Result<LiveCapture, Box<dyn Error>> {
     let manager = transmog_session::CaptureManager::new(NonZeroUsize::new(2048).unwrap())?;
     manager
@@ -349,7 +399,12 @@ async fn open_live_capture(
             policy,
             limits: CaptureLimits::default(),
             encoding: transmog_capture::CaptureEncoding::default(),
-            metadata: None,
+            metadata: Some(serde_json::json!({
+                "application": "Transmog CLI",
+                "version": env!("CARGO_PKG_VERSION"),
+                "httpsDecryption": config.decrypt_https,
+                "processInspection": config.process_inspection,
+            })),
         })
         .await?;
     Ok(manager)
@@ -804,11 +859,10 @@ fn write_new(path: &Path, contents: &[u8]) -> io::Result<()> {
 }
 
 fn option<'a>(arguments: &'a [String], name: &str) -> Option<&'a str> {
-    arguments
-        .windows(2)
-        .find(|pair| pair[0] == name)
-        .filter(|pair| !pair[1].is_empty() && !pair[1].starts_with("--"))
-        .map(|pair| pair[1].as_str())
+    arguments::options(arguments)
+        .find(|(option, _)| *option == name)
+        .and_then(|(_, value)| value)
+        .filter(|value| !value.is_empty() && !value.starts_with("--"))
 }
 
 fn required_option<'a>(arguments: &'a [String], name: &str) -> io::Result<&'a str> {
@@ -968,6 +1022,52 @@ fn find_ascii_case_insensitive(haystack: &[u8], needle: &[u8]) -> Option<usize> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn standalone_serve_accepts_repeatable_names_and_requires_ca_only_when_decrypting() {
+        for arguments in [
+            vec!["--no-decrypt-https"],
+            vec![
+                "--no-decrypt-https",
+                "--process",
+                "browser",
+                "--process",
+                "worker",
+            ],
+            vec![
+                "--no-decrypt-https",
+                "--exclude-process",
+                "browser",
+                "--exclude-process",
+                "worker",
+            ],
+            vec!["--ca-cert", "existing.pem", "--ca-key", "existing.key"],
+        ] {
+            let arguments = arguments.into_iter().map(str::to_owned).collect::<Vec<_>>();
+            #[cfg(any(windows, target_os = "linux"))]
+            assert!(validate_serve_options(&arguments).is_ok(), "{arguments:?}");
+            #[cfg(not(any(windows, target_os = "linux")))]
+            assert_eq!(
+                validate_serve_options(&arguments).is_err(),
+                arguments
+                    .iter()
+                    .any(|arg| matches!(arg.as_str(), "--process" | "--exclude-process"))
+            );
+        }
+        for arguments in [
+            vec![],
+            vec!["--ca-cert", "existing.pem"],
+            vec!["--no-decrypt-https", "--ca-cert", "existing.pem"],
+            vec!["--no-decrypt-https", "--ca-key", "existing.key"],
+        ] {
+            assert!(
+                validate_serve_options(
+                    &arguments.into_iter().map(str::to_owned).collect::<Vec<_>>()
+                )
+                .is_err()
+            );
+        }
+    }
 
     #[test]
     fn proof_values_are_validated_before_files_or_traffic_and_html_is_escaped() {

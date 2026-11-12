@@ -31,7 +31,7 @@ impl transmog_tls::DownstreamCertificateResolver for DisabledInterceptionCertifi
         _identity: &transmog_tls::EndpointIdentity,
         _now: std::time::SystemTime,
     ) -> Result<transmog_tls::IssuedLeaf, transmog_tls::CertificateResolverError> {
-        Err(transmog_tls::CertificateResolverError::Provider("HTTPS decryption is disabled; restart the proxy after setting up an interception certificate to enable it".into()))
+        Err(transmog_tls::CertificateResolverError::Provider("HTTPS decryption is disabled; set up an interception certificate and enable decryption in Settings".into()))
     }
 }
 
@@ -123,24 +123,71 @@ pub(crate) struct ProxyStartResources<'a> {
 async fn load_proxy_ca(
     request: ProxyStartRequest,
 ) -> Result<(ProxyCa, ProxyStartRequest), AppError> {
-    let (certificate, key, request) = tokio::task::spawn_blocking(move || {
-        Ok::<_, AppError>((
-            read_bounded(&request.ca_certificate_path)?,
-            transmog_key_protection::read(&request.ca_private_key_path, &SystemKeyProtection)
-                .map_err(|error| key_protection_error(&error))?,
-            request,
-        ))
+    let (ca, request) = tokio::task::spawn_blocking(move || {
+        Ok::<_, AppError>((load_proxy_ca_material(&request)?, request))
     })
     .await
     .map_err(|_| AppError::new(ErrorCategory::Internal, "CA loading task failed", true))??;
-    let ca = ProxyCa::from_pem(&certificate, &key).map_err(|_| {
+    Ok((ca, request))
+}
+
+fn load_proxy_ca_material(request: &ProxyStartRequest) -> Result<ProxyCa, AppError> {
+    let certificate = read_bounded(&request.ca_certificate_path)?;
+    let key = transmog_key_protection::read(&request.ca_private_key_path, &SystemKeyProtection)
+        .map_err(|error| key_protection_error(&error))?;
+    ProxyCa::from_pem(&certificate, &key).map_err(|_| {
         AppError::new(
             ErrorCategory::InvalidInput,
             "CA certificate or private key is invalid or mismatched",
             false,
         )
-    })?;
-    Ok((ca, request))
+    })
+}
+
+pub(crate) struct PreparedHttpsInterception {
+    pub(crate) certificates: Arc<dyn transmog_tls::DownstreamCertificateResolver>,
+    pub(crate) certificate: boring::x509::X509,
+    pub(crate) thumbprint: String,
+}
+
+pub(crate) fn prepare_https_interception(
+    request: &ProxyStartRequest,
+) -> Result<PreparedHttpsInterception, AppError> {
+    let invalid = || {
+        AppError::new(
+            ErrorCategory::InvalidInput,
+            "The interception certificate is unavailable, invalid, or expired. Open Settings → Connection to set up HTTPS interception, then save again.",
+            false,
+        )
+    };
+    let ca = load_proxy_ca_material(request).map_err(|_| invalid())?;
+    let now = boring::asn1::Asn1Time::days_from_now(0).map_err(|_| invalid())?;
+    if !transmog_tls_native::certificate_is_ca(ca.certificate())
+        || ca
+            .certificate()
+            .not_before()
+            .compare(&now)
+            .map_err(|_| invalid())?
+            .is_gt()
+        || !ca
+            .certificate()
+            .not_after()
+            .compare(&now)
+            .map_err(|_| invalid())?
+            .is_gt()
+    {
+        return Err(invalid());
+    }
+    let certificate = ca.certificate().to_owned();
+    let thumbprint = ca.sha256_thumbprint().map_err(|_| invalid())?;
+    let certificates =
+        interception_certificates(Some(ca), &transmog_runtime::RuntimeLimits::default())
+            .map_err(|_| invalid())?;
+    Ok(PreparedHttpsInterception {
+        certificates,
+        certificate,
+        thumbprint,
+    })
 }
 
 fn interception_certificates(
@@ -197,6 +244,7 @@ pub(crate) async fn start_proxy(
     let config = ProxyConfig {
         network_profile: Some(preferences.network_profiles.active_profile.clone()),
         decrypt_https: preferences.decrypt_https,
+        process_inspection: preferences.process_inspection.clone(),
         isolate_outbound_connections: preferences.isolate_outbound_connections,
         reuse_server_connections: preferences.reuse_server_connections,
         allowed_outbound_protocols: preferences.allowed_outbound_protocols,
@@ -404,6 +452,27 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;
+
+    use std::sync::{Condvar, Mutex};
+    use transmog_session::{HostIntegrationError, HostRestoreToken};
+
+    struct DelayedHost {
+        entered: tokio::sync::Notify,
+        release: (Mutex<bool>, Condvar),
+    }
+    impl HostIntegration for DelayedHost {
+        fn apply(&self, _: SocketAddr) -> Result<HostRestoreToken, HostIntegrationError> {
+            self.entered.notify_one();
+            let mut release = self.release.0.lock().unwrap();
+            while !*release {
+                release = self.release.1.wait(release).unwrap();
+            }
+            Ok(HostRestoreToken::new(()))
+        }
+        fn restore(&self, _: &HostRestoreToken) -> Result<(), HostIntegrationError> {
+            Ok(())
+        }
+    }
 
     async fn create_fixture_ca(request: CaCreateRequest) {
         #[cfg(windows)]
@@ -1291,5 +1360,412 @@ mod tests {
                 .any(|protocol| protocol.boundary == "client-request"
                     && protocol.version == "HTTP/1.1")
         );
+    }
+
+    #[tokio::test]
+    async fn process_policy_publication_is_ordered_with_startup_and_persistence() {
+        use transmog_core::process_inspection::{ProcessInspectionMode, ProcessInspectionPolicy};
+
+        let root = tempfile::tempdir().unwrap();
+        let settings_dir = root.path().join("settings");
+        let app = crate::Application::new(crate::AppConfig {
+            product_state_path: Some(settings_dir.join("preferences")),
+            ..Default::default()
+        })
+        .unwrap();
+        let original = app.product_state();
+        let baseline = original.preferences.process_inspection.clone();
+        let mut settings = original;
+        settings.preferences.process_inspection = ProcessInspectionPolicy {
+            mode: ProcessInspectionMode::Only,
+            include: vec!["chrome.exe".into()],
+            exclude: vec![],
+        };
+        app.save_product_state_with_process_inspection(settings, &baseline)
+            .unwrap();
+        let saved = app.product_state();
+        let host = Arc::new(DelayedHost {
+            entered: tokio::sync::Notify::new(),
+            release: (Mutex::new(false), Condvar::new()),
+        });
+        let worker_app = app.clone();
+        let worker_host = host.clone();
+        let start = tokio::spawn(async move {
+            worker_app
+                .start_https_tunnels(
+                    ProxyStartRequest {
+                        ca_certificate_path: "/missing/ca.pem".into(),
+                        ca_private_key_path: "/missing/ca.key".into(),
+                        ..Default::default()
+                    },
+                    Some(worker_host),
+                )
+                .await
+        });
+        host.entered.notified().await;
+        assert!(!app.product_state().preferences.decrypt_https);
+        let mut during_start = saved.clone();
+        during_start.preferences.decrypt_https = true;
+        during_start.preferences.process_inspection = ProcessInspectionPolicy {
+            mode: ProcessInspectionMode::Except,
+            include: vec![],
+            exclude: vec!["helper.exe".into()],
+        };
+        let error = app
+            .save_product_state_with_process_inspection(
+                during_start.clone(),
+                &saved.preferences.process_inspection,
+            )
+            .unwrap_err();
+        assert!(error.retryable);
+        assert!(!app.product_state().preferences.decrypt_https);
+        *host.release.0.lock().unwrap() = true;
+        host.release.1.notify_one();
+        let status = start.await.unwrap().unwrap();
+        assert_eq!(
+            status.process_inspection,
+            saved.preferences.process_inspection
+        );
+        assert_eq!(status.https_decryption, Some(false));
+        during_start.preferences.decrypt_https = false;
+        let updated = app
+            .save_product_state_with_process_inspection(
+                during_start,
+                &saved.preferences.process_inspection,
+            )
+            .unwrap();
+        assert_eq!(
+            app.status().process_inspection,
+            updated.preferences.process_inspection
+        );
+        assert_eq!(app.status().https_decryption, Some(false));
+        // A failed durable write must leave the effective runtime policy intact.
+        std::fs::remove_dir_all(&settings_dir).unwrap();
+        std::fs::write(&settings_dir, "blocked").unwrap();
+        let mut failed = updated.clone();
+        failed.preferences.process_inspection = baseline;
+        assert!(
+            app.save_product_state_with_process_inspection(
+                failed,
+                &updated.preferences.process_inspection
+            )
+            .is_err()
+        );
+        assert_eq!(
+            app.status().process_inspection,
+            updated.preferences.process_inspection
+        );
+        app.shutdown().await.unwrap();
+        assert!(!root.path().join("ca.pem").exists());
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)] // Exercise live settings, run identity, capture continuity and all failure boundaries together.
+    async fn live_https_settings_preserve_recording_and_custom_certificate_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let app = crate::Application::new(crate::AppConfig {
+            product_state_path: Some(root.path().join("settings/preferences")),
+            ..Default::default()
+        })
+        .unwrap();
+        let mut initial = app.product_state();
+        initial.preferences.configure_system_proxy = false;
+        app.save_product_state(initial).unwrap();
+        let request = ProxyStartRequest {
+            ca_certificate_path: root.path().join("custom.pem"),
+            ca_private_key_path: root.path().join("custom.key"),
+            ..Default::default()
+        };
+        app.start_https_tunnels(request.clone(), None)
+            .await
+            .unwrap();
+        let listener = app.status().listener;
+        let capture_path = root.path().join("live.tmcap");
+        app.start_capture(crate::CaptureStartRequest {
+            password: None,
+            include_network_context: false,
+            path: capture_path.clone(),
+            max_file_bytes: u64::MAX,
+            retain_body_samples: true,
+            redact_sensitive_headers: false,
+        })
+        .await
+        .unwrap();
+        let fallback = ProxyStartRequest {
+            ca_certificate_path: root.path().join("wrong.pem"),
+            ca_private_key_path: root.path().join("wrong.key"),
+            ..Default::default()
+        };
+        let mut enabled = app.product_state();
+        enabled.preferences.decrypt_https = true;
+        // This integration setting applies on a later start; the current run stays manual.
+        enabled.preferences.configure_system_proxy = true;
+        let error = app
+            .save_product_settings_with_https_validation(
+                enabled.clone(),
+                None,
+                Some(false),
+                &fallback,
+                |_, _, _| panic!("missing CA reached trust validation"),
+            )
+            .unwrap_err();
+        assert!(error.message.contains("Settings → Connection"));
+        assert!(!app.product_state().preferences.decrypt_https);
+        assert_eq!(app.status().https_decryption, Some(false));
+        assert!(app.proxy_certificate.lock().unwrap().is_none());
+        let ca = CaCreateRequest {
+            certificate_path: request.ca_certificate_path.clone(),
+            private_key_path: request.ca_private_key_path.clone(),
+            common_name: "Live HTTPS settings CA".into(),
+            validity_days: 2,
+        };
+        create_fixture_ca(ca.clone()).await;
+        let rejected = app
+            .save_product_settings_with_https_validation(
+                enabled.clone(),
+                None,
+                Some(false),
+                &fallback,
+                |thumbprint, integrated, actual| {
+                    assert_eq!(thumbprint.len(), 64);
+                    assert!(
+                        !integrated,
+                        "draft integration choice replaced the active run"
+                    );
+                    assert_eq!(actual.ca_certificate_path, request.ca_certificate_path);
+                    Err("Trust the interception certificate first.".into())
+                },
+            )
+            .unwrap_err();
+        assert!(
+            rejected
+                .message
+                .contains("Trust the interception certificate")
+        );
+        assert!(!app.product_state().preferences.decrypt_https);
+        assert_eq!(app.status().https_decryption, Some(false));
+        assert!(app.proxy_certificate.lock().unwrap().is_none());
+        app.save_product_settings_with_https_validation(
+            enabled,
+            None,
+            Some(false),
+            &fallback,
+            |_, integrated, actual| {
+                assert!(!integrated);
+                assert_eq!(actual.ca_private_key_path, request.ca_private_key_path);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(app.status().https_decryption, Some(true));
+        assert!(app.proxy_certificate.lock().unwrap().is_some());
+        let stale = app.product_state();
+        std::fs::remove_file(&request.ca_certificate_path).unwrap();
+        std::fs::remove_file(&request.ca_private_key_path).unwrap();
+        let mut disabled = stale.clone();
+        disabled.preferences.decrypt_https = false;
+        app.save_product_settings_with_https_validation(
+            disabled,
+            None,
+            Some(true),
+            &fallback,
+            |_, _, _| panic!("disabling inspected certificate material"),
+        )
+        .unwrap();
+        assert_eq!(app.status().https_decryption, Some(false));
+        assert!(app.proxy_certificate.lock().unwrap().is_none());
+        app.save_product_settings_with_https_validation(
+            stale,
+            None,
+            Some(true),
+            &fallback,
+            |_, _, _| panic!("stale unchanged choice reloaded certificate material"),
+        )
+        .unwrap();
+        assert!(!app.product_state().preferences.decrypt_https);
+        assert_eq!(app.status().https_decryption, Some(false));
+        create_fixture_ca(ca).await;
+        let mut headless_enabled = app.product_state();
+        headless_enabled.preferences.decrypt_https = true;
+        app.save_product_state(headless_enabled).unwrap();
+        assert_eq!(app.status().https_decryption, Some(true));
+        assert_eq!(app.status().listener, listener);
+        assert!(
+            matches!(app.capture_status(), crate::CaptureReadModel::Active { ref path, .. } if path == &capture_path)
+        );
+        assert!(
+            matches!(app.stop_capture().await.unwrap(), crate::CaptureReadModel::Sealed { ref path, .. } if path == &capture_path)
+        );
+        app.shutdown().await.unwrap();
+        let reopened = crate::Application::new(crate::AppConfig {
+            product_state_path: Some(root.path().join("settings/preferences")),
+            ..Default::default()
+        })
+        .unwrap();
+        assert!(reopened.product_state().preferences.decrypt_https);
+    }
+
+    #[tokio::test]
+    async fn live_https_settings_require_trust_for_the_owned_host_integration() {
+        let root = tempfile::tempdir().unwrap();
+        let app = crate::Application::new(crate::AppConfig::default()).unwrap();
+        let ca = CaCreateRequest {
+            certificate_path: root.path().join("ca.pem"),
+            private_key_path: root.path().join("ca.key"),
+            common_name: "Integrated live HTTPS CA".into(),
+            validity_days: 2,
+        };
+        create_fixture_ca(ca.clone()).await;
+        let request = ProxyStartRequest {
+            ca_certificate_path: ca.certificate_path,
+            ca_private_key_path: ca.private_key_path,
+            ..Default::default()
+        };
+        let host = Arc::new(DelayedHost {
+            entered: tokio::sync::Notify::new(),
+            release: (Mutex::new(true), Condvar::new()),
+        });
+        app.start_https_tunnels(request.clone(), Some(host))
+            .await
+            .unwrap();
+        let mut enabled = app.product_state();
+        enabled.preferences.decrypt_https = true;
+        enabled.preferences.configure_system_proxy = false;
+        assert!(
+            app.save_product_settings_with_https_validation(
+                enabled,
+                None,
+                Some(false),
+                &request,
+                |_, integrated, _| {
+                    assert!(
+                        integrated,
+                        "draft manual-routing setting bypassed active trust validation"
+                    );
+                    Err("The active run requires a trusted interception certificate.".into())
+                }
+            )
+            .is_err()
+        );
+        assert!(!app.product_state().preferences.decrypt_https);
+        assert_eq!(app.status().https_decryption, Some(false));
+        app.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn live_https_settings_publish_nothing_after_a_failed_durable_save() {
+        let root = tempfile::tempdir().unwrap();
+        let settings_dir = root.path().join("settings");
+        let app = crate::Application::new(crate::AppConfig {
+            product_state_path: Some(settings_dir.join("preferences")),
+            ..Default::default()
+        })
+        .unwrap();
+        let ca = CaCreateRequest {
+            certificate_path: root.path().join("custom.pem"),
+            private_key_path: root.path().join("custom.key"),
+            common_name: "Failed settings save CA".into(),
+            validity_days: 2,
+        };
+        create_fixture_ca(ca.clone()).await;
+        app.start_https_tunnels(
+            ProxyStartRequest {
+                ca_certificate_path: ca.certificate_path,
+                ca_private_key_path: ca.private_key_path,
+                ..Default::default()
+            },
+            None,
+        )
+        .await
+        .unwrap();
+        let listener = app.status().listener;
+        std::fs::remove_dir_all(&settings_dir).unwrap();
+        std::fs::write(settings_dir, "blocked").unwrap();
+        let mut enabled = app.product_state();
+        enabled.preferences.decrypt_https = true;
+        assert!(app.save_product_state(enabled).is_err());
+        assert!(!app.product_state().preferences.decrypt_https);
+        assert_eq!(app.status().https_decryption, Some(false));
+        assert_eq!(app.status().listener, listener);
+        assert!(app.proxy_certificate.lock().unwrap().is_none());
+        app.shutdown().await.unwrap();
+    }
+
+    #[test]
+    fn live_https_preparation_rejects_a_leaf_certificate_and_expired_ca() {
+        use boring::{
+            asn1::Asn1Time,
+            hash::MessageDigest,
+            pkey::PKey,
+            x509::{
+                X509,
+                extension::{BasicConstraints, KeyUsage},
+            },
+        };
+        let root = tempfile::tempdir().unwrap();
+        let request = ProxyStartRequest {
+            ca_certificate_path: root.path().join("ca.pem"),
+            ca_private_key_path: root.path().join("ca.key"),
+            ..Default::default()
+        };
+        let ca = ProxyCa::generate("Preparation test CA", 2).unwrap();
+        let leaf = ca
+            .issue(
+                transmog_tls::EndpointIdentity::parse("example.test").unwrap(),
+                1,
+            )
+            .unwrap();
+        std::fs::write(
+            &request.ca_certificate_path,
+            leaf.certificate.to_pem().unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            &request.ca_private_key_path,
+            leaf.private_key.private_key_to_pem_pkcs8().unwrap(),
+        )
+        .unwrap();
+        assert!(prepare_https_interception(&request).is_err());
+        let key_pem = ca.private_key_pem_pkcs8().unwrap();
+        let key = PKey::private_key_from_pem(&key_pem).unwrap();
+        let mut expired = X509::builder().unwrap();
+        expired.set_version(2).unwrap();
+        expired
+            .set_serial_number(ca.certificate().serial_number())
+            .unwrap();
+        expired
+            .set_subject_name(ca.certificate().subject_name())
+            .unwrap();
+        expired
+            .set_issuer_name(ca.certificate().subject_name())
+            .unwrap();
+        expired.set_pubkey(&key).unwrap();
+        expired
+            .set_not_before(&Asn1Time::from_unix(1).unwrap())
+            .unwrap();
+        expired
+            .set_not_after(&Asn1Time::from_unix(2).unwrap())
+            .unwrap();
+        expired
+            .append_extension(
+                BasicConstraints::new()
+                    .critical()
+                    .ca()
+                    .build()
+                    .unwrap()
+                    .as_ref(),
+            )
+            .unwrap();
+        expired
+            .append_extension(KeyUsage::new().key_cert_sign().build().unwrap().as_ref())
+            .unwrap();
+        expired.sign(&key, MessageDigest::sha256()).unwrap();
+        std::fs::write(
+            &request.ca_certificate_path,
+            expired.build().to_pem().unwrap(),
+        )
+        .unwrap();
+        std::fs::write(&request.ca_private_key_path, key_pem).unwrap();
+        assert!(prepare_https_interception(&request).is_err());
     }
 }

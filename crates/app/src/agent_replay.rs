@@ -9,6 +9,44 @@ use std::{
 };
 use transmog_session::ReplayLimits;
 
+fn validate_live_rules_process(
+    policy: &crate::ProcessInspectionPolicy,
+    identity: &transmog_core::ClientIdentity,
+) -> Result<(), AppError> {
+    if policy.should_inspect(identity) {
+        return Ok(());
+    }
+    let known = matches!(identity,
+        transmog_core::ClientIdentity::LocalProcess { name: Some(name), .. }
+            if !name.trim().is_empty());
+    Err(invalid(if known {
+        "Live-rules replay requires Transmog to be included in Inspect traffic from. Adjust process selection in Settings or send without live rules."
+    } else {
+        "Live-rules replay cannot identify its process for the active process filter. Use All processes or send without live rules."
+    }))
+}
+
+async fn validate_replay_socket(
+    control: &transmog_runtime::ProxyControl,
+    local: SocketAddr,
+    address: SocketAddr,
+) -> Result<(), AppError> {
+    let policy = control.process_inspection();
+    if policy.mode == crate::ProcessInspectionMode::All {
+        return Ok(());
+    }
+    // Recheck real socket attribution before sending any request bytes;
+    // filtered unknown callers must never execute an unobserved replay.
+    // Like other preflight checks, this does not lock subsequent listener admission.
+    tokio::task::spawn_blocking(move || {
+        use transmog_runtime::ClientIdentityResolver as _;
+        let identity = transmog_runtime::SystemClientIdentityResolver.resolve(local, address);
+        validate_live_rules_process(&policy, &identity)
+    })
+    .await
+    .map_err(|_| failed("The replay process could not be identified"))?
+}
+
 fn invalid(message: &str) -> AppError {
     AppError::new(ErrorCategory::InvalidInput, message, false)
 }
@@ -63,6 +101,14 @@ impl Application {
         if live_rules {
             let engine = self.live_parent.as_deref().unwrap_or(self);
             engine.agent_proxy_address()?;
+            let control = engine
+                .service
+                .proxy_control()
+                .ok_or_else(|| failed("The running proxy is unavailable"))?;
+            validate_live_rules_process(
+                &control.process_inspection(),
+                &transmog_runtime::current_process_identity(),
+            )?;
             if matches!(
                 request.body_source,
                 Some(crate::ComposerBodySource::File { .. })
@@ -72,7 +118,7 @@ impl Application {
                 ));
             }
             if built.target().scheme == "https"
-                && (!engine.product_state().preferences.decrypt_https
+                && (!control.https_decryption()
                     || engine
                         .proxy_certificate
                         .lock()
@@ -80,7 +126,7 @@ impl Application {
                         .is_none())
             {
                 return Err(invalid(
-                    "HTTPS live-rules replay requires HTTPS decryption and the running proxy's interception certificate. Configure it in the app, then start collection.",
+                    "HTTPS live-rules replay requires the interception certificate and HTTPS decryption. Set up the certificate and enable decryption in Settings.",
                 ));
             }
             if engine.body_store.is_none() {
@@ -197,8 +243,12 @@ impl Application {
             .clone();
         let expected = validated.target.clone();
         let expected_method = request.method.clone();
+        let control = engine
+            .service
+            .proxy_control()
+            .ok_or_else(|| failed("The running proxy is unavailable"))?;
         let (status, local, response_body_bytes) =
-            send_through_proxy(address, &request, validated, body, certificate).await?;
+            send_through_proxy(address, &request, validated, body, certificate, control).await?;
         let mut updates = engine.subscribe_session_updates()?;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         let snapshot = loop {
@@ -304,6 +354,7 @@ async fn send_through_proxy(
     validated: transmog_session::ReplayRequest,
     body: Bytes,
     certificate: Option<boring::x509::X509>,
+    control: transmog_runtime::ProxyControl,
 ) -> Result<(u16, SocketAddr, u64), AppError> {
     let socket = tokio::net::TcpStream::connect(address)
         .await
@@ -311,6 +362,7 @@ async fn send_through_proxy(
     let local = socket
         .local_addr()
         .map_err(|_| failed("The replay connection identity is unavailable"))?;
+    validate_replay_socket(&control, local, address).await?;
     let socket: Box<dyn ReplayIo> = if validated.target.scheme == "https" {
         Box::new(
             connect_tls(
@@ -462,6 +514,187 @@ async fn connect_tls(
 mod tests {
     use super::*;
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    #[test]
+    fn live_rules_process_filters_fail_closed_for_unresolved_callers() {
+        let policy = crate::ProcessInspectionPolicy {
+            mode: crate::ProcessInspectionMode::Except,
+            include: vec![],
+            exclude: vec!["other.exe".into()],
+        }
+        .validated()
+        .unwrap();
+        for unknown in [
+            transmog_core::ClientIdentity::LocalUnknown,
+            transmog_core::ClientIdentity::Remote,
+            transmog_core::ClientIdentity::LocalProcess { pid: 1, name: None },
+            transmog_core::ClientIdentity::LocalProcess {
+                pid: 1,
+                name: Some(String::new()),
+            },
+        ] {
+            assert!(validate_live_rules_process(&policy, &unknown).is_err());
+            assert!(
+                validate_live_rules_process(&crate::ProcessInspectionPolicy::default(), &unknown)
+                    .is_ok()
+            );
+        }
+    }
+
+    #[cfg(any(windows, target_os = "linux"))]
+    struct ProcessReplayFixture {
+        _root: tempfile::TempDir,
+        app: Application,
+        origin: tokio::net::TcpListener,
+        request: ComposerRequest,
+        own_name: String,
+    }
+
+    #[cfg(any(windows, target_os = "linux"))]
+    impl ProcessReplayFixture {
+        async fn start() -> Self {
+            let root = tempfile::tempdir().unwrap();
+            let app = Application::new(crate::AppConfig {
+                body_store: Some(crate::BodyStoreConfig::product_default(
+                    root.path().join("bodies"),
+                )),
+                ..crate::AppConfig::default()
+            })
+            .unwrap();
+            app.start_https_tunnels(crate::ProxyStartRequest::default(), None)
+                .await
+                .unwrap();
+            let origin = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let request = ComposerRequest {
+                method: "POST".into(),
+                url: format!("http://{}/commit", origin.local_addr().unwrap()),
+                headers: vec![],
+                body: "payload".into(),
+                body_source: None,
+                source_entry_id: None,
+                body_is_hex: false,
+                acknowledge_non_idempotent: true,
+                acknowledge_credentials: false,
+            };
+            let transmog_core::ClientIdentity::LocalProcess {
+                name: Some(own_name),
+                ..
+            } = transmog_runtime::current_process_identity()
+            else {
+                panic!("test process must have an executable name");
+            };
+            Self {
+                _root: root,
+                app,
+                origin,
+                request,
+                own_name,
+            }
+        }
+    }
+
+    #[cfg(any(windows, target_os = "linux"))]
+    #[tokio::test]
+    async fn live_rules_rejects_excluded_processes_before_origin_side_effects() {
+        let fixture = ProcessReplayFixture::start().await;
+        let app = &fixture.app;
+        let control = app.service.proxy_control().unwrap();
+        for policy in [
+            crate::ProcessInspectionPolicy {
+                mode: crate::ProcessInspectionMode::Only,
+                include: vec!["a-different-application.exe".into()],
+                exclude: vec![],
+            },
+            crate::ProcessInspectionPolicy {
+                mode: crate::ProcessInspectionMode::Except,
+                include: vec![],
+                exclude: vec![fixture.own_name.clone()],
+            },
+        ] {
+            control.set_process_inspection(policy).unwrap();
+            assert_eq!(
+                app.product_state().preferences.process_inspection.mode,
+                crate::ProcessInspectionMode::All
+            );
+            let error = tokio::time::timeout(
+                Duration::from_secs(1),
+                app.execute_agent_request(fixture.request.clone(), true),
+            )
+            .await
+            .unwrap()
+            .unwrap_err();
+            assert_eq!(error.category, ErrorCategory::InvalidInput);
+            assert!(error.message.contains("Inspect traffic from"));
+            assert!(
+                tokio::time::timeout(Duration::from_millis(25), fixture.origin.accept())
+                    .await
+                    .is_err(),
+                "rejected replay connected to its origin"
+            );
+        }
+        app.shutdown().await.unwrap();
+    }
+
+    #[cfg(any(windows, target_os = "linux"))]
+    #[tokio::test]
+    async fn live_rules_uses_effective_runtime_selection_and_observes_selected_process() {
+        let ProcessReplayFixture {
+            _root,
+            app,
+            origin,
+            request,
+            own_name,
+        } = ProcessReplayFixture::start().await;
+        let control = app.service.proxy_control().unwrap();
+        control
+            .set_process_inspection(crate::ProcessInspectionPolicy {
+                mode: crate::ProcessInspectionMode::Only,
+                include: vec![own_name],
+                exclude: vec![],
+            })
+            .unwrap();
+        let origin_task = tokio::spawn(async move {
+            let (mut socket, _) = origin.accept().await.unwrap();
+            let mut head = Vec::new();
+            while !head.ends_with(b"\r\n\r\n") {
+                head.push(socket.read_u8().await.unwrap());
+            }
+            let mut body = [0; 7];
+            socket.read_exact(&mut body).await.unwrap();
+            assert_eq!(&body, b"payload");
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+                .await
+                .unwrap();
+        });
+        let response = tokio::time::timeout(
+            Duration::from_secs(5),
+            app.execute_agent_request(request.clone(), true),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(response.status, 200);
+        origin_task.await.unwrap();
+        let mut saved = app.product_state();
+        let baseline = saved.preferences.process_inspection.clone();
+        saved.preferences.process_inspection = crate::ProcessInspectionPolicy {
+            mode: crate::ProcessInspectionMode::Only,
+            include: vec!["a-different-application.exe".into()],
+            exclude: vec![],
+        };
+        app.save_product_state_with_process_inspection(saved, &baseline)
+            .unwrap();
+        control
+            .set_process_inspection(crate::ProcessInspectionPolicy::default())
+            .unwrap();
+        assert!(
+            app.validate_agent_request(&request, true).is_ok(),
+            "runtime policy must take precedence over saved process selection"
+        );
+        app.shutdown().await.unwrap();
+    }
+
     #[tokio::test]
     async fn local_tls_rejects_another_ca_before_sending_request_bytes() {
         let trusted = transmog_tls::ProxyCa::generate("Expected proxy", 2).unwrap();

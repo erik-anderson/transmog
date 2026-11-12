@@ -21,7 +21,9 @@ pub use proxy::{
     ProxyRuntimeError, ProxyServer, RouteAttemptEvidence, WebSocketSessionEvidence,
     WebSocketSessionOutcome,
 };
-pub use transmog_client_identity::{ClientIdentityResolver, SystemClientIdentityResolver};
+pub use transmog_client_identity::{
+    ClientIdentityResolver, SystemClientIdentityResolver, current_process_identity,
+};
 pub use transmog_network::{HappyEyeballsConfig, HappyEyeballsConfigError};
 
 /// Network exposure configuration.

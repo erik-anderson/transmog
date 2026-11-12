@@ -11,7 +11,7 @@ repository.workspace = true
 transmog-core = { version = "=0.1.24", path = "../proxy-core" }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys.workspace = true
+windows-sys = { workspace = true, features = ["Win32_System_ProcessStatus"] }
 
 [lints.rust]
 # This crate is the single audited endpoint/process attribution FFI boundary.

@@ -281,10 +281,12 @@ impl ApplicationSessionService {
 
     /// Returns a runtime control handle while a bound run remains owned.
     pub fn proxy_control(&self) -> Option<ProxyControl> {
-        self.lock_lifecycle()
+        let lifecycle = self.lock_lifecycle();
+        lifecycle
             .task
             .as_ref()
             .and_then(|task| task.control.clone())
+            .or_else(|| lifecycle.stopping_control.clone())
     }
 
     /// Starts a bound runtime task and begins collecting WebSocket evidence.

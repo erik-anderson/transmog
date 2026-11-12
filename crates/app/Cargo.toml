@@ -57,6 +57,7 @@ transmog-script = { version = "=0.1.24", path = "../proxy-script" }
 transmog-script-supervisor = { version = "=0.1.24", path = "../script-supervisor" }
 transmog-session = { version = "=0.1.24", path = "../proxy-session" }
 transmog-tls = { version = "=0.1.24", path = "../proxy-tls" }
+transmog-tls-native = { version = "=0.1.24", path = "../tls-native" }
 
 [build-dependencies]
 hex.workspace = true

@@ -41,7 +41,7 @@ are deferred; existing command output and exit behavior remain unchanged.
 | `mcp status` / `mcp call` | Check desktop status or call an MCP tool with JSON arguments. |
 | `context` | List or extract original recorded configuration, support metadata, incidents and source notes. |
 | `roots cleanup` | Restore interrupted Windows proxy settings and remove CLI-owned roots. |
-| `serve` | Run a proxy with an existing CA and manually configured clients. |
+| `serve` | Run a manually configured proxy, with an existing CA or HTTPS tunnels. |
 | `ca generate` | Create a public CA certificate and an OS-user-protected private key. |
 | `ca protect` | Protect a matching legacy CA key in place. |
 | `ca issue` | Issue a short-lived server certificate and PEM leaf key. |
@@ -83,7 +83,8 @@ requests on Ctrl+C. A second Ctrl+C terminates unfinished work and saves
 available evidence. Other platforms require manual client proxy configuration.
 `--no-system-proxy` makes Windows routing manual too. `--no-install-root` leaves
 certificate setup to you; unattended runs must choose it or `--install-root`.
-OS consent still applies to installation and removal.
+OS consent still applies to installation and removal. `--no-decrypt-https`
+skips certificate setup entirely.
 
 The initial privacy defaults retain sensitive headers and up to 25,000,000
 bytes of each request body. Response bodies and measured byte counts are
@@ -100,6 +101,38 @@ The [support guide](cli-support-capture.md) explains passwords, buffer sizing,
 persistence, and cleanup in detail.
 
 ## Run a manually configured proxy
+
+### Select callers and HTTPS inspection
+
+`record` and `serve` inspect all processes by default. Repeat `--process NAME`
+to inspect only those executable names, or repeat `--exclude-process NAME` to
+leave those names uninspected. The two options cannot be combined. Choices
+apply to this invocation and do not read or change desktop preferences.
+
+```powershell
+.\transmog-cli.exe record --output .\browser.tmcap --process chrome.exe --process node.exe
+.\transmog-cli.exe record --output .\support.tmcap --exclude-process pinned-client.exe
+.\transmog-cli.exe record --output .\connections.tmcap --no-decrypt-https
+.\transmog-cli.exe serve --listen 127.0.0.1:8080 --no-decrypt-https
+```
+
+Process selection uses exact executable filenames, ignoring case on Windows.
+It matches all instances; add helper executables separately. Unidentified and
+remote callers pass through uninspected while a process filter is active.
+Excluded callers bypass rules and recording, including CONNECT metadata, but
+still use the proxy relay. See [process inspection](network-profiles.md#choose-processes-to-inspect)
+for matching and platform details.
+
+`--no-decrypt-https` forwards HTTPS through opaque CONNECT tunnels and retains
+connection summaries for selected callers. Plain HTTP remains inspectable.
+This mode does not create, load, install, or remove an interception CA for the
+run, and `serve` needs no `--ca-cert` or `--ca-key`. `record` still restores
+interrupted Windows proxy routing before starting. `--no-install-root` alone leaves HTTPS
+decryption enabled and requires you to arrange certificate trust yourself.
+Combining `--no-decrypt-https` with `record --install-root` or `--persistent-root`,
+or with `serve --ca-cert` or `--ca-key`, is rejected before setup.
+
+### Configure an interception certificate
 
 Generate a CA with new destination paths:
 

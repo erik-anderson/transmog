@@ -79,6 +79,20 @@ arrives and lets the desktop read body payloads on demand.
 
 ## Certificates and interrupted runs
 
+To record connection information without installing a certificate, use
+`record --output trace.tmcap --no-decrypt-https`. Selected callers' HTTPS
+connections retain destinations and outcomes but no decrypted contents;
+ordinary HTTP can still be inspected. No CA is created, installed, or removed
+for this run. Proxy restoration still applies. This differs from
+`--no-install-root`, which keeps HTTPS decryption enabled and leaves certificate
+trust setup to you.
+
+Use repeatable `--process NAME` to focus on specific executables, or repeatable
+`--exclude-process NAME` to leave applications such as pinned TLS clients
+uninspected. These options are mutually exclusive and apply only to the current
+run. Excluded traffic produces no captured records. See
+[CLI caller and HTTPS selection](cli.md#select-callers-and-https-inspection).
+
 The default root is ephemeral: its private key stays in memory and is never
 written to disk. Public recovery records include run identity, certificate validity,
 trust-store scope, lifecycle state, key-storage mode and cleanup attempts/outcome.
@@ -88,11 +102,13 @@ Failed removal retains recovery records for retry. Public certificate and
 ownership records live separately from the desktop in
 `%LOCALAPPDATA%\Transmog-cli`. Windows proxy recovery also has its own CLI journal.
 
-If the process is killed or you dismiss a removal prompt, the next run attempts
-to remove the old root and restore interrupted proxy settings. Failed removal
-keeps the exact identities needed for later cleanup. It does not require an old
-ephemeral key: the next capture generates a fresh root and keeps its new key in
-memory. To retry cleanup directly:
+If the process is killed or you dismiss a removal prompt, the next recording
+restores interrupted Windows proxy settings. Recordings with HTTPS decryption
+also retry old-root removal; `--no-decrypt-https` leaves certificate cleanup for
+a later decrypting recording or `roots cleanup`. Failed removal keeps the exact
+identities needed for later cleanup. Cleanup does not require an old ephemeral
+key: each ordinary decrypting capture generates a fresh root and keeps its new
+key in memory. To retry cleanup directly:
 
 ```powershell
 .\transmog-cli.exe roots cleanup
@@ -109,9 +125,9 @@ This retains a protected private key and reuses a valid CLI root on subsequent
 missing/mismatched key material is retired and replaced. Its key is removed;
 its public identity stays available until OS cleanup succeeds. Ordinary
 ephemeral runs still use a fresh root. Older pending/retired roots are retried at
-startup and completion without immediately repeating a canceled prompt for the
-root used by the current capture. To
-remove persistent roots and their keys too:
+startup and completion of recordings with HTTPS decryption, without immediately
+repeating a canceled prompt for the root used by the current capture. To remove
+persistent roots and their keys too:
 
 ```powershell
 .\transmog-cli.exe roots cleanup --include-persistent

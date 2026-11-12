@@ -11,6 +11,11 @@ settings-workspace { display:contents; }
 .settings-content .network-settings {min-width:0;margin:.5rem 0;padding:.6rem;border:1px solid var(--line);border-radius:.35rem;display:grid;align-content:start;gap:.45rem;}
 .network-settings legend {padding:0 .3rem;font-size:.875rem;font-weight:650;}
 .network-advanced label { margin:0; }
+.https-preference-row { display:flex; align-items:center; flex-wrap:wrap; gap:.4rem .75rem; }
+.https-preference-row > label { margin:0; font-weight:650; }
+.https-disclosure { font-size:.8125rem; }
+.https-disclosure summary { cursor:pointer; }
+.https-disclosure .field-help,.interception-certificate > .field-help { margin-top:.4rem; }
 .settings-content { padding:.3rem; }
 
 .about-panel { max-width:48rem; font-size:.875rem; }.about-panel > p { line-height:1.5; margin:.5rem 0; }.about-panel > button { margin-top:.75rem; }

@@ -1,9 +1,9 @@
 # Network profiles and connection settings
 
 Use **Settings → Preferences → Network** to control connections made by Transmog
-and Composer. **Decrypt HTTPS traffic** and **Profile** stay above the advanced
-settings. Opaque CONNECT tunnels carry the original client's handshake, so their
-TLS and HTTP offers are not controlled by a Transmog profile.
+and Composer. Process inspection, **Decrypt HTTPS traffic**, and **Profile** stay
+above the advanced settings. Opaque CONNECT tunnels carry the original client's
+handshake, so their TLS and HTTP offers are not controlled by a Transmog profile.
 
 ## Choose and activate a profile
 
@@ -79,12 +79,81 @@ freshness, monitoring, recovery and provenance.
 
 ## Decryption and listener settings
 
-**Decrypt HTTPS traffic** applies at the next proxy start. With it off, CONNECT
-forwards opaque bytes without loading an interception CA or requiring CA trust.
-Traffic and TMCap retain the destination, endpoints, outcome and byte counts;
+### Choose processes to inspect
+
+**Inspect traffic from** defaults to **All processes**, preserving ordinary
+capture of every caller using the proxy. **Only these processes** inspects the
+named callers; **All except these processes** leaves the named callers
+uninspected. Each filtered mode keeps its own saved list, including while
+another mode is selected. Choose a running executable suggestion or enter a
+name manually; the application does not need to be running. An active filtered
+mode needs at least one name.
+
+Names match executable filenames, not paths or PIDs. Windows matching ignores
+case and accepts an omitted `.exe` suffix for extensionless names; Linux
+matching is case-sensitive. All instances of a matching executable participate.
+Helper processes with different names need their own entries. Wildcards and
+paths are rejected, and duplicate names are merged. The built-in CLI supports
+process selection on Windows and Linux; other platforms report that attribution
+is unavailable instead of silently accepting ineffective rules.
+
+Excluded HTTPS connections use opaque CONNECT tunnels. They do not load an
+interception certificate or enter rules, scripts, breakpoints, observers, or
+recording, including CONNECT metadata. Excluded ordinary HTTP still needs
+protocol parsing for forwarding but is neither recorded nor modified by
+inspection rules. These connections still use Transmog as a relay; this is not
+a change to the application's proxy routing or a direct-network bypass.
+
+With either process filter active, unidentified, nameless, and remote callers
+also pass through without inspection. Diagnostics report an aggregate count
+when process identity is unavailable. **All processes** retains the previous
+behavior for those callers. See [client attribution](client-process-attribution.md)
+for platform limitations.
+
+**Save settings** persists the process policy before applying it to newly
+accepted connections. Existing connections keep their original decision,
+including long-lived HTTP/2 and WebSocket connections. Reconnect the client
+application to apply a changed rule to its existing work. Removing an entry
+does not retroactively decrypt a tunnel or undo an established TLS interception.
+The proxy status describes the effective policy, independently of an unsaved
+settings draft.
+
+### HTTPS tunnels without certificate setup
+
+**Decrypt HTTPS traffic** takes effect after **Save settings**, without stopping
+capture. New CONNECT requests use the saved mode, including requests on a proxy
+connection opened before the save. Turning decryption off retires intercepted
+connections: admitted requests finish, while new requests reconnect through
+opaque tunnels. HTTP/2 streams arriving during retirement are refused before
+inspection or forwarding, so they cannot reuse the old HTTP/2 or HTTP/3 origin
+connections. Existing upgraded WebSocket sessions continue.
+
+Turning decryption on applies to new HTTPS connections. Existing opaque tunnels
+stay opaque until the client reconnects; TLS cannot change mode inside an
+established tunnel.
+
+**Interception certificate…**, beside the decryption checkbox, opens certificate
+setup even when decryption is off. Enabling decryption validates the certificate,
+private key and required trust before saving. If setup is incomplete, the active
+capture and saved mode stay unchanged, and the settings draft remains available.
+
+With decryption off, CONNECT forwards opaque bytes without loading an
+interception CA or requiring CA trust.
+For callers selected for inspection, Traffic and TMCap retain the destination,
+endpoints, outcome and byte counts;
 the recorded HTTP protocol is the outer CONNECT protocol, and the tunneled
 protocol and contents remain unknown. Decrypted entries retain their CONNECT
 destination alongside inspected messages and TLS evidence.
+
+When an interception certificate is missing, **Start with HTTPS tunnels** saves
+HTTPS decryption as off and starts without creating or installing a certificate.
+Plain HTTP from selected callers remains inspectable; encrypted contents do not.
+Excluded callers still produce no captured entries. Installing a certificate
+later does not enable decryption. Turn it on and save to inspect new HTTPS
+connections in the same capture. Saving during a capture drain also updates the
+mode used after resuming. Already admitted requests continue to completion.
+
+### Listener and outbound settings
 
 **Advanced network settings** contains remote-client access, an optional proxy
 port, caller-process isolation and [client-certificate authorization](client-certificates.md).

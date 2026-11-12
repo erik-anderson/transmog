@@ -105,6 +105,15 @@ impl ActivityTracker {
             kind: ActivityKind::WebSocket,
         }
     }
+    /// Retains an admitted exchange while its opaque upgraded relay is active.
+    pub(crate) fn continue_transport(self: &Arc<Self>) -> ActivityLease {
+        let mut state = self.lock();
+        state.transports += 1;
+        ActivityLease {
+            owner: self.clone(),
+            kind: ActivityKind::Transport,
+        }
+    }
     pub(crate) fn drain(&self) -> u64 {
         let mut state = self.lock();
         state.generation = state.generation.saturating_add(1);

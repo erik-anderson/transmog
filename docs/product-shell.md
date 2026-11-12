@@ -51,11 +51,23 @@ display (or another available display) before showing it, preserving its saved
 size and maximized state. Partially visible windows and valid placements on
 displays with negative coordinates keep their saved position.
 
-On first use, **Set up now** in the HTTPS setup banner, or **Settings → Connection
-→ Set up HTTPS interception**, creates the desktop's CA and asks for approval to
-trust its public certificate. Start verifies its recorded identity and trust
-state before binding. Certificate installation and exact-root removal can
-require Windows consent; private-key files belong to the desktop's user data.
+On first use, **Set up now** in the HTTPS setup banner, or **Interception
+certificate…** beside **Decrypt HTTPS traffic** in Settings → Preferences,
+opens certificate setup. Setup creates the desktop's CA and asks Windows to trust
+its public certificate. Starting with HTTPS decryption on verifies its recorded
+identity and trust state before binding. Certificate installation and exact-root
+removal can require Windows consent; private-key files belong to the desktop's
+user data.
+
+**Start with HTTPS tunnels** also works before certificate setup. It saves HTTPS
+decryption as off and forwards encrypted connections without creating, loading,
+or installing a CA. Selected plain HTTP remains inspectable. Certificate setup
+later leaves that saved choice unchanged. Turn decryption on and save to inspect
+new HTTPS connections without restarting capture. Turning it off lets active
+requests finish and makes new requests reconnect without interception; existing
+opaque tunnels and upgraded WebSockets continue. **Settings → Preferences →
+Inspect traffic from** selects all processes by default, with optional include
+or exclude lists.
 
 **Start proxy** binds the listener and applies its endpoint to the current user's
 Windows proxy settings unless manual routing is configured. Traffic enters the configured body buffer; starting the
@@ -67,7 +79,8 @@ finish. Idle clients do not delay shutdown. **Start proxy** during this state
 resumes the same listener without disrupting active work. Closing the app uses
 its shutdown flow; a journal restores interrupted host configuration on the next
 launch after a hard termination. Setup and recovery actions are in Settings →
-Connection. Certificate paths and exact removal are in Advanced.
+Connection. Certificate paths and exact removal are under **Interception
+certificate**.
 
 Once active work finishes, physical connections have a bounded grace period to
 close. An idle HTTP/2 client that does not acknowledge shutdown cannot leave the

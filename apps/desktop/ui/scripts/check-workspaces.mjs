@@ -86,6 +86,7 @@ import { checkVisualizers } from "./check-visualizers.mjs";
 import { checkCopy } from "./check-copy.mjs";
 import { checkAuth } from "./check-auth.mjs";
 import { checkCertificates } from "./check-certificates.mjs";
+import { checkProcessInspection } from "./check-process-inspection.mjs";
 import { checkConnectTunnels } from "./check-connect-tunnels.mjs";
 import { checkUserAgentOverrides } from "./check-user-agent-overrides.mjs";
 import { checkUserAgentPresets } from "./check-user-agent-presets.mjs";
@@ -229,6 +230,19 @@ await page.addInitScript(
   (configuration) => {
     const { workspace, networkProfiles, scriptDeclarations, scriptHelp, authConversions } =
       configuration;
+    const processStatus = () => ({
+      processInspection: structuredClone(
+        state.savedProduct?.preferences.processInspection ?? {
+          mode: "all",
+          include: [],
+          exclude: [],
+        },
+      ),
+      httpsDecryption: ["running", "draining", "stopping"].includes(state.lifecycle)
+        ? (state.runtimeDecrypt ?? true)
+        : null,
+      unresolvedProcessConnections: state.unresolvedProcessConnections ?? 0,
+    });
     const caller = { kind: "local-process", processName: "Fixture", processId: 42 };
     const summary = (id, index = 0) => ({
       id,
@@ -2392,6 +2406,7 @@ await page.addInitScript(
               ownedCaSha256: "0".repeat(64),
               ownedCaTrusted: true,
               hostRestorePending: false,
+              ...processStatus(),
               diagnosticsPath: "fixture.jsonl",
               ...state.caBootstrap,
             };
@@ -2522,6 +2537,7 @@ await page.addInitScript(
                   schemaVersion: 6,
                   workspace: structuredClone(state.workspace),
                   preferences: {
+                    processInspection: { mode: "all", include: [], exclude: [] },
                     theme: "system",
                     sessionPageSize: 100,
                     configureSystemProxy: state.configureSystemProxy ?? true,
@@ -2551,6 +2567,10 @@ await page.addInitScript(
                     '{"default":"noCertificate","rules":[]}',
                 ),
             );
+            if (state.holdProductRead) {
+              state.holdProductRead = false;
+              await new Promise((resolve) => (state.releaseProductRead = resolve));
+            }
             return product;
           }
           case "save_workspace_preferences":
@@ -2574,20 +2594,37 @@ await page.addInitScript(
             if (state.statusError) throw new Error("Fixture status unavailable");
             return {
               lifecycle: state.lifecycle,
-              listener: state.lifecycle === "running" ? "127.0.0.1:8888" : null,
-              summary: "Proxy " + state.lifecycle,
+              listener: ["running", "draining", "stopping"].includes(state.lifecycle)
+                ? "127.0.0.1:8888"
+                : null,
+              summary: state.statusSummary ?? "Proxy " + state.lifecycle,
               hostRestorePending: false,
+              ...processStatus(),
             };
+          case "list_running_processes":
+            if (state.processInventoryError) throw new Error("Running processes are unavailable");
+            if (state.holdProcessInventory)
+              await new Promise((resolve) => (state.releaseProcessInventory = resolve));
+            return ["chrome.exe", "msedge.exe", "service.helper.exe"];
+          case "start_https_tunnels":
+            if (state.tunnelStartError) throw new Error("Fixture tunnel start failed");
+            state.savedProduct = await window.__TAURI_INTERNALS__.invoke("product_state");
+            state.savedProduct.preferences.decryptHttps = false;
+            if (state.tunnelStartAfterSaveError)
+              throw new Error("Fixture bind failed after saving tunnel mode");
+          // falls through
           case "start_proxy":
             if (state.holdProxyStart)
               await new Promise((resolve) => (state.releaseProxyStart = resolve));
             else await new Promise((resolve) => setTimeout(resolve, 80));
             state.lifecycle = "running";
+            state.runtimeDecrypt = state.savedProduct?.preferences.decryptHttps ?? true;
             return {
               lifecycle: "running",
               listener: "127.0.0.1:8888",
               summary: "Proxy running",
               hostRestorePending: false,
+              ...processStatus(),
             };
           case "stop_application":
             if (state.holdProxyStop)
@@ -2600,6 +2637,7 @@ await page.addInitScript(
                 listener: "127.0.0.1:8888",
                 summary: "Finishing 1 active request/connection",
                 hostRestorePending: false,
+                ...processStatus(),
               };
             }
             state.lifecycle = "stopped";
@@ -2608,6 +2646,7 @@ await page.addInitScript(
               listener: null,
               summary: "Proxy stopped",
               hostRestorePending: false,
+              ...processStatus(),
             };
           case "resume_application":
             state.lifecycle = "running";
@@ -2616,6 +2655,7 @@ await page.addInitScript(
               listener: "127.0.0.1:8888",
               summary: "Proxy resumed",
               hostRestorePending: false,
+              ...processStatus(),
             };
           case "search_traffic": {
             const request = args.request;
@@ -4181,16 +4221,59 @@ await page.addInitScript(
             };
             return structuredClone(state.networkProfiles);
           }
-          case "save_product_state":
-            state.savedProduct = structuredClone(args.productState);
-            state.savedProduct.preferences.clientCertificatePolicy = structuredClone(
+          case "save_product_state": {
+            if (state.settingsSaveError) throw new Error("Fixture settings persistence failed");
+            if (state.holdSettingsSave)
+              await new Promise((resolve) => (state.releaseSettingsSave = resolve));
+            const current = state.savedProduct?.preferences.processInspection ?? {
+              mode: "all",
+              include: [],
+              exclude: [],
+            };
+            const desired = args.productState.preferences.processInspection ?? current;
+            const baseline = args.expectedProcessInspection;
+            if (
+              baseline &&
+              JSON.stringify(baseline) !== JSON.stringify(desired) &&
+              JSON.stringify(baseline) !== JSON.stringify(current) &&
+              JSON.stringify(current) !== JSON.stringify(desired)
+            )
+              throw new Error(
+                "Process inspection changed in another window. Revert changes to load the saved settings; your draft is still available.",
+              );
+            const currentDecrypt = state.savedProduct?.preferences.decryptHttps ?? true;
+            const savedProduct = structuredClone(args.productState);
+            if (
+              typeof args.expectedDecryptHttps === "boolean" &&
+              args.expectedDecryptHttps === args.productState.preferences.decryptHttps
+            )
+              savedProduct.preferences.decryptHttps = currentDecrypt;
+            if (!baseline || JSON.stringify(baseline) === JSON.stringify(desired))
+              savedProduct.preferences.processInspection = structuredClone(current);
+            const live = ["running", "draining", "stopping"].includes(state.lifecycle);
+            if (
+              savedProduct.preferences.decryptHttps &&
+              ((live && state.runtimeDecrypt === false) || !currentDecrypt) &&
+              (state.caBootstrap?.caFilesPresent === false ||
+                state.caBootstrap?.ownedCaSha256 === null ||
+                state.caBootstrap?.caKeyError)
+            ) {
+              throw new Error(
+                "Set up the interception certificate before enabling HTTPS decryption.",
+              );
+            }
+            savedProduct.preferences.clientCertificatePolicy = structuredClone(
               state.certificatePolicy ?? { default: "noCertificate", rules: [] },
             );
+            state.savedProduct = savedProduct;
+            if (live) state.runtimeDecrypt = savedProduct.preferences.decryptHttps ?? true;
             return structuredClone(state.savedProduct);
+          }
           case "pick_support_path":
             return state.supportPick ?? null;
           case "diagnostics_report":
             return {
+              unresolvedProcessConnections: state.unresolvedProcessConnections ?? 0,
               applicationVersion: "0.1.0",
               runtime: {
                 operatingSystem: "Windows fixture",
@@ -4214,6 +4297,7 @@ await page.addInitScript(
               listener: null,
               summary: "Proxy stopped",
               hostRestorePending: false,
+              ...processStatus(),
             };
           case "capture_status": {
             const status = structuredClone(state.capture ?? { state: "idle" });
@@ -5335,6 +5419,17 @@ try {
     await browser.close();
     process.stdout.write(
       "Comparison interactions, races, pairing and responsive layouts verified.\n",
+    );
+    process.exit(0);
+  }
+  if (process.argv.includes("--process-inspection-only")) {
+    await page.goto("https://workspace.test/");
+    await view("settings");
+    await checkProcessInspection(page, root);
+    assert.deepEqual(errors, []);
+    await browser.close();
+    process.stdout.write(
+      "Process inspection settings, effective status and certificate-free start verified.\n",
     );
     process.exit(0);
   }
@@ -8672,7 +8767,7 @@ try {
   await view("settings");
   const setupCertificate = page
     .locator("#settings")
-    .getByRole("button", { name: "Check certificate setup", exact: true });
+    .getByRole("button", { name: "Set up interception certificate", exact: true });
   const resetCertificate = page
     .locator("#settings")
     .getByRole("button", { name: "Reset certificate and set up again", exact: true });
@@ -8737,6 +8832,7 @@ try {
   assert.equal(networkSaved.allowRemoteClients, true);
   assert.equal(networkSaved.proxyPort, 8123);
   assert.equal(networkSaved.isolateOutboundConnections, false);
+  await runBrowserCheck(checkProcessInspection, page, root);
   await runBrowserCheck(checkNetworkProfiles, page, root);
   assert.equal(networkSaved.configureSystemProxy, false, "Saving preferences enabled host routing");
   await preferences
@@ -8800,6 +8896,17 @@ try {
     .locator(".settings-tabs")
     .getByRole("button", { name: "Preferences", exact: true })
     .click();
+  // The no-certificate case above is complete. Re-enabling HTTPS for the
+  // following preference checks requires a valid synthetic certificate.
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.caBootstrap = {
+      caFilesPresent: true,
+      caFilesExist: true,
+      caKeyError: null,
+      ownedCaSha256: "0".repeat(64),
+      ownedCaTrusted: true,
+    };
+  });
   await preferences.getByLabel("Decrypt HTTPS traffic", { exact: true }).check();
   await preferences
     .getByLabel("Isolate outbound connections by caller process", { exact: true })
@@ -8809,6 +8916,10 @@ try {
     () =>
       !document.querySelector("app-shell").shadowRoot.querySelector("settings-workspace")
         .settingsBusy,
+  );
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").settings.settingsError),
+    "",
   );
   await advancedNetwork.scrollIntoViewIfNeeded();
   await page.screenshot({

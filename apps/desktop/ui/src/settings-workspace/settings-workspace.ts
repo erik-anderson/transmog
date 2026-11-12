@@ -1,5 +1,7 @@
 import initialState from "../initial-state.json";
 import "../network-profile-settings/network-profile-settings.js";
+import "../process-inspection-settings/process-inspection-settings.js";
+import type { ProcessInspectionSettings } from "../process-inspection-settings/process-inspection-settings.js";
 import "../extension-settings/extension-settings.js";
 import "../mcp-settings/mcp-settings.js";
 import type { ExtensionSettings } from "../extension-settings/extension-settings.js";
@@ -25,6 +27,7 @@ export class SettingsWorkspace extends WorkspaceElement {
   clientCertificates!: ClientCertificateSettings;
   aboutUpdates!: AppUpdates;
   loopbackManager!: LoopbackExemptions;
+  processInspectionEditor!: ProcessInspectionSettings;
   openLoopback(event: Event): void {
     void this.loopbackManager.open(event);
   }
@@ -142,6 +145,13 @@ export class SettingsWorkspace extends WorkspaceElement {
   @observable settingsError = "";
   @observable certificateReady = false;
   @observable certificateRecovery = false;
+  @observable interceptionCertificateUnavailable = true;
+  @observable certificateReturnVisible = initialState.certificateReturnVisible;
+  @observable certificateDetailsOpen = initialState.certificateDetailsOpen;
+  @observable httpsEnableError = initialState.httpsEnableError;
+  certificateSettingsButton!: HTMLButtonElement;
+  interceptionSummary!: HTMLElement;
+  private certificateReturnFocus: HTMLElement | null = null;
   @observable hostRecoveryPending = false;
   @observable supportBusy = false;
   @observable supportPathsAllowed = false;
@@ -149,6 +159,34 @@ export class SettingsWorkspace extends WorkspaceElement {
   @observable supportFacts: Array<{ label: string; value: string }> = [];
   showSettingsSection(section: string): void {
     this.settingsSection = section;
+    if (section !== "connection") {
+      this.certificateReturnVisible = false;
+    }
+  }
+  openInterceptionCertificate(event?: Event): void {
+    this.certificateReturnFocus =
+      event?.currentTarget instanceof HTMLElement
+        ? event.currentTarget
+        : this.certificateSettingsButton;
+    this.certificateReturnVisible = true;
+    this.certificateDetailsOpen = true;
+    this.settingsSection = "connection";
+    this.$flushUpdates();
+    this.interceptionSummary.focus();
+    this.interceptionSummary.scrollIntoView({ block: "nearest" });
+  }
+  certificateDisclosureChanged(event: Event): void {
+    this.certificateDetailsOpen = (event.target as HTMLDetailsElement).open;
+  }
+  backToPreferences(): void {
+    this.showSettingsSection("preferences");
+    this.$flushUpdates();
+    const target = this.certificateReturnFocus;
+    if (target?.isConnected && target.getClientRects().length) {
+      target.focus();
+    } else {
+      this.certificateSettingsButton.focus();
+    }
   }
   private profileEvent(event?: Event): boolean {
     return (
@@ -179,8 +217,12 @@ export class SettingsWorkspace extends WorkspaceElement {
     }
   }
   private certificateBootstrap: DesktopBootstrap | undefined;
+  private savedDecryptHttps = initialState.decryptHttps;
   private updateCertificateState(bootstrap: DesktopBootstrap): void {
     this.certificateBootstrap = bootstrap;
+    this.interceptionCertificateUnavailable =
+      !bootstrap.caFilesPresent || !bootstrap.ownedCaTrusted || this.caRecoveryRequired(bootstrap);
+    this.$emit("certificate-state", { unavailable: this.interceptionCertificateUnavailable });
     this.certificateRecovery = this.decryptHttps && this.caRecoveryRequired(bootstrap);
     this.certificateReady =
       !this.decryptHttps ||
@@ -287,7 +329,7 @@ export class SettingsWorkspace extends WorkspaceElement {
       } else if (!ready) {
         this.showNotice(
           "HTTPS interception needs setup",
-          "Before the proxy can start, create and trust Transmog’s local interception certificate. Windows will ask you to approve adding it to your current-user trusted roots.",
+          "To decrypt HTTPS, create and trust Transmog’s local interception certificate. You can also start with HTTPS tunnels. Windows will ask you to approve adding it to your current-user trusted roots.",
           "Set up now",
           "setup-ca",
         );
@@ -313,6 +355,52 @@ export class SettingsWorkspace extends WorkspaceElement {
   async startProxy(event?: Event): Promise<void> {
     event?.preventDefault();
     await this.runProxyChange("starting", () => this.startProxyNow());
+  }
+  async startHttpsTunnels(): Promise<void> {
+    await this.runProxyChange("starting", async () => {
+      this.decryptHttps = false;
+      (this.settingsForm.elements.namedItem("decryptHttps") as HTMLInputElement).checked = false;
+      try {
+        const data = new FormData(this.proxyForm);
+        const status = await invoke<AppStatus>("start_https_tunnels", {
+          request: {
+            caCertificatePath: String(data.get("certificate") ?? ""),
+            caPrivateKeyPath: String(data.get("privateKey") ?? ""),
+            listen: "127.0.0.1:0",
+            route: "auto",
+            allowRemoteClients: false,
+          },
+        });
+        this.decryptHttps = false;
+        // Keep unrelated preference drafts, including the process lists, intact.
+        (this.settingsForm.elements.namedItem("decryptHttps") as HTMLInputElement).checked = false;
+        this.acceptAppStatus(status);
+        this.dismissNotice();
+        this.setProxyOutput(
+          "Proxy started with HTTPS tunnels. HTTP is inspected; HTTPS contents are not decrypted. This choice is saved.",
+          "success",
+        );
+      } catch (error: unknown) {
+        this.setProxyOutput("Start failed: " + describeError(error), "error");
+      } finally {
+        // The explicit HTTPS choice commits before binding; even a later start
+        // failure must not let an unrelated draft save turn decryption back on.
+        try {
+          const saved = await invoke<ProductState>("product_state");
+          this.decryptHttps = saved.preferences.decryptHttps;
+          this.savedDecryptHttps = this.decryptHttps;
+          (this.settingsForm.elements.namedItem("decryptHttps") as HTMLInputElement).checked =
+            this.decryptHttps;
+        } catch (error: unknown) {
+          this.diagnostic = "Saved HTTPS choice could not be refreshed: " + describeError(error);
+        }
+        try {
+          this.updateCertificateState(await invoke<DesktopBootstrap>("desktop_bootstrap"));
+        } catch (error: unknown) {
+          this.diagnostic = "Certificate status could not be refreshed: " + describeError(error);
+        }
+      }
+    });
   }
   async stopProxy(): Promise<void> {
     await this.runProxyChange("stopping", () => this.stopProxyNow());
@@ -350,7 +438,17 @@ export class SettingsWorkspace extends WorkspaceElement {
           return;
         }
       }
-      const bootstrap = await invoke<DesktopBootstrap>("desktop_bootstrap");
+      const [bootstrap, productState] = await Promise.all([
+        invoke<DesktopBootstrap>("desktop_bootstrap"),
+        invoke<ProductState>("product_state"),
+      ]);
+      const decryptInput = this.settingsForm.elements.namedItem("decryptHttps") as HTMLInputElement;
+      const hasHttpsDraft = decryptInput.checked !== this.savedDecryptHttps;
+      this.decryptHttps = productState.preferences.decryptHttps;
+      this.savedDecryptHttps = this.decryptHttps;
+      if (!hasHttpsDraft) {
+        decryptInput.checked = this.decryptHttps;
+      }
       this.updateCertificateState(bootstrap);
       if (bootstrap.hostRestorePending) {
         this.showNotice(
@@ -363,7 +461,7 @@ export class SettingsWorkspace extends WorkspaceElement {
         return;
       }
       if (
-        this.decryptHttps &&
+        productState.preferences.decryptHttps &&
         (this.caRecoveryRequired(bootstrap) ||
           !bootstrap.caFilesPresent ||
           bootstrap.ownedCaSha256 === null ||
@@ -376,7 +474,7 @@ export class SettingsWorkspace extends WorkspaceElement {
         }
         const missing =
           !bootstrap.caFilesPresent || bootstrap.ownedCaSha256 === null
-            ? "Create and trust Transmog’s interception certificate before starting the proxy."
+            ? "Create and trust Transmog’s interception certificate to decrypt HTTPS, or start with HTTPS tunnels."
             : "Transmog’s interception certificate is not trusted for the current user. Trust it before starting the proxy.";
         this.showNotice("Proxy setup required", missing, "Set up HTTPS interception", "setup-ca");
         this.setProxyOutput(`Start blocked: ${missing}`, "error");
@@ -494,7 +592,7 @@ export class SettingsWorkspace extends WorkspaceElement {
   private async setupCaNow(confirmed = false): Promise<void> {
     this.setProxyOutput("Preparing the interception certificate…", "progress");
     try {
-      let bootstrap = await invoke<DesktopBootstrap>("desktop_bootstrap");
+      let bootstrap = await invoke<DesktopBootstrap>("desktop_bootstrap", { inspectCaKey: true });
       this.updateCertificateState(bootstrap);
       if (this.caRecoveryRequired(bootstrap)) {
         this.showCaRecovery(bootstrap);
@@ -536,7 +634,7 @@ export class SettingsWorkspace extends WorkspaceElement {
         path: String(data.get("certificate") ?? ""),
         sha256,
       });
-      bootstrap = await invoke<DesktopBootstrap>("desktop_bootstrap");
+      bootstrap = await invoke<DesktopBootstrap>("desktop_bootstrap", { inspectCaKey: true });
       this.updateCertificateState(bootstrap);
       if (!bootstrap.ownedCaTrusted) {
         throw new Error("Windows did not report the certificate as trusted.");
@@ -545,12 +643,28 @@ export class SettingsWorkspace extends WorkspaceElement {
       const message =
         "HTTPS interception is ready. Windows trusts the exact Transmog certificate for the current user.";
       this.setProxyOutput(message, "success");
-      this.showNotice(
-        "HTTPS interception is ready",
-        "You can start the proxy now.",
-        "Start proxy",
-        "start-proxy",
-      );
+      if (this.proxyLifecycle !== "stopped" || !this.decryptHttps) {
+        const requested = (this.settingsForm.elements.namedItem("decryptHttps") as HTMLInputElement)
+          .checked;
+        const next = this.decryptHttps
+          ? "Review HTTPS settings in Preferences."
+          : requested
+            ? "Save settings in Preferences to enable HTTPS decryption."
+            : "Enable HTTPS decryption in Preferences, then save.";
+        this.showNotice(
+          "Interception certificate is ready",
+          next,
+          "Back to preferences",
+          "https-preferences",
+        );
+      } else {
+        this.showNotice(
+          "HTTPS interception is ready",
+          "You can start the proxy now.",
+          "Start proxy",
+          "start-proxy",
+        );
+      }
     } catch (error: unknown) {
       const message = `Certificate setup failed: ${describeError(error)}`;
       this.setProxyOutput(message, "error");
@@ -652,14 +766,19 @@ export class SettingsWorkspace extends WorkspaceElement {
   }
 
   async loadSettings(): Promise<void> {
-    if (this.settingsBusy) {
+    if (this.settingsBusy || this.proxyPending) {
       return;
     }
+    const hadHttpsError = this.httpsEnableError;
     this.settingsBusy = true;
     this.settingsError = "";
+    this.httpsEnableError = false;
     try {
       const state = await invoke<ProductState>("product_state");
       this.populateSettings(state);
+      if (hadHttpsError) {
+        this.setProxyOutput("HTTPS changes reverted.", "success");
+      }
       this.applyTheme(state.preferences.theme, state.workspace);
       this.settingsText = "Changes reverted.";
     } catch (error: unknown) {
@@ -670,16 +789,33 @@ export class SettingsWorkspace extends WorkspaceElement {
   }
   async saveSettings(event: Event): Promise<void> {
     event.preventDefault();
-    if (this.settingsBusy) {
+    if (this.settingsBusy || this.proxyPending) {
       return;
     }
     const data = new FormData(this.settingsForm);
+    const decryptRequested = (
+      this.settingsForm.elements.namedItem("decryptHttps") as HTMLInputElement
+    ).checked;
+    const expectedDecryptHttps = this.savedDecryptHttps;
+    const expectedProcessInspection = structuredClone(this.processInspectionEditor.baseline);
+    const httpsChanged = decryptRequested !== expectedDecryptHttps;
+    const enablingHttps = decryptRequested && httpsChanged;
+    const hadHttpsError = this.httpsEnableError;
+    this.httpsEnableError = false;
+    let processInspection;
+    try {
+      processInspection = this.processInspectionEditor.policy();
+    } catch (error: unknown) {
+      this.settingsError = describeError(error);
+      return;
+    }
     this.settingsBusy = true;
     this.settingsError = "";
     try {
       const state = await invoke<ProductState>("product_state");
+      state.preferences.processInspection = processInspection;
       state.preferences.theme = String(data.get("theme")) as ProductState["preferences"]["theme"];
-      state.preferences.decryptHttps = data.get("decryptHttps") === "on";
+      state.preferences.decryptHttps = decryptRequested;
       state.preferences.allowRemoteClients = data.get("allowRemoteClients") === "on";
       const port = data.get("customProxyPort") === "on" ? Number(data.get("proxyPort")) : null;
       if (port !== null && (!Number.isSafeInteger(port) || port < 1 || port > 65535)) {
@@ -718,16 +854,28 @@ export class SettingsWorkspace extends WorkspaceElement {
       state.privacy.retainBodySamples = data.get("captureBodies") === "on";
       state.privacy.rememberRecentArtifacts = data.get("rememberArtifacts") === "on";
       state.privacy.includePathsInSupportBundles = data.get("supportPaths") === "on";
-      const saved = await invoke<ProductState>("save_product_state", { productState: state });
+      const saved = await invoke<ProductState>("save_product_state", {
+        productState: state,
+        expectedProcessInspection,
+        expectedDecryptHttps,
+      });
       this.populateSettings(saved);
       this.applyTheme(saved.preferences.theme, saved.workspace);
       await this.refreshBufferStatus();
+      await this.refreshStatus();
+      if (httpsChanged || hadHttpsError) {
+        this.setProxyOutput("HTTPS setting saved.", "success");
+      }
       this.settingsText =
         this.proxyLifecycle === "running" || this.proxyLifecycle === "draining"
-          ? "Settings saved. HTTPS decryption, remote access and port changes apply to the next new proxy run."
+          ? "Saved. Inspection changes apply to new connections."
           : "Settings saved.";
     } catch (error: unknown) {
       this.settingsError = "Settings save failed: " + describeError(error);
+      this.httpsEnableError = enablingHttps;
+      if (enablingHttps) {
+        this.setProxyOutput(this.settingsError, "error");
+      }
     } finally {
       this.settingsBusy = false;
     }
@@ -741,6 +889,7 @@ export class SettingsWorkspace extends WorkspaceElement {
           runtime: { operatingSystem: string; architecture: string; webviewVersion: string | null };
           events: Array<{ level: string }>;
           privacyNotice: string;
+          unresolvedProcessConnections: number;
         }>("diagnostics_report");
         this.supportFacts = [
           { label: "Transmog version", value: report.applicationVersion },
@@ -748,6 +897,10 @@ export class SettingsWorkspace extends WorkspaceElement {
           { label: "Architecture", value: report.runtime.architecture },
           { label: "WebView2", value: report.runtime.webviewVersion ?? "Unavailable" },
           { label: "Recent events", value: String(report.events.length) },
+          {
+            label: "Unresolved process connections",
+            value: String(report.unresolvedProcessConnections ?? 0),
+          },
           {
             label: "Warnings / errors",
             value: String(report.events.filter((event) => event.level !== "info").length),
@@ -827,6 +980,9 @@ export class SettingsWorkspace extends WorkspaceElement {
 
   private populateSettings(state: ProductState): void {
     this.settingsDirty = false;
+    this.processInspectionEditor.populate(
+      state.preferences.processInspection ?? { mode: "all", include: [], exclude: [] },
+    );
     this.supportPathsAllowed = state.privacy.includePathsInSupportBundles;
     const elements = this.settingsForm.elements;
     this.customPortEnabled = state.preferences.proxyPort != null;
@@ -837,6 +993,7 @@ export class SettingsWorkspace extends WorkspaceElement {
     (elements.namedItem("allowRemoteClients") as HTMLInputElement).checked =
       state.preferences.allowRemoteClients ?? false;
     this.decryptHttps = state.preferences.decryptHttps ?? true;
+    this.savedDecryptHttps = this.decryptHttps;
     if (this.certificateBootstrap) {
       this.updateCertificateState(this.certificateBootstrap);
     }

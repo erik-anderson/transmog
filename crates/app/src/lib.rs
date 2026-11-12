@@ -201,6 +201,7 @@ pub use traces::{
 };
 pub use transmog_core::client_authentication::ClientCertificatePolicy;
 pub use transmog_core::connection_policy::AllowedHttpProtocols;
+pub use transmog_core::process_inspection::{ProcessInspectionMode, ProcessInspectionPolicy};
 pub use transmog_script::diagnostic_sources::SourcePage as ScriptSourcePage;
 pub use transmog_script::{
     ExceptionDiagnostic, LogRun, ScriptAction, ScriptInvocation, ScriptResult, ScriptScenario,
@@ -372,6 +373,12 @@ pub struct AppStatus {
     pub summary: String,
     /// Whether exact host restoration remains pending.
     pub host_restore_pending: bool,
+    /// Policy applied to newly accepted connections, or saved policy while stopped.
+    pub process_inspection: transmog_core::process_inspection::ProcessInspectionPolicy,
+    /// Effective HTTPS decryption for the owned run; absent while stopped.
+    pub https_decryption: Option<bool>,
+    /// Connections bypassed because their executable name could not be resolved.
+    pub unresolved_process_connections: u64,
 }
 
 /// Construction settings for the application facade.
@@ -435,6 +442,26 @@ impl std::fmt::Debug for AppConfig {
     }
 }
 
+struct ProductSettingsStartGuard(Arc<std::sync::atomic::AtomicBool>);
+
+#[derive(Clone)]
+struct ProxyCertificateSettings {
+    request: ProxyStartRequest,
+    host_integration: bool,
+}
+
+#[derive(Clone, Copy)]
+struct HttpsSettingsValidation<'a> {
+    fallback_request: &'a ProxyStartRequest,
+    validate_trust: &'a dyn Fn(&str, bool, &ProxyStartRequest) -> Result<(), String>,
+}
+
+impl Drop for ProductSettingsStartGuard {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
 /// Cloneable owner of authoritative application state.
 #[derive(Clone)]
 pub struct Application {
@@ -442,6 +469,7 @@ pub struct Application {
     preview_capture: String,
     upstream_trust: Option<Arc<transmog_tls::TrustSnapshot>>,
     proxy_certificate: Arc<std::sync::Mutex<Option<boring::x509::X509>>>,
+    proxy_certificate_settings: Arc<std::sync::Mutex<Option<ProxyCertificateSettings>>>,
     client_certificates: Option<ClientCertificateManager>,
     certificate_policy_operation: Arc<std::sync::Mutex<()>>,
     network_profile_operation: Arc<tokio::sync::Mutex<()>>,
@@ -452,6 +480,8 @@ pub struct Application {
     breakpoints: breakpoints::BreakpointManager,
     composer: composer::ComposerManager,
     product_state: product_state::ProductStateManager,
+    product_settings_operation: Arc<std::sync::Mutex<()>>,
+    product_settings_starting: Arc<std::sync::atomic::AtomicBool>,
     diagnostics: diagnostics::DiagnosticLog,
     body_store: Option<BodyStore>,
     buffer_preferences: bool,
@@ -634,6 +664,7 @@ impl Application {
             preview_capture,
             upstream_trust: config.upstream_trust,
             proxy_certificate: Arc::new(std::sync::Mutex::new(None)),
+            proxy_certificate_settings: Arc::new(std::sync::Mutex::new(None)),
             client_certificates: config.client_certificates,
             certificate_policy_operation: Arc::new(std::sync::Mutex::new(())),
             network_profile_operation: Arc::new(tokio::sync::Mutex::new(())),
@@ -648,6 +679,8 @@ impl Application {
                 initial_state.preferences.reuse_server_connections,
             ),
             product_state,
+            product_settings_operation: Arc::new(std::sync::Mutex::new(())),
+            product_settings_starting: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             diagnostics,
             body_store,
             buffer_preferences: apply_buffer_preferences,
@@ -842,6 +875,102 @@ impl Application {
     /// Returns a bounded validation or persistence error. A persistence error
     /// never changes proxy lifecycle state or prevents shutdown.
     pub fn save_product_state(&self, state: ProductState) -> Result<ProductState, AppError> {
+        self.save_product_state_inner(state, None, product_state::DecryptionWrite::Authored, None)
+    }
+
+    /// Saves settings with a checked process-policy baseline from the editing window.
+    ///
+    /// # Errors
+    /// Returns validation, persistence, or conflicting process-policy edits without applying them.
+    pub fn save_product_state_with_process_inspection(
+        &self,
+        state: ProductState,
+        expected: &transmog_core::process_inspection::ProcessInspectionPolicy,
+    ) -> Result<ProductState, AppError> {
+        self.save_product_state_inner(
+            state,
+            Some(expected),
+            product_state::DecryptionWrite::Authored,
+            None,
+        )
+    }
+
+    /// Saves desktop preferences using the editor's independently loaded field baselines.
+    /// Unauthored process and HTTPS choices merge with the latest durable settings.
+    ///
+    /// # Errors
+    /// Returns settings validation, persistence, conflicting process edits, or a retryable startup error.
+    pub fn save_product_settings(
+        &self,
+        state: ProductState,
+        expected_process: Option<&ProcessInspectionPolicy>,
+        expected_decrypt_https: Option<bool>,
+    ) -> Result<ProductState, AppError> {
+        self.save_product_state_inner(
+            state,
+            expected_process,
+            expected_decrypt_https.map_or(
+                product_state::DecryptionWrite::Preserve,
+                product_state::DecryptionWrite::Checked,
+            ),
+            None,
+        )
+    }
+
+    /// Saves desktop settings, validating certificate setup before enabling HTTPS inspection.
+    /// Active runs retain their certificate paths and host integration choice.
+    /// The fallback request applies when no proxy is owned; disabling never reads CA material.
+    /// The validator runs inside the settings transaction and must not call Application
+    /// state or settings APIs. It receives the exact CA identity, active host-integration
+    /// choice and certificate paths; it may validate trust and protect legacy key storage.
+    ///
+    /// # Errors
+    /// Returns validation, certificate trust, or persistence errors before publishing the change.
+    pub fn save_product_settings_with_https_validation(
+        &self,
+        state: ProductState,
+        expected_process: Option<&ProcessInspectionPolicy>,
+        expected_decrypt_https: Option<bool>,
+        fallback_request: &ProxyStartRequest,
+        validate_trust: impl Fn(&str, bool, &ProxyStartRequest) -> Result<(), String>,
+    ) -> Result<ProductState, AppError> {
+        self.save_product_state_inner(
+            state,
+            expected_process,
+            expected_decrypt_https.map_or(
+                product_state::DecryptionWrite::Authored,
+                product_state::DecryptionWrite::Checked,
+            ),
+            Some(HttpsSettingsValidation {
+                fallback_request,
+                validate_trust: &validate_trust,
+            }),
+        )
+    }
+
+    #[allow(clippy::too_many_lines)] // Preserve prepare, durable commit and live publication ordering together.
+    fn save_product_state_inner(
+        &self,
+        state: ProductState,
+        expected: Option<&transmog_core::process_inspection::ProcessInspectionPolicy>,
+        decryption: product_state::DecryptionWrite,
+        https_validation: Option<HttpsSettingsValidation<'_>>,
+    ) -> Result<ProductState, AppError> {
+        // Keep durable settings and their runtime publication ordered across clones.
+        let _operation = self
+            .product_settings_operation
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if self
+            .product_settings_starting
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return Err(AppError::new(
+                ErrorCategory::Unavailable,
+                "Proxy is starting. Try saving again in a moment.",
+                true,
+            ));
+        }
         let state = product_state::validate(state)?;
         if self.buffer_preferences
             && let Some(store) = &self.body_store
@@ -852,7 +981,36 @@ impl Application {
                     AppError::new(ErrorCategory::Unavailable, error.to_string(), true)
                 })?;
         }
-        let result = self.product_state.save(state);
+        let control = self.service.proxy_control();
+        let run_settings = self
+            .proxy_certificate_settings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let prepared_result = self.product_state.save_settings_prepared(state, expected, decryption, |next, previous| {
+            let enabling = next.preferences.decrypt_https && (
+                control.as_ref().is_some_and(|control| !control.https_decryption())
+                || https_validation.is_some() && !previous.preferences.decrypt_https
+            );
+            if !enabling { return Ok(None); }
+            let settings = run_settings.as_ref().filter(|_| control.is_some());
+            let request = settings.map(|settings| &settings.request)
+                .or_else(|| https_validation.as_ref().map(|validation| validation.fallback_request))
+                .ok_or_else(|| AppError::new(ErrorCategory::InvalidInput,
+                    "Set up the interception certificate in Settings → Connection before enabling HTTPS decryption.", false))?;
+            let prepared = lifecycle::prepare_https_interception(request)?;
+            if let Some(validation) = &https_validation {
+                (validation.validate_trust)(&prepared.thumbprint,
+                    settings.map_or(next.preferences.configure_system_proxy, |settings| settings.host_integration), request)
+                    .map_err(|message| AppError::new(ErrorCategory::InvalidInput,
+                        format!("{message} Open Settings → Connection to set up HTTPS interception, then save again."), false))?;
+            }
+            Ok(Some(prepared))
+        });
+        let (result, prepared) = match prepared_result {
+            Ok((state, prepared)) => (Ok(state), prepared),
+            Err(error) => (Err(error), None),
+        };
         if let Ok(state) = &result {
             self.service
                 .set_redact_sensitive_headers(state.privacy.redact_sensitive_headers);
@@ -860,8 +1018,27 @@ impl Application {
                 state.privacy.retain_request_bodies,
                 state.privacy.retain_response_bodies,
             );
-            if let Some(control) = self.service.proxy_control() {
+            if let Some(control) = &control {
+                if let Some(prepared) = prepared {
+                    *self
+                        .proxy_certificate
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                        Some(prepared.certificate);
+                    control.set_https_decryption_with_certificates(true, prepared.certificates);
+                } else if !state.preferences.decrypt_https {
+                    control.set_https_decryption(false);
+                    *self
+                        .proxy_certificate
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+                }
                 control.set_outbound_isolation(state.preferences.isolate_outbound_connections);
+                control
+                    .set_process_inspection(state.preferences.process_inspection.clone())
+                    .map_err(|error| {
+                        AppError::new(ErrorCategory::InvalidInput, error.to_string(), false)
+                    })?;
             }
         }
         if let Ok(state) = &result
@@ -920,8 +1097,11 @@ impl Application {
 
     /// Returns a bounded, redacted operational report.
     pub fn diagnostics(&self, runtime: RuntimeDiagnostics) -> DiagnosticsReport {
-        self.diagnostics
-            .report(runtime, &self.product_state.snapshot())
+        let mut report = self
+            .diagnostics
+            .report(runtime, &self.product_state.snapshot());
+        report.unresolved_process_connections = self.status().unresolved_process_connections;
+        report
     }
 
     /// Records one bounded, redacted operational event from a presentation
@@ -1440,19 +1620,13 @@ impl Application {
     /// Returns a bounded point-in-time lifecycle read model.
     pub fn status(&self) -> AppStatus {
         let pending = self.service.has_pending_host_restore();
-        match self.service.status() {
-            ServiceStatus::Stopped => AppStatus {
-                lifecycle: AppLifecycle::Stopped,
-                listener: None,
-                summary: "Proxy stopped".to_owned(),
-                host_restore_pending: pending,
-            },
-            ServiceStatus::Running { local_addr } => AppStatus {
-                lifecycle: AppLifecycle::Running,
-                listener: Some(local_addr.to_string()),
-                summary: "Proxy listening".to_owned(),
-                host_restore_pending: pending,
-            },
+        let (lifecycle, listener, summary) = match self.service.status() {
+            ServiceStatus::Stopped => (AppLifecycle::Stopped, None, "Proxy stopped".to_owned()),
+            ServiceStatus::Running { local_addr } => (
+                AppLifecycle::Running,
+                Some(local_addr.to_string()),
+                "Proxy listening".to_owned(),
+            ),
             ServiceStatus::Draining { local_addr } => {
                 let summary = self.service.proxy_control().map_or_else(
                     || "Proxy routing off".to_owned(),
@@ -1462,28 +1636,43 @@ impl Application {
                             activity.requests, activity.websockets, activity.transports.saturating_sub(activity.websockets))
                     },
                 );
-                AppStatus {
-                    lifecycle: AppLifecycle::Draining,
-                    listener: Some(local_addr.to_string()),
+                (
+                    AppLifecycle::Draining,
+                    Some(local_addr.to_string()),
                     summary,
-                    host_restore_pending: pending,
-                }
+                )
             }
-            ServiceStatus::Stopping { local_addr } => AppStatus {
-                lifecycle: AppLifecycle::Stopping,
-                listener: Some(local_addr.to_string()),
-                summary: "Proxy stopping".to_owned(),
-                host_restore_pending: pending,
-            },
+            ServiceStatus::Stopping { local_addr } => (
+                AppLifecycle::Stopping,
+                Some(local_addr.to_string()),
+                "Proxy stopping".to_owned(),
+            ),
             ServiceStatus::Failed {
                 local_addr,
                 message,
-            } => AppStatus {
-                lifecycle: AppLifecycle::Failed,
-                listener: local_addr.map(|address| address.to_string()),
-                summary: message.chars().take(256).collect(),
-                host_restore_pending: pending,
-            },
+            } => (
+                AppLifecycle::Failed,
+                local_addr.map(|address| address.to_string()),
+                message.chars().take(256).collect(),
+            ),
+        };
+        let control = self.service.proxy_control();
+        AppStatus {
+            lifecycle,
+            listener,
+            summary,
+            host_restore_pending: pending,
+            process_inspection: control.as_ref().map_or_else(
+                || self.product_state.snapshot().preferences.process_inspection,
+                transmog_runtime::ProxyControl::process_inspection,
+            ),
+            https_decryption: control
+                .as_ref()
+                .map(transmog_runtime::ProxyControl::https_decryption),
+            unresolved_process_connections: control.as_ref().map_or(
+                0,
+                transmog_runtime::ProxyControl::unresolved_process_connections,
+            ),
         }
     }
 
@@ -1547,10 +1736,65 @@ impl Application {
         request: ProxyStartRequest,
         host: Option<Arc<dyn HostIntegration>>,
     ) -> Result<AppStatus, AppError> {
+        self.start_proxy_with_https_mode(request, host, None).await
+    }
+
+    /// Persists the explicit certificate-free choice and starts a new opaque HTTPS run.
+    ///
+    /// # Errors
+    /// Returns persistence or startup errors, and rejects an already owned run.
+    pub async fn start_https_tunnels(
+        &self,
+        request: ProxyStartRequest,
+        host: Option<Arc<dyn HostIntegration>>,
+    ) -> Result<AppStatus, AppError> {
+        self.start_proxy_with_https_mode(request, host, Some(false))
+            .await
+    }
+
+    async fn start_proxy_with_https_mode(
+        &self,
+        request: ProxyStartRequest,
+        host: Option<Arc<dyn HostIntegration>>,
+        https_mode: Option<bool>,
+    ) -> Result<AppStatus, AppError> {
         let _profile_operation = self.network_profile_operation.lock().await;
-        if self.service.resume_drain().await.map_err(AppError::from)? {
+        if https_mode.is_some()
+            && !matches!(
+                self.service.status(),
+                ServiceStatus::Stopped | ServiceStatus::Failed { .. }
+            )
+        {
+            return Err(AppError::new(
+                ErrorCategory::Conflict,
+                "Wait for the current proxy run to finish before starting with HTTPS tunnels.",
+                true,
+            ));
+        }
+        if https_mode.is_none() && self.service.resume_drain().await.map_err(AppError::from)? {
             return Ok(self.status());
         }
+        let (_settings_start, preferences) = {
+            let _operation = self
+                .product_settings_operation
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut state = self.product_state();
+            if let Some(decrypt) = https_mode {
+                state.preferences.decrypt_https = decrypt;
+                state = self.product_state.save(state)?;
+            }
+            self.product_settings_starting
+                .store(true, std::sync::atomic::Ordering::Release);
+            (
+                ProductSettingsStartGuard(Arc::clone(&self.product_settings_starting)),
+                state.preferences,
+            )
+        };
+        let certificate_settings = ProxyCertificateSettings {
+            request: request.clone(),
+            host_integration: host.is_some(),
+        };
         let result = lifecycle::start_proxy(
             lifecycle::ProxyStartResources {
                 upstream_trust: self.upstream_trust.clone(),
@@ -1565,7 +1809,7 @@ impl Application {
                 body_store: self.body_store.as_ref(),
                 automation: self.automation.clone(),
                 scripts: self.scripts.clone(),
-                preferences: self.product_state().preferences,
+                preferences,
             },
             request,
             host,
@@ -1592,6 +1836,10 @@ impl Application {
             .proxy_certificate
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = result?;
+        *self
+            .proxy_certificate_settings
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(certificate_settings);
         Ok(self.status())
     }
 
@@ -2904,6 +3152,9 @@ mod tests {
                 listener: None,
                 summary: "Proxy stopped".to_owned(),
                 host_restore_pending: false,
+                process_inspection: ProcessInspectionPolicy::default(),
+                https_decryption: None,
+                unresolved_process_connections: 0,
             }
         );
         let json = serde_json::to_value(application.status()).unwrap();

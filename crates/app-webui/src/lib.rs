@@ -39,6 +39,12 @@ pub struct ShellView {
     pub lifecycle_kind: &'static str,
     /// Current listener or a safe inactive placeholder.
     pub listener: String,
+    /// Compact effective process selection beside proxy lifecycle.
+    pub process_scope_label: String,
+    /// Effective opaque HTTPS mode, empty when no owned tunnel run exists.
+    pub https_mode_label: &'static str,
+    /// Aggregate unresolved caller attribution without per-caller details.
+    pub unresolved_process_label: String,
 }
 
 impl From<&AppStatus> for ShellView {
@@ -64,6 +70,32 @@ impl From<&AppStatus> for ShellView {
                 .listener
                 .clone()
                 .unwrap_or_else(|| "Not listening".to_owned()),
+            process_scope_label: match status.process_inspection.mode {
+                transmog_app::ProcessInspectionMode::All => "All processes".to_owned(),
+                transmog_app::ProcessInspectionMode::Only => {
+                    let count = status.process_inspection.include.len();
+                    format!(
+                        "{count} {}",
+                        if count == 1 { "process" } else { "processes" }
+                    )
+                }
+                transmog_app::ProcessInspectionMode::Except => {
+                    format!("All except {}", status.process_inspection.exclude.len())
+                }
+            },
+            https_mode_label: if status.https_decryption == Some(false) {
+                "HTTPS tunnels"
+            } else {
+                ""
+            },
+            unresolved_process_label: if status.unresolved_process_connections == 0 {
+                String::new()
+            } else {
+                format!(
+                    "{} connections bypassed: process unknown.",
+                    status.unresolved_process_connections
+                )
+            },
         }
     }
 }
@@ -237,6 +269,9 @@ mod tests {
             listener: None,
             summary: "Proxy stopped".to_owned(),
             host_restore_pending: false,
+            process_inspection: transmog_app::ProcessInspectionPolicy::default(),
+            https_decryption: None,
+            unresolved_process_connections: 0,
         }
     }
 
@@ -251,6 +286,9 @@ mod tests {
         assert!(html.contains("id=\"traffic-heading\""));
         assert!(html.contains("app-shell"));
         assert!(html.contains("id=\"webui-data\""));
+        assert!(html.contains("All processes"));
+        assert!(html.contains("Interception certificate…"));
+        assert!(html.contains("Save applies to new HTTPS connections."));
         assert!(csp.contains("require-trusted-types-for 'script'"));
         assert!(csp.contains("trusted-types webui monaco dompurify"));
         assert!(csp.contains("style-src 'self' 'unsafe-inline'"));
@@ -274,6 +312,36 @@ mod tests {
                 200
             );
         }
+    }
+
+    #[test]
+    fn initial_shell_reports_effective_process_scope_and_https_tunnels() {
+        let mut status = status();
+        status.lifecycle = AppLifecycle::Draining;
+        status.process_inspection = transmog_app::ProcessInspectionPolicy {
+            mode: transmog_app::ProcessInspectionMode::Only,
+            include: vec!["chrome.exe".into(), "helper.exe".into()],
+            exclude: vec![],
+        };
+        status.https_decryption = Some(false);
+        status.unresolved_process_connections = 3;
+        let view = ShellView::from(&status);
+        assert_eq!(view.process_scope_label, "2 processes");
+        assert_eq!(view.https_mode_label, "HTTPS tunnels");
+        assert!(view.unresolved_process_label.starts_with("3 connections"));
+        let html = String::from_utf8(
+            AppRenderer::new()
+                .unwrap()
+                .respond("GET", "/", &view)
+                .unwrap()
+                .body,
+        )
+        .unwrap();
+        assert!(html.contains("2 processes"));
+        assert!(html.contains("HTTPS tunnels"));
+        status.process_inspection.mode = transmog_app::ProcessInspectionMode::Except;
+        status.process_inspection.exclude = vec!["service.exe".into()];
+        assert_eq!(ShellView::from(&status).process_scope_label, "All except 1");
     }
 
     #[test]

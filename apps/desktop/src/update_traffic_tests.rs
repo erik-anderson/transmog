@@ -132,6 +132,9 @@ fn only_running_listeners_are_selected_and_wildcard_listeners_use_loopback() {
         listener: Some("0.0.0.0:8123".into()),
         summary: String::new(),
         host_restore_pending: false,
+        process_inspection: transmog_app::ProcessInspectionPolicy::default(),
+        https_decryption: None,
+        unresolved_process_connections: 0,
     };
     assert_eq!(
         active_proxy(&status).unwrap().as_str(),

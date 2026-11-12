@@ -213,6 +213,18 @@ pub(super) fn opened_files(arguments: &[String], cwd: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
+fn inherit_viewer_settings(viewer: &Application, source: &Application) -> Result<(), AppError> {
+    // Initial inheritance explicitly copies these choices; later geometry writes
+    // preserve independently edited fields through the narrow settings boundary.
+    let initial = viewer.product_state().preferences;
+    viewer.save_product_settings(
+        source.product_state(),
+        Some(&initial.process_inspection),
+        Some(initial.decrypt_https),
+    )?;
+    Ok(())
+}
+
 pub(super) fn create_viewer(
     app: &tauri::AppHandle,
     paths: Vec<PathBuf>,
@@ -272,7 +284,7 @@ pub(super) fn create_viewer(
         ..AppConfig::default()
     })?;
     application.inherit_debugger_preferences(&state.application)?;
-    application.save_product_state(state.application.product_state())?;
+    inherit_viewer_settings(&application, &state.application)?;
     application.prepare_replay_network_profile(
         state
             .application

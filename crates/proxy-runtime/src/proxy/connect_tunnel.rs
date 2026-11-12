@@ -238,7 +238,7 @@ impl ProxyState {
     }
 }
 
-async fn connect_destination(
+pub(super) async fn connect_destination(
     authority: &ConnectAuthority,
     happy: HappyEyeballsConfig,
     facts: &mut TransportObservation,

@@ -297,6 +297,8 @@ struct DesktopBootstrap {
     ca_files_present: bool,
     ca_files_exist: bool,
     ca_key_error: Option<String>,
+    ca_key_checked: bool,
+    ca_status_error: Option<String>,
     owned_ca_sha256: Option<String>,
     owned_ca_trusted: bool,
     host_restore_pending: bool,
@@ -513,11 +515,49 @@ async fn save_network_profiles(
 #[tauri::command]
 async fn save_product_state(
     product_state: ProductState,
+    expected_process_inspection: Option<transmog_app::ProcessInspectionPolicy>,
+    expected_decrypt_https: Option<bool>,
     state: State<'_, DesktopState>,
 ) -> Result<ProductState, AppError> {
     let _certificate_operation = state.certificate_operation.lock().await;
-    let saved = state.application.save_product_state(product_state)?;
-    Ok(saved)
+    let application = state.application.clone();
+    let certificate_request = ProxyStartRequest {
+        ca_certificate_path: state.ca_certificate_path.clone(),
+        ca_private_key_path: state.ca_private_key_path.clone(),
+        ..Default::default()
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        application.save_product_settings_with_https_validation(
+            product_state,
+            expected_process_inspection.as_ref(),
+            expected_decrypt_https,
+            &certificate_request,
+            |sha256, configure_system_proxy, request| {
+                validate_proxy_trust(sha256, configure_system_proxy)?;
+                transmog_app::protect_ca_private_key(
+                    &request.ca_certificate_path,
+                    &request.ca_private_key_path,
+                )
+                .map_err(|error| error.to_string())
+            },
+        )
+    })
+    .await
+    .map_err(|_| AppError {
+        exception: None,
+        logs: Vec::new(),
+        category: transmog_app::ErrorCategory::Internal,
+        message: "Settings save could not be completed. Try saving again.".into(),
+        retryable: true,
+    })?
+}
+
+#[tauri::command]
+async fn list_running_processes() -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(transmog_client_identity::running_process_names)
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| format!("Running processes are unavailable: {error}"))
 }
 
 #[tauri::command]
@@ -540,19 +580,29 @@ fn update_response_set_guide(
 
 #[tauri::command]
 fn desktop_bootstrap(
+    inspect_ca_key: Option<bool>,
     window: tauri::WebviewWindow,
     state: State<'_, DesktopState>,
 ) -> Result<DesktopBootstrap, String> {
-    let owned_ca_sha256 = state
-        .owned_certificate
-        .owned_thumbprint()
-        .map_err(|error| error.to_string())?;
-    let owned_ca_trusted = owned_ca_sha256
-        .as_deref()
-        .map(|sha256| CurrentUserCertificateStore.contains(sha256))
-        .transpose()
-        .map_err(|error| error.to_string())?
-        .unwrap_or(false);
+    let decrypt_https = state.application.product_state().preferences.decrypt_https;
+    let certificate = bootstrap_certificate_state(
+        &state.owned_certificate,
+        decrypt_https || inspect_ca_key == Some(true),
+        |sha256| {
+            CurrentUserCertificateStore
+                .contains(sha256)
+                .map_err(|error| error.to_string())
+        },
+    )?;
+    if let Some(error) = &certificate.error {
+        state.application.record_diagnostic(
+            DiagnosticLevel::Warning,
+            "certificate",
+            "tunnel-mode-certificate-status-unavailable",
+            error,
+        );
+    }
+    let inspect_key = inspect_ca_key.unwrap_or(decrypt_https);
     Ok(DesktopBootstrap {
         viewer_mode: window.label() != "main",
         windows: true,
@@ -561,12 +611,53 @@ fn desktop_bootstrap(
         ca_files_present: state.ca_certificate_path.is_file()
             && state.ca_private_key_path.is_file(),
         ca_files_exist: state.ca_certificate_path.exists() || state.ca_private_key_path.exists(),
-        ca_key_error: managed_ca_key_error(&state.ca_certificate_path, &state.ca_private_key_path),
-        owned_ca_sha256,
-        owned_ca_trusted,
+        ca_key_error: managed_ca_key_error(
+            &state.ca_certificate_path,
+            &state.ca_private_key_path,
+            inspect_key,
+        ),
+        ca_key_checked: inspect_key
+            && state.ca_certificate_path.is_file()
+            && state.ca_private_key_path.is_file(),
+        ca_status_error: certificate.error,
+        owned_ca_sha256: certificate.sha256,
+        owned_ca_trusted: certificate.trusted,
         host_restore_pending: state.host.recovery_pending(),
         diagnostics_path: state.diagnostics_path.clone(),
     })
+}
+
+struct BootstrapCertificateState {
+    sha256: Option<String>,
+    trusted: bool,
+    error: Option<String>,
+}
+
+fn bootstrap_certificate_state(
+    ownership: &OwnedCertificateRegistry,
+    decrypt_https: bool,
+    trust: impl FnOnce(&str) -> Result<bool, String>,
+) -> Result<BootstrapCertificateState, String> {
+    let certificate = (|| {
+        let sha256 = ownership
+            .owned_thumbprint()
+            .map_err(|error| error.to_string())?;
+        let trusted = sha256.as_deref().map(trust).transpose()?.unwrap_or(false);
+        Ok::<_, String>((sha256, trusted))
+    })();
+    match certificate {
+        Ok((sha256, trusted)) => Ok(BootstrapCertificateState {
+            sha256,
+            trusted,
+            error: None,
+        }),
+        Err(error) if !decrypt_https => Ok(BootstrapCertificateState {
+            sha256: None,
+            trusted: false,
+            error: Some(error),
+        }),
+        Err(error) => Err(error),
+    }
 }
 
 #[tauri::command]
@@ -1208,9 +1299,35 @@ async fn start_proxy(
     start_proxy_locked(request, &state).await
 }
 
+#[tauri::command]
+async fn start_https_tunnels(
+    request: ProxyStartRequest,
+    state: State<'_, DesktopState>,
+) -> Result<AppStatus, String> {
+    let _certificate_operation = state.certificate_operation.lock().await;
+    if !matches!(
+        state.application.status().lifecycle,
+        transmog_app::AppLifecycle::Stopped | transmog_app::AppLifecycle::Failed
+    ) {
+        return Err(
+            "Wait for the current proxy run to finish before starting with HTTPS tunnels."
+                .to_owned(),
+        );
+    }
+    start_proxy_locked_with_mode(request, &state, true).await
+}
+
 async fn start_proxy_locked(
+    request: ProxyStartRequest,
+    state: &DesktopState,
+) -> Result<AppStatus, String> {
+    start_proxy_locked_with_mode(request, state, false).await
+}
+
+async fn start_proxy_locked_with_mode(
     mut request: ProxyStartRequest,
     state: &DesktopState,
+    tunnels_only: bool,
 ) -> Result<AppStatus, String> {
     let preferences = state.application.product_state().preferences;
     request.listen = std::net::SocketAddr::from((
@@ -1223,8 +1340,12 @@ async fn start_proxy_locked(
     ));
     request.allow_remote_clients = preferences.allow_remote_clients;
     let configure_system_proxy = preferences.configure_system_proxy;
-    validate_proxy_start(state, configure_system_proxy)?;
-    if state.application.product_state().preferences.decrypt_https {
+    validate_proxy_start(
+        state,
+        configure_system_proxy,
+        !tunnels_only && preferences.decrypt_https,
+    )?;
+    if !tunnels_only && preferences.decrypt_https {
         transmog_app::protect_ca_private_key(
             &request.ca_certificate_path,
             &request.ca_private_key_path,
@@ -1243,14 +1364,19 @@ async fn start_proxy_locked(
     );
     let host = configure_system_proxy
         .then(|| Arc::clone(&state.host) as Arc<dyn transmog_session::HostIntegration>);
-    state
-        .application
-        .start_proxy(request, host)
-        .await
-        .map_err(|error| error.to_string())
+    if tunnels_only {
+        state.application.start_https_tunnels(request, host).await
+    } else {
+        state.application.start_proxy(request, host).await
+    }
+    .map_err(|error| error.to_string())
 }
 
-fn validate_proxy_start(state: &DesktopState, configure_system_proxy: bool) -> Result<(), String> {
+fn validate_proxy_start(
+    state: &DesktopState,
+    configure_system_proxy: bool,
+    decrypt_https: bool,
+) -> Result<(), String> {
     if state.closing.load(Ordering::Acquire) {
         return Err("Transmog is closing for an update.".to_owned());
     }
@@ -1260,7 +1386,7 @@ fn validate_proxy_start(state: &DesktopState, configure_system_proxy: bool) -> R
                 .to_owned(),
         );
     }
-    if !state.application.product_state().preferences.decrypt_https {
+    if !decrypt_https {
         return Ok(());
     }
     if !state.ca_certificate_path.is_file() || !state.ca_private_key_path.is_file() {
@@ -1287,7 +1413,7 @@ fn validate_proxy_trust(sha256: &str, configure_system_proxy: bool) -> Result<()
             .map_err(|error| error.to_string())?
     {
         return Err(
-            "Trust the Transmog interception certificate before starting the proxy.".to_owned(),
+            "Trust the Transmog interception certificate to inspect HTTPS traffic.".to_owned(),
         );
     }
     Ok(())
@@ -1296,13 +1422,25 @@ fn validate_proxy_trust(sha256: &str, configure_system_proxy: bool) -> Result<()
 fn managed_ca_key_error(
     certificate_path: &std::path::Path,
     key_path: &std::path::Path,
+    inspect_key: bool,
 ) -> Option<String> {
-    if !certificate_path.is_file() || !key_path.is_file() {
+    if !inspect_key || !certificate_path.is_file() || !key_path.is_file() {
         return None;
     }
     transmog_app::validate_ca_private_key(certificate_path, key_path)
         .err()
         .map(|error| error.to_string())
+}
+
+fn protect_managed_ca_key(
+    certificate_path: &std::path::Path,
+    key_path: &std::path::Path,
+    decrypt_https: bool,
+) -> Result<(), AppError> {
+    if decrypt_https && key_path.is_file() {
+        transmog_app::protect_ca_private_key(certificate_path, key_path)?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -2322,6 +2460,7 @@ async fn start_capture(
             .product_state()
             .preferences
             .configure_system_proxy,
+        state.application.product_state().preferences.decrypt_https,
     )
     .map_err(|message| AppError {
         exception: None,
@@ -2574,10 +2713,11 @@ pub fn run() {
         OwnedCertificateRegistry::new(state_root.join("certificate-ownership-v1.json"));
     let ca_certificate_path = state_root.join("interception-ca.pem");
     let ca_private_key_path = state_root.join("interception-ca.key");
-    if ca_private_key_path.is_file()
-        && let Err(error) =
-            transmog_app::protect_ca_private_key(&ca_certificate_path, &ca_private_key_path)
-    {
+    if let Err(error) = protect_managed_ca_key(
+        &ca_certificate_path,
+        &ca_private_key_path,
+        application.product_state().preferences.decrypt_https,
+    ) {
         application.record_diagnostic(
             DiagnosticLevel::Error,
             "certificate",
@@ -2779,6 +2919,8 @@ pub fn run() {
                 decide_client_certificate,
                 save_client_certificate_policy,
                 save_product_state,
+                list_running_processes,
+                start_https_tunnels,
                 save_network_profiles,
                 save_workspace_preferences,
                 update_response_set_guide,
@@ -3410,7 +3552,7 @@ fn persist_window_state(application: &Application, window: &tauri::Window) {
             state.window.y = Some(position.y);
         }
     }
-    let _ = application.save_product_state(state);
+    let _ = application.save_product_settings(state, None, None);
 }
 
 fn is_allowed_navigation(url: &tauri::Url) -> bool {
@@ -3447,6 +3589,39 @@ fn into_tauri_response(result: Result<UiResponse, UiError>) -> Response<Vec<u8>>
 #[cfg(test)]
 mod tests {
     #[test]
+    fn tunnel_mode_bootstrap_tolerates_unavailable_ownership_and_trust_metadata() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("ownership.json");
+        std::fs::write(&path, b"malformed ownership").unwrap();
+        let ownership = OwnedCertificateRegistry::new(path.clone());
+        let skipped = bootstrap_certificate_state(&ownership, false, |_| {
+            panic!("Malformed ownership must not access trust")
+        })
+        .unwrap();
+        assert!(skipped.error.is_some());
+        assert_eq!(skipped.sha256, None);
+        assert!(!skipped.trusted);
+        assert!(bootstrap_certificate_state(&ownership, true, |_| Ok(false)).is_err());
+        std::fs::remove_file(path).unwrap();
+        ownership.claim(&"AB".repeat(32)).unwrap();
+        let unavailable = bootstrap_certificate_state(&ownership, false, |_| {
+            Err("Trust store unavailable".into())
+        })
+        .unwrap();
+        assert_eq!(
+            unavailable.error.as_deref(),
+            Some("Trust store unavailable")
+        );
+        assert!(
+            bootstrap_certificate_state(
+                &ownership,
+                true,
+                |_| Err("Trust store unavailable".into())
+            )
+            .is_err()
+        );
+    }
+    #[test]
     fn script_command_errors_explicitly_project_local_exception_details() {
         let exception = serde_json::from_value(serde_json::json!({
             "exception":{"name":"Error","message":"local-detail-canary","frames":[],"unavailable":false},
@@ -3472,7 +3647,8 @@ mod tests {
         );
     }
     use super::{
-        OwnedCertificateRegistry, is_allowed_navigation, preview_handle, remove_owned_app_data,
+        OwnedCertificateRegistry, bootstrap_certificate_state, is_allowed_navigation,
+        managed_ca_key_error, preview_handle, protect_managed_ca_key, remove_owned_app_data,
         reset_managed_ca, validate_proxy_trust,
     };
 
@@ -3645,5 +3821,32 @@ mod tests {
         );
         assert_eq!(std::fs::read_dir(&root).unwrap().count(), 4);
         std::fs::remove_dir_all(parent).unwrap();
+    }
+
+    #[test]
+    fn tunnel_mode_bootstrap_and_startup_do_not_open_or_migrate_private_keys() {
+        let root = tempfile::tempdir().unwrap();
+        let certificate = root.path().join("ca.pem");
+        let key = root.path().join("ca.key");
+        for bytes in [
+            b"malformed protected private key".as_slice(),
+            b"-----BEGIN PRIVATE KEY-----\nlegacy invalid key\n-----END PRIVATE KEY-----\n"
+                .as_slice(),
+        ] {
+            std::fs::write(&certificate, b"malformed public certificate").unwrap();
+            std::fs::write(&key, bytes).unwrap();
+            assert_eq!(managed_ca_key_error(&certificate, &key, false), None);
+            protect_managed_ca_key(&certificate, &key, false).unwrap();
+            assert_eq!(std::fs::read(&key).unwrap(), bytes);
+            assert!(managed_ca_key_error(&certificate, &key, true).is_some());
+            assert!(protect_managed_ca_key(&certificate, &key, true).is_err());
+        }
+        let ca = transmog_tls::ProxyCa::generate("Unmigrated tunnel-mode fixture", 2).unwrap();
+        let legacy = ca.private_key_pem_pkcs8().unwrap();
+        std::fs::write(&certificate, ca.certificate_pem().unwrap()).unwrap();
+        std::fs::write(&key, &legacy).unwrap();
+        protect_managed_ca_key(&certificate, &key, false).unwrap();
+        assert_eq!(managed_ca_key_error(&certificate, &key, false), None);
+        assert_eq!(std::fs::read(key).unwrap(), legacy);
     }
 }

@@ -1,7 +1,10 @@
 import { writeFile } from "node:fs/promises";
 
-// Exercise the Windows command boundary in the harness-owned profile, preserving
-// the original settings and avoiding changes to host proxy routing or CA trust.
+// Exercise the Windows command boundary in the harness-owned profile, restoring
+// other preferences while retaining its tested HTTPS mode. Re-enabling a saved
+// default without a CA is now invalid; qualification continues certificate-free
+// until the process probe explicitly creates its isolated fixture certificate.
+// Neither probe installs trust or changes host proxy routing.
 export async function smokeNetworkSettings(call, evaluate, screenshotPath) {
   try {
     const result = await evaluate(`(async()=>{
@@ -149,7 +152,7 @@ export async function smokeNetworkSettings(call, evaluate, screenshotPath) {
   } finally {
     await call("Emulation.clearDeviceMetricsOverride");
     await evaluate(
-      `(async()=>{const probe=globalThis.__networkSettingsProbe;if(!probe)return;const shell=document.querySelector('app-shell'),settings=shell.shadowRoot.querySelector('settings-workspace');if((await window.__TAURI_INTERNALS__.invoke('app_status')).lifecycle!=='stopped')await settings.stopProxy();const profiles=settings.querySelector('network-profile-settings');if(profiles.networkEditor.open)profiles.discard();const catalog=(await window.__TAURI_INTERNALS__.invoke('product_state')).preferences.networkProfiles;await window.__TAURI_INTERNALS__.invoke('save_network_profiles',{expectedRevision:catalog.revision,profiles:probe.original.preferences.networkProfiles.customProfiles,useProfile:probe.original.preferences.networkProfiles.activeProfile.id});await profiles.load();await window.__TAURI_INTERNALS__.invoke('save_product_state',{productState:probe.original});await settings.loadSettings();settings.querySelector('.preferences-form .connection-advanced').open=probe.open;settings.showSettingsSection(probe.section);shell.shadowRoot.querySelector('a[data-view="'+probe.view+'"]').click();settings.$flushUpdates();shell.$flushUpdates();delete globalThis.__networkSettingsProbe;})()`,
+      `(async()=>{const probe=globalThis.__networkSettingsProbe;if(!probe)return;const shell=document.querySelector('app-shell'),settings=shell.shadowRoot.querySelector('settings-workspace');if((await window.__TAURI_INTERNALS__.invoke('app_status')).lifecycle!=='stopped')await settings.stopProxy();const profiles=settings.querySelector('network-profile-settings');if(profiles.networkEditor.open)profiles.discard();const current=await window.__TAURI_INTERNALS__.invoke('product_state'),catalog=current.preferences.networkProfiles,restore=structuredClone(probe.original);restore.preferences.decryptHttps=current.preferences.decryptHttps;await window.__TAURI_INTERNALS__.invoke('save_network_profiles',{expectedRevision:catalog.revision,profiles:probe.original.preferences.networkProfiles.customProfiles,useProfile:probe.original.preferences.networkProfiles.activeProfile.id});await profiles.load();await window.__TAURI_INTERNALS__.invoke('save_product_state',{productState:restore});await settings.loadSettings();settings.querySelector('.preferences-form .connection-advanced').open=probe.open;settings.showSettingsSection(probe.section);shell.shadowRoot.querySelector('a[data-view="'+probe.view+'"]').click();settings.$flushUpdates();shell.$flushUpdates();delete globalThis.__networkSettingsProbe;})()`,
     );
   }
 }

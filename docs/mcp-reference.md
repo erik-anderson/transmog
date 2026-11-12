@@ -303,6 +303,8 @@ lasts only for the current desktop run.
 `transmog_request_send` defaults to `mode: "direct"`, which sends to the origin
 without applying live rules. Use `mode: "live-rules"` to verify changes through
 the running loopback proxy, including its current rules, hooks and observers.
+Process selection must include Transmog's executable; excluded or unidentified
+callers cannot use live-rules replay while a process filter is active.
 HTTPS uses CONNECT with certificate verification against the running proxy's
 public interception CA and requires HTTPS decryption to be enabled. It requires
 collection to be running and body retention configured; it never starts collection

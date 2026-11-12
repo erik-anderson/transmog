@@ -7,12 +7,22 @@ export interface AppStatus {
   listener: string | null;
   summary: string;
   hostRestorePending: boolean;
+  processInspection: ProcessInspectionPolicy;
+  httpsDecryption: boolean | null;
+  unresolvedProcessConnections: number;
+}
+export interface ProcessInspectionPolicy {
+  mode: "all" | "only" | "except";
+  include: string[];
+  exclude: string[];
 }
 export interface CaIdentity {
   sha256: string;
   certificatePath: string;
 }
 export interface DesktopBootstrap {
+  caKeyChecked?: boolean;
+  caStatusError?: string | null;
   viewerMode?: boolean;
   caCertificatePath: string;
   caPrivateKeyPath: string;
@@ -494,6 +504,7 @@ export interface ProductState {
     sessionPageSize: number;
     configureSystemProxy: boolean;
     decryptHttps: boolean;
+    processInspection: ProcessInspectionPolicy;
     allowRemoteClients: boolean;
     proxyPort: number | null;
     reuseServerConnections: boolean;
@@ -1014,7 +1025,13 @@ export interface TrafficRuleRequest {
 export type ViewName =
   "traffic" | "breakpoints" | "automation" | "composer" | "captures" | "settings";
 export type NoticeAction =
-  "setup-ca" | "reset-ca" | "start-proxy" | "settings" | "recover-proxy" | null;
+  | "setup-ca"
+  | "reset-ca"
+  | "start-proxy"
+  | "settings"
+  | "recover-proxy"
+  | "https-preferences"
+  | null;
 export type RequestCommandFormat = "curl" | "powershell";
 export interface RequestCommand {
   text: string;

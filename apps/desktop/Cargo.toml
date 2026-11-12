@@ -40,6 +40,7 @@ percent-encoding.workspace = true
 tempfile.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+transmog-client-identity = { version = "=0.1.24", path = "../../crates/client-identity" }
 windows-registry = "=0.6.1"
 hex.workspace = true
 sha2.workspace = true

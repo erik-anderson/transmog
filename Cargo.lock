@@ -6504,6 +6504,7 @@ dependencies = [
  "transmog-script-supervisor",
  "transmog-session",
  "transmog-tls",
+ "transmog-tls-native",
  "unicode-normalization",
  "url",
  "web_atoms",
@@ -6670,6 +6671,7 @@ dependencies = [
  "transmog-app-webui",
  "transmog-automation",
  "transmog-capture",
+ "transmog-client-identity",
  "transmog-core",
  "transmog-extensions",
  "transmog-host-windows",
@@ -6941,6 +6943,7 @@ version = "0.1.24"
 dependencies = [
  "boring",
  "bytes",
+ "h2",
  "http",
  "http-body",
  "http-body-util",

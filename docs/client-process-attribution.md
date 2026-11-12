@@ -1,12 +1,12 @@
 # Client process attribution
 
-Transmog records a best-effort snapshot of the client process that opened each
+Transmog resolves a best-effort snapshot of the client process that opened each
 downstream TCP connection. A resolved local caller contains the process name and
 PID. A non-loopback caller is recorded as `remote`; a loopback caller that
 cannot be resolved is recorded as `local-unknown`.
 
 Attribution runs once, immediately after the listener accepts the connection.
-The result is copied into every exchange's immutable session metadata, so core
+For inspected connections, the result is copied into each exchange's immutable session metadata, so core
 hooks, observers, the application session catalog, and TMCap capture records see
 the same value. The desktop traffic table presents it in the **Caller** column.
 
@@ -19,8 +19,10 @@ the same value. The desktop traffic table presents it in the **Caller** column.
   retained.
 - **Linux:** the resolver matches the complete tuple in `/proc/net/tcp` or
   `/proc/net/tcp6`, obtains its socket inode, and searches the visible
-  `/proc/<pid>/fd` links for its owner. The name comes from `comm`, with the
-  executable file name as a fallback. PID namespaces, mount namespaces, and
+  `/proc/<pid>/fd` links for its owner. Names come from `/proc/<pid>/exe`;
+  inaccessible images remain nameless. The mutable, truncated `comm` value
+  cannot reliably identify an executable for inspection exclusions.
+  PID namespaces, mount namespaces, and
   `/proc` access controls can intentionally hide the owner.
 - **macOS and other platforms:** loopback clients currently resolve as
   `local-unknown`. macOS exposes `proc_pidfdinfo`, but Apple labels the
@@ -44,6 +46,25 @@ connection can disappear before lookup, a process can exit, and a PID can later
 be reused. Access restrictions can also prevent reading a process name even when
 the PID is visible. These cases never block proxy traffic and degrade to an
 unknown name or `local-unknown` classification.
+
+Process inspection uses this snapshot to choose whether a connection enters
+inspection. **All processes** is the default. With **Only these processes** or
+**All except these processes**, a caller with an unavailable name, an unresolved
+local identity, or a remote identity passes through without inspection. This
+avoids intercepting an excluded application when its name cannot be read.
+The runtime exposes an aggregate unresolved-caller count without retaining
+those callers' requests or destinations. Existing remote-access restrictions
+still apply before admission.
+
+These choices are debugging controls, not access controls. Executable names
+can be shared or changed, and attribution is best effort. See
+[process inspection](network-profiles.md#choose-processes-to-inspect) for exact
+matching, capture, and connection-lifetime behavior.
+
+The settings process picker uses a separate, bounded snapshot of readable
+running executable names. It returns no full paths or PIDs, merges duplicate
+names, and does not require an application to be running before its name can
+be entered. Live connection decisions never depend on the suggestion inventory.
 
 All operating-system scans are bounded. The runtime also contains resolver
 panics and substitutes `local-unknown` (or `remote` for a non-loopback peer), so

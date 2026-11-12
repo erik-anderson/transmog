@@ -80,6 +80,9 @@ pub struct ProductPreferences {
     /// Decrypt HTTPS traffic; false forwards CONNECT contents without inspection.
     #[serde(default = "enabled_by_default")]
     pub decrypt_https: bool,
+    /// Select caller executable names whose new connections may be inspected.
+    #[serde(default)]
+    pub process_inspection: transmog_core::process_inspection::ProcessInspectionPolicy,
     /// Partition origin connections by caller PID/source IP and downstream H2 session.
     #[serde(default = "enabled_by_default")]
     pub isolate_outbound_connections: bool,
@@ -104,6 +107,8 @@ impl Default for ProductPreferences {
             proxy_port: None,
             reuse_server_connections: true,
             decrypt_https: true,
+            process_inspection: transmog_core::process_inspection::ProcessInspectionPolicy::default(
+            ),
             isolate_outbound_connections: true,
             allowed_outbound_protocols:
                 transmog_core::connection_policy::AllowedHttpProtocols::default(),
@@ -116,6 +121,151 @@ impl Default for ProductPreferences {
 
 const fn enabled_by_default() -> bool {
     true
+}
+
+#[cfg(test)]
+mod process_policy_tests {
+    use super::*;
+    use transmog_core::process_inspection::{ProcessInspectionMode, ProcessInspectionPolicy};
+
+    #[test]
+    fn stale_settings_and_window_writes_preserve_an_explicit_tunnel_choice() {
+        let manager = ProductStateManager::memory(ProductState::default());
+        let stale = manager.snapshot();
+        let mut tunnels = stale.clone();
+        tunnels.preferences.decrypt_https = false;
+        manager.save(tunnels).unwrap();
+        let mut theme = stale.clone();
+        theme.preferences.theme = ThemePreference::Dark;
+        let merged = manager
+            .save_settings(
+                theme,
+                Some(&stale.preferences.process_inspection),
+                DecryptionWrite::Checked(true),
+            )
+            .unwrap();
+        assert!(!merged.preferences.decrypt_https);
+        assert_eq!(merged.preferences.theme, ThemePreference::Dark);
+        assert!(
+            !manager
+                .save_settings(stale, None, DecryptionWrite::Preserve)
+                .unwrap()
+                .preferences
+                .decrypt_https
+        );
+        let mut explicit = manager.snapshot();
+        explicit.preferences.decrypt_https = true;
+        assert!(
+            manager
+                .save_settings(explicit, None, DecryptionWrite::Checked(false))
+                .unwrap()
+                .preferences
+                .decrypt_https
+        );
+    }
+
+    #[test]
+    fn concurrent_recent_artifacts_preserve_authored_settings() {
+        let mut initial = ProductState::default();
+        initial.privacy.remember_recent_artifacts = true;
+        let manager = ProductStateManager::memory(initial);
+        let ready = Arc::new(std::sync::Barrier::new(9));
+        std::thread::scope(|scope| {
+            for worker in 0..8 {
+                let manager = manager.clone();
+                let ready = ready.clone();
+                scope.spawn(move || {
+                    ready.wait();
+                    for artifact in 0..64 {
+                        manager.remember(
+                            PathBuf::from(format!("capture-{worker}-{artifact}.tmcap")),
+                            ArtifactKind::NativeCapture,
+                        );
+                    }
+                });
+            }
+            ready.wait();
+            let mut settings = manager.snapshot();
+            let baseline = settings.preferences.process_inspection.clone();
+            settings.preferences.decrypt_https = false;
+            settings.preferences.theme = ThemePreference::Dark;
+            settings.preferences.process_inspection = ProcessInspectionPolicy {
+                mode: ProcessInspectionMode::Only,
+                include: vec!["browser.exe".into()],
+                exclude: vec![],
+            };
+            manager
+                .save_with_process_inspection(settings, Some(&baseline))
+                .unwrap();
+        });
+        manager.remember(PathBuf::from("final.tmcap"), ArtifactKind::NativeCapture);
+        let saved = manager.snapshot();
+        assert!(!saved.preferences.decrypt_https);
+        assert_eq!(saved.preferences.theme, ThemePreference::Dark);
+        assert_eq!(
+            saved.preferences.process_inspection.mode,
+            ProcessInspectionMode::Only
+        );
+        assert_eq!(saved.recent_artifacts[0].path, PathBuf::from("final.tmcap"));
+    }
+
+    #[test]
+    fn checked_process_saves_merge_unrelated_windows_and_reject_policy_conflicts() {
+        let manager = ProductStateManager::memory(ProductState::default());
+        let original = manager.snapshot();
+        let baseline = original.preferences.process_inspection.clone();
+        let mut edited = original.clone();
+        edited.preferences.process_inspection = ProcessInspectionPolicy {
+            mode: ProcessInspectionMode::Only,
+            include: vec!["chrome.exe".into()],
+            exclude: vec!["helper.exe".into()],
+        };
+        let first = manager
+            .save_with_process_inspection(edited, Some(&baseline))
+            .unwrap();
+        let mut unrelated = original.clone();
+        unrelated.preferences.theme = ThemePreference::Dark;
+        let merged = manager
+            .save_with_process_inspection(unrelated, Some(&baseline))
+            .unwrap();
+        assert_eq!(
+            merged.preferences.process_inspection,
+            first.preferences.process_inspection
+        );
+        assert_eq!(merged.preferences.theme, ThemePreference::Dark);
+        let mut conflicting = original.clone();
+        conflicting.preferences.process_inspection = ProcessInspectionPolicy {
+            mode: ProcessInspectionMode::Except,
+            exclude: vec!["service.exe".into()],
+            include: vec![],
+        };
+        assert!(
+            manager
+                .save_with_process_inspection(conflicting, Some(&baseline))
+                .is_err()
+        );
+        assert_eq!(manager.snapshot(), merged);
+        // Window and internal preference snapshots do not author this independent choice.
+        assert_eq!(
+            manager
+                .save(original)
+                .unwrap()
+                .preferences
+                .process_inspection,
+            first.preferences.process_inspection
+        );
+        let invalid = ProcessInspectionPolicy {
+            mode: ProcessInspectionMode::Only,
+            ..Default::default()
+        };
+        let mut state = manager.snapshot();
+        state.preferences.process_inspection = invalid;
+        assert!(
+            manager
+                .save_with_process_inspection(state, Some(&first.preferences.process_inspection))
+                .is_err()
+        );
+    }
 }
 
 /// Explicit persisted privacy choices.
@@ -236,6 +386,13 @@ struct Inner {
     next_generation: u64,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum DecryptionWrite {
+    Authored,
+    Preserve,
+    Checked(bool),
+}
+
 /// Thread-safe product-state owner with optional crash-safe persistence.
 #[derive(Clone, Debug)]
 pub(crate) struct ProductStateManager {
@@ -276,7 +433,44 @@ impl ProductStateManager {
     }
 
     pub(crate) fn save(&self, state: ProductState) -> Result<ProductState, AppError> {
+        self.save_with_process_inspection(state, None)
+    }
+
+    pub(crate) fn save_with_process_inspection(
+        &self,
+        state: ProductState,
+        expected: Option<&transmog_core::process_inspection::ProcessInspectionPolicy>,
+    ) -> Result<ProductState, AppError> {
+        self.save_settings(state, expected, DecryptionWrite::Authored)
+    }
+
+    pub(crate) fn save_settings(
+        &self,
+        state: ProductState,
+        expected: Option<&transmog_core::process_inspection::ProcessInspectionPolicy>,
+        decryption: DecryptionWrite,
+    ) -> Result<ProductState, AppError> {
+        self.save_settings_prepared(state, expected, decryption, |_, _| Ok(()))
+            .map(|(state, ())| state)
+    }
+
+    pub(crate) fn save_settings_prepared<T>(
+        &self,
+        state: ProductState,
+        expected: Option<&transmog_core::process_inspection::ProcessInspectionPolicy>,
+        decryption: DecryptionWrite,
+        prepare: impl FnOnce(&ProductState, &ProductState) -> Result<T, AppError>,
+    ) -> Result<(ProductState, T), AppError> {
         let mut inner = self.inner.lock().unwrap();
+        if let Some(expected) = expected
+            && expected != &state.preferences.process_inspection
+            && expected != &inner.state.preferences.process_inspection
+            && state.preferences.process_inspection != inner.state.preferences.process_inspection
+        {
+            return Err(invalid(
+                "Process inspection changed in another window. Revert changes to load the saved settings; your draft is still available.",
+            ));
+        }
         // Main settings/window writes must not overwrite independently saved layout.
         let allowed_outbound_protocols = inner
             .state
@@ -294,6 +488,24 @@ impl ProductStateManager {
             .reuse_connections;
         let state = validate(ProductState {
             preferences: ProductPreferences {
+                decrypt_https: match decryption {
+                    DecryptionWrite::Preserve => inner.state.preferences.decrypt_https,
+                    DecryptionWrite::Checked(baseline)
+                        if baseline == state.preferences.decrypt_https =>
+                    {
+                        inner.state.preferences.decrypt_https
+                    }
+                    DecryptionWrite::Authored | DecryptionWrite::Checked(_) => {
+                        state.preferences.decrypt_https
+                    }
+                },
+                process_inspection: if expected
+                    .is_some_and(|expected| expected != &state.preferences.process_inspection)
+                {
+                    state.preferences.process_inspection
+                } else {
+                    inner.state.preferences.process_inspection.clone()
+                },
                 allowed_outbound_protocols,
                 reuse_server_connections,
                 network_profiles: inner.state.preferences.network_profiles.clone(),
@@ -307,8 +519,9 @@ impl ProductStateManager {
             workspace: inner.state.workspace.clone(),
             ..state
         })?;
+        let prepared = prepare(&state, &inner.state)?;
         self.persist(&mut inner, &state)?;
-        Ok(state)
+        Ok((state, prepared))
     }
 
     pub(crate) fn save_workspace(
@@ -404,7 +617,8 @@ impl ProductStateManager {
     }
 
     pub(crate) fn remember(&self, path: PathBuf, kind: ArtifactKind) {
-        let mut state = self.snapshot();
+        let mut inner = self.inner.lock().unwrap();
+        let mut state = inner.state.clone();
         if !state.privacy.remember_recent_artifacts {
             return;
         }
@@ -413,7 +627,9 @@ impl ProductStateManager {
             .recent_artifacts
             .insert(0, RecentArtifact { path, kind });
         state.recent_artifacts.truncate(MAX_RECENT_ARTIFACTS);
-        let _ = self.save(state);
+        // This narrow transaction must not republish a stale preference snapshot
+        // after an independent settings save changes inspection or decryption.
+        let _ = self.persist(&mut inner, &state);
     }
 }
 
@@ -452,26 +668,7 @@ pub(crate) fn validate(mut state: ProductState) -> Result<ProductState, AppError
     if state.schema_version != CURRENT_SCHEMA {
         return Err(invalid("unsupported product-state schema"));
     }
-    if state.preferences.proxy_port == Some(0) {
-        return Err(AppError::new(
-            ErrorCategory::InvalidInput,
-            "Proxy port must be between 1 and 65535, or automatic.",
-            false,
-        ));
-    }
-    state.preferences.network_profiles.validate()?;
-    state.preferences.allowed_outbound_protocols = state
-        .preferences
-        .network_profiles
-        .active_profile
-        .settings
-        .protocols;
-    state.preferences.reuse_server_connections = state
-        .preferences
-        .network_profiles
-        .active_profile
-        .settings
-        .reuse_connections;
+    state.preferences = validate_preferences(state.preferences)?;
     if state
         .privacy
         .request_body_limit
@@ -479,11 +676,6 @@ pub(crate) fn validate(mut state: ProductState) -> Result<ProductState, AppError
     {
         return Err(invalid(
             "Request body limit must be from 1 MB to 1 TB, or Unlimited.",
-        ));
-    }
-    if !state.preferences.client_certificate_policy.valid() {
-        return Err(invalid(
-            "Client certificate rules require an exact host, a valid port and a certificate selector for automatic selection",
         ));
     }
     if !(640..=16_384).contains(&state.window.width)
@@ -517,7 +709,40 @@ pub(crate) fn validate(mut state: ProductState) -> Result<ProductState, AppError
     Ok(state)
 }
 
-fn invalid(message: &'static str) -> AppError {
+fn validate_preferences(
+    mut preferences: ProductPreferences,
+) -> Result<ProductPreferences, AppError> {
+    if preferences.proxy_port == Some(0) {
+        return Err(AppError::new(
+            ErrorCategory::InvalidInput,
+            "Proxy port must be between 1 and 65535, or automatic.",
+            false,
+        ));
+    }
+    preferences.network_profiles.validate()?;
+    preferences.process_inspection = preferences
+        .process_inspection
+        .validated()
+        .map_err(|error| invalid(error.to_string()))?;
+    preferences.allowed_outbound_protocols = preferences
+        .network_profiles
+        .active_profile
+        .settings
+        .protocols;
+    preferences.reuse_server_connections = preferences
+        .network_profiles
+        .active_profile
+        .settings
+        .reuse_connections;
+    if !preferences.client_certificate_policy.valid() {
+        return Err(invalid(
+            "Client certificate rules require an exact host, a valid port and a certificate selector for automatic selection",
+        ));
+    }
+    Ok(preferences)
+}
+
+fn invalid(message: impl Into<String>) -> AppError {
     AppError::new(ErrorCategory::InvalidInput, message, false)
 }
 
@@ -1009,6 +1234,7 @@ mod tests {
         let preferences = value["preferences"].as_object_mut().unwrap();
         preferences.remove("isolateOutboundConnections");
         preferences.remove("decryptHttps");
+        preferences.remove("processInspection");
         preferences.remove("allowRemoteClients");
         preferences.remove("proxyPort");
         preferences.remove("reuseServerConnections");
@@ -1018,6 +1244,10 @@ mod tests {
         let restored: ProductState = serde_json::from_value(value).unwrap();
         assert!(restored.preferences.isolate_outbound_connections);
         assert!(restored.preferences.decrypt_https);
+        assert_eq!(
+            restored.preferences.process_inspection,
+            crate::ProcessInspectionPolicy::default()
+        );
         assert!(!restored.preferences.allow_remote_clients);
         assert_eq!(restored.preferences.proxy_port, None);
         assert!(restored.preferences.reuse_server_connections);

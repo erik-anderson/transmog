@@ -2,6 +2,7 @@ import { writeFile } from "node:fs/promises";
 import process from "node:process";
 import { smokeHexViewer } from "./smoke-hex-viewer.mjs";
 import { smokeNetworkSettings } from "./smoke-network-settings.mjs";
+import { smokeProcessInspection } from "./smoke-process-inspection.mjs";
 import { smokeExtensions } from "./smoke-extensions.mjs";
 import { smokeAbout } from "./smoke-about.mjs";
 import { smokeBuildInfo } from "./smoke-build-info.mjs";
@@ -914,6 +915,7 @@ try {
     );
   }
   result.networkSettings = await smokeNetworkSettings(call, evaluate, screenshotPath);
+  result.processInspection = await smokeProcessInspection(call, evaluate, screenshotPath);
   result.scriptHelp = await smokeScriptHelp(call, evaluate, screenshotPath);
   result.mcp = await smokeMcp(call, evaluate, screenshotPath);
   result.extensions = await smokeExtensions(call, evaluate, screenshotPath, visualizerTracePath);

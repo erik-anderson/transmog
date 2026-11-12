@@ -67,6 +67,36 @@ pub(crate) async fn record(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     );
     #[cfg(windows)]
     recover_proxy(&ledger)?;
+    println!("Capture file: {}", output.display());
+    let decrypt_https = crate::inspection::decrypt_https(arguments);
+    crate::inspection::print_policy(
+        &crate::inspection::process_policy(arguments)?,
+        decrypt_https,
+    );
+    let options = RecordingOptions {
+        redact,
+        request_body_limit,
+        encoding,
+        circular_output,
+        profile,
+        support_context,
+    };
+    if !decrypt_https {
+        println!("Certificate setup: not used; HTTPS decryption is disabled for this run.");
+        let result = run_capture(arguments, &output, &ledger, None, None, options).await;
+        if result.is_err() && !circular_recording && output.is_file() {
+            eprintln!(
+                "Capture did not finish cleanly. The native evidence remains at {} for recovery.",
+                output.display()
+            );
+        }
+        result?;
+        println!("Trace saved: {}", output.display());
+        println!(
+            "Open it in Transmog to review it, then share this file with your support contact."
+        );
+        return Ok(());
+    }
     if ledger.cleanup_ephemeral(&trust)? > 0 {
         eprintln!(
             "Previous roots still need removal. Their identities are preserved; this capture will use a new root."
@@ -74,7 +104,6 @@ pub(crate) async fn record(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     }
     let persistent = arguments.iter().any(|arg| arg == "--persistent-root");
     let (ca, root) = ledger.prepare(persistent)?;
-    println!("Capture file: {}", output.display());
     println!(
         "Root mode: {}",
         if persistent {
@@ -83,22 +112,7 @@ pub(crate) async fn record(arguments: &[String]) -> Result<(), Box<dyn Error>> {
             "ephemeral; its private key stays in memory and its trust is removed afterward"
         }
     );
-    let result = run_capture(
-        arguments,
-        &output,
-        &ledger,
-        &root,
-        ca,
-        RecordingOptions {
-            redact,
-            request_body_limit,
-            encoding,
-            circular_output,
-            profile,
-            support_context,
-        },
-    )
-    .await;
+    let result = run_capture(arguments, &output, &ledger, Some(&root), Some(ca), options).await;
     if let Err(error) = ledger.finish_run(&root, result.is_ok()) {
         eprintln!(
             "CLI lifecycle metadata could not be updated: {error}. Continuing certificate cleanup."
@@ -117,7 +131,7 @@ pub(crate) async fn record(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     };
     if let Err(error) = &cleanup {
         eprintln!(
-            "Root cleanup is pending: {error}. The next CLI run will retry; ownership metadata is kept at {}.",
+            "Root cleanup is pending: {error}. A later recording with HTTPS decryption or transmog-cli roots cleanup will retry; ownership metadata is kept at {}.",
             ledger.directory().display()
         );
     }
@@ -236,18 +250,25 @@ fn capture_policy(redact: bool, request_body_limit: Option<u64>) -> CapturePolic
 async fn capture_metadata(
     arguments: &[String],
     ledger: &RootLedger,
-    root: &crate::roots::RootRecord,
+    root: Option<&crate::roots::RootRecord>,
     request_body_limit: Option<u64>,
 ) -> Result<serde_json::Value, Box<dyn Error>> {
     let mut metadata = original_trace_context(arguments).await;
     metadata["requestBodyLimit"] = serde_json::json!(request_body_limit);
-    metadata["certificateContext"] = serde_json::to_value(
-        ledger
-            .records()?
-            .into_iter()
-            .find(|record| record.sha256 == root.sha256)
-            .ok_or_else(|| io::Error::other("CLI root recovery metadata is unavailable"))?,
-    )?;
+    metadata["httpsDecryption"] = crate::inspection::decrypt_https(arguments).into();
+    metadata["processInspection"] =
+        serde_json::to_value(crate::inspection::process_policy(arguments)?)?;
+    metadata["certificateContext"] = if let Some(root) = root {
+        serde_json::to_value(
+            ledger
+                .records()?
+                .into_iter()
+                .find(|record| record.sha256 == root.sha256)
+                .ok_or_else(|| io::Error::other("CLI root recovery metadata is unavailable"))?,
+        )?
+    } else {
+        serde_json::Value::Null
+    };
     Ok(metadata)
 }
 
@@ -265,8 +286,8 @@ async fn run_capture(
     arguments: &[String],
     native: &Path,
     ledger: &RootLedger,
-    root: &crate::roots::RootRecord,
-    ca: transmog_tls::ProxyCa,
+    root: Option<&crate::roots::RootRecord>,
+    ca: Option<transmog_tls::ProxyCa>,
     options: RecordingOptions,
 ) -> Result<(), Box<dyn Error>> {
     let RecordingOptions {
@@ -277,7 +298,9 @@ async fn run_capture(
         profile,
         support_context,
     } = options;
-    setup_root(arguments, ledger, root)?;
+    if let Some(root) = root {
+        setup_root(arguments, ledger, root)?;
+    }
     println!(
         "Captured headers: {}. Captured bodies may contain private data; review the trace before sharing.",
         if redact {
@@ -297,6 +320,8 @@ async fn run_capture(
     })?;
     service.set_redact_sensitive_headers(redact);
     let config = ProxyConfig {
+        decrypt_https: crate::inspection::decrypt_https(arguments),
+        process_inspection: crate::inspection::process_policy(arguments)?,
         listener: ListenerConfig {
             listen_addr: crate::option(arguments, "--listen")
                 .unwrap_or("127.0.0.1:0")
@@ -704,7 +729,7 @@ fn output_path(arguments: &[String]) -> io::Result<PathBuf> {
 }
 #[allow(clippy::too_many_lines)] // Validate all recorder flags before any setup.
 fn validate_options(arguments: &[String]) -> io::Result<()> {
-    crate::arguments::validate(
+    crate::arguments::validate_repeatable(
         arguments,
         &[
             "--output",
@@ -731,8 +756,20 @@ fn validate_options(arguments: &[String]) -> io::Result<()> {
             "--allow-remote",
             "--include-network-context",
             "--unlimited-request-bodies",
+            "--no-decrypt-https",
         ],
+        crate::inspection::PROCESS_OPTIONS,
     )?;
+    crate::inspection::process_policy(arguments)?;
+    if !crate::inspection::decrypt_https(arguments)
+        && ["--install-root", "--persistent-root"]
+            .iter()
+            .any(|flag| crate::arguments::has_flag(arguments, flag))
+    {
+        return Err(crate::invalid_input(
+            "--no-decrypt-https cannot be combined with --install-root or --persistent-root; opaque HTTPS uses no interception CA",
+        ));
+    }
     if arguments.iter().any(|arg| arg == "--install-root")
         && arguments.iter().any(|arg| arg == "--no-install-root")
     {

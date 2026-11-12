@@ -1,6 +1,7 @@
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
 use std::{
+    collections::BTreeSet,
     fs::{self, File},
     io::{self, Read as _},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -12,6 +13,16 @@ use transmog_core::ClientIdentity;
 const MAX_TCP_TABLE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_PROCESSES: usize = 32_768;
 const MAX_FDS_PER_PROCESS: usize = 16_384;
+
+pub(super) fn running_process_names() -> io::Result<Vec<String>> {
+    let names = fs::read_dir("/proc")?
+        .take(MAX_PROCESSES)
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
+        .filter_map(process_name)
+        .collect::<BTreeSet<_>>();
+    Ok(names.into_iter().collect())
+}
 
 pub(super) fn resolve(client_addr: SocketAddr, proxy_addr: SocketAddr) -> Option<ClientIdentity> {
     let table = match (client_addr, proxy_addr) {
@@ -101,25 +112,179 @@ fn find_process_with_socket(inode: u64) -> Option<u32> {
     None
 }
 
-fn process_name(pid: u32) -> Option<String> {
-    fs::read_to_string(format!("/proc/{pid}/comm"))
-        .ok()
-        .map(|name| name.trim().to_owned())
-        .filter(|name| !name.is_empty())
-        .or_else(|| {
-            fs::read_link(format!("/proc/{pid}/exe"))
-                .ok()?
-                .file_name()?
-                .to_str()
-                .map(ToOwned::to_owned)
-        })
+pub(super) fn process_name(pid: u32) -> Option<String> {
+    // comm is mutable and normally truncated to 15 bytes, so it cannot safely
+    // identify a caller for executable-name exclusions. Missing image access
+    // remains nameless, which bypasses inspection when a filter is active.
+    let image = std::path::PathBuf::from(format!("/proc/{pid}/exe"));
+    let path = fs::read_link(&image).ok()?;
+    let name = path.file_name()?.to_str()?;
+    let name = if let Some(original) = name.strip_suffix(" (deleted)") {
+        if has_deleted_marker(&image, &path)? {
+            original
+        } else {
+            name
+        }
+    } else {
+        name
+    };
+    (!name.is_empty()).then(|| name.to_owned())
+}
+
+#[cfg(target_os = "linux")]
+fn has_deleted_marker(image: &Path, _path: &Path) -> Option<bool> {
+    use std::os::unix::fs::MetadataExt as _;
+
+    let image = fs::metadata(image).ok()?;
+    if image.nlink() == 0 {
+        // The inode has no links, so procfs appended exactly one marker. A
+        // literal suffix on the original executable remains in its basename.
+        return Some(true);
+    }
+    // A still-linked executable may literally end in " (deleted)", or its
+    // original dentry may have been unlinked while another hard link remains.
+    // Even an exact inode match at the reported path cannot distinguish those
+    // cases: the surviving hard link may have that same suffix. Stay nameless.
+    None
+}
+
+#[cfg(not(target_os = "linux"))]
+fn has_deleted_marker(_image: &Path, _path: &Path) -> Option<bool> {
+    None
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[cfg(target_os = "linux")]
-    use std::net::{TcpListener, TcpStream};
+    use std::{
+        net::{TcpListener, TcpStream},
+        path::PathBuf,
+        process::{Child, Command, Stdio},
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
+    #[cfg(target_os = "linux")]
+    struct ExecutableFixture {
+        directory: PathBuf,
+        executable: PathBuf,
+        child: Child,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl ExecutableFixture {
+        fn spawn(name: &str) -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let directory = std::env::temp_dir().join(format!(
+                "transmog-image-name-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed),
+            ));
+            fs::create_dir(&directory).unwrap();
+            let directory = fs::canonicalize(directory).unwrap();
+            let executable = directory.join(name);
+            fs::copy("/bin/sleep", &executable).unwrap();
+            let child = Command::new(&executable)
+                .arg("60")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap();
+            Self {
+                directory,
+                executable,
+                child,
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Drop for ExecutableFixture {
+        fn drop(&mut self) {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+            let _ = fs::remove_file(&self.executable);
+            let _ = fs::remove_dir(&self.directory);
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn live_executable_names_are_exact_or_nameless_before_and_after_unlink() {
+        for name in ["full-executable-name", "literal (deleted)"] {
+            let fixture = ExecutableFixture::spawn(name);
+            let policy = transmog_core::process_inspection::ProcessInspectionPolicy {
+                mode: transmog_core::process_inspection::ProcessInspectionMode::Except,
+                include: vec![],
+                exclude: vec![name.into()],
+            }
+            .validated()
+            .unwrap();
+            let linked_name = (!name.ends_with(" (deleted)")).then_some(name);
+            assert_eq!(process_name(fixture.child.id()).as_deref(), linked_name);
+            assert!(!policy.should_inspect(&ClientIdentity::LocalProcess {
+                pid: fixture.child.id(),
+                name: process_name(fixture.child.id()),
+            }));
+            if let Some(name) = linked_name {
+                assert!(
+                    running_process_names()
+                        .unwrap()
+                        .iter()
+                        .any(|item| item == name)
+                );
+            }
+            fs::remove_file(&fixture.executable).unwrap();
+            let image = fs::read_link(format!("/proc/{}/exe", fixture.child.id())).unwrap();
+            assert_eq!(
+                image.file_name().unwrap(),
+                format!("{name} (deleted)").as_str()
+            );
+            assert_eq!(process_name(fixture.child.id()).as_deref(), Some(name));
+            assert!(!policy.should_inspect(&ClientIdentity::LocalProcess {
+                pid: fixture.child.id(),
+                name: process_name(fixture.child.id()),
+            }));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unlinked_image_with_a_remaining_hard_link_is_nameless() {
+        let fixture = ExecutableFixture::spawn("client");
+        let retained = fixture.directory.join("another-link");
+        fs::hard_link(&fixture.executable, &retained).unwrap();
+        fs::remove_file(&fixture.executable).unwrap();
+        assert_eq!(process_name(fixture.child.id()), None);
+        fs::remove_file(retained).unwrap();
+        assert_eq!(process_name(fixture.child.id()).as_deref(), Some("client"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn unlinked_image_with_a_suffix_named_hard_link_is_nameless() {
+        let fixture = ExecutableFixture::spawn("client");
+        let retained = fixture.directory.join("client (deleted)");
+        fs::hard_link(&fixture.executable, &retained).unwrap();
+        fs::remove_file(&fixture.executable).unwrap();
+        let image = fs::read_link(format!("/proc/{}/exe", fixture.child.id())).unwrap();
+        assert_eq!(image, retained);
+        assert_eq!(process_name(fixture.child.id()), None);
+        let policy = transmog_core::process_inspection::ProcessInspectionPolicy {
+            mode: transmog_core::process_inspection::ProcessInspectionMode::Except,
+            include: vec![],
+            exclude: vec!["client".into()],
+        }
+        .validated()
+        .unwrap();
+        assert!(!policy.should_inspect(&ClientIdentity::LocalProcess {
+            pid: fixture.child.id(),
+            name: process_name(fixture.child.id()),
+        }));
+        fs::remove_file(retained).unwrap();
+        assert_eq!(process_name(fixture.child.id()).as_deref(), Some("client"));
+    }
 
     #[test]
     fn parses_ipv4_and_ipv6_proc_endpoints() {
@@ -161,5 +326,16 @@ mod tests {
             identity,
             ClientIdentity::LocalProcess { pid, .. } if pid == std::process::id()
         ));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn inventory_and_attribution_use_the_complete_executable_name() {
+        let executable = std::env::current_exe().unwrap();
+        let expected = executable.file_name().unwrap().to_str().unwrap();
+        assert_eq!(process_name(std::process::id()).as_deref(), Some(expected));
+        let names = running_process_names().unwrap();
+        assert!(names.iter().any(|name| name == expected));
+        assert!(names.windows(2).all(|pair| pair[0] < pair[1]));
     }
 }

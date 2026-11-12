@@ -19,6 +19,8 @@ pub mod observe;
 /// Measured local timings and physical transport facts.
 pub mod performance;
 mod policy;
+/// Caller-process selection for inspection, independent of traffic authorization.
+pub mod process_inspection;
 mod protocol;
 pub mod route;
 mod session;

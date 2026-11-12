@@ -2,6 +2,23 @@
 
 use std::io;
 
+macro_rules! platform_help {
+    ($before:literal, $windows:literal, $linux:literal, $other:literal, $after:literal) => {{
+        #[cfg(windows)]
+        {
+            concat!($before, $windows, $after)
+        }
+        #[cfg(target_os = "linux")]
+        {
+            concat!($before, $linux, $after)
+        }
+        #[cfg(not(any(windows, target_os = "linux")))]
+        {
+            concat!($before, $other, $after)
+        }
+    }};
+}
+
 pub(crate) fn requested(arguments: &[String]) -> io::Result<Option<&'static str>> {
     if arguments.is_empty() {
         return Ok(Some(ROOT));
@@ -23,41 +40,13 @@ pub(crate) fn requested(arguments: &[String]) -> io::Result<Option<&'static str>
         if matches!(argument.as_str(), "--help" | "-h") {
             return topic(&arguments[..depth]).map(Some);
         }
-        index += if takes_value(argument) { 2 } else { 1 };
+        index += if crate::arguments::takes_value(argument) {
+            2
+        } else {
+            1
+        };
     }
     Ok(None)
-}
-
-fn takes_value(argument: &str) -> bool {
-    matches!(
-        argument,
-        "--profile"
-            | "--duration"
-            | "--client-version"
-            | "--expected"
-            | "--actual"
-            | "--output"
-            | "--listen"
-            | "--route"
-            | "--upstream-ca-cert"
-            | "--request-body-limit"
-            | "--password-file"
-            | "--password"
-            | "--id"
-            | "--source-password-file"
-            | "--circular-buffer"
-            | "--ca-cert"
-            | "--ca-key"
-            | "--proof-id"
-            | "--capture"
-            | "--cert"
-            | "--key"
-            | "--name"
-            | "--identity"
-            | "--days"
-            | "--input"
-            | "--format"
-    )
 }
 
 fn topic(path: &[String]) -> io::Result<&'static str> {
@@ -99,7 +88,7 @@ Commands:
   record            Guided support recording; Ctrl+C stops and saves a TMCap trace
   context           List or extract recorded configuration and support context
   roots cleanup     Restore interrupted Windows proxy settings and remove CLI roots
-  serve             Run a proxy with an existing CA; host settings are configured manually
+  serve             Run a manually configured proxy; optional opaque HTTPS needs no CA
   ca generate       Generate a CA with an OS-user-protected private key
   ca protect        Protect an existing CA key for the current OS user
   ca issue          Issue a short-lived server certificate and PEM key
@@ -117,7 +106,7 @@ For grouped commands: transmog-cli help capture export
 Existing destination files are never overwritten.
 Support recording guide: https://github.com/erik-anderson/transmog/blob/main/docs/cli-support-capture.md";
 
-const RECORD: &str = "Record a support trace
+const RECORD: &str = platform_help!("Record a support trace
 
 Usage: transmog-cli record [OPTIONS]
 
@@ -129,12 +118,15 @@ Usage: transmog-cli record [OPTIONS]
   --output FILE              New .tmcap path (default: Transmog-<timestamp>.tmcap in the current directory)
   --listen IP:PORT           Listener (default: 127.0.0.1:0; port 0 chooses a free port)
   --allow-remote             Permit non-loopback listening and remote clients
+  --process NAME             Inspect only this executable name; repeat for multiple names
+  --exclude-process NAME     Inspect all except this executable name; repeat for multiple names
+  --no-decrypt-https         Forward HTTPS as opaque CONNECT tunnels; no CA setup or cleanup
   --route auto|h1|h2|h3       Upstream protocol (default: auto)
   --upstream-ca-cert FILE    Add a PEM CA bundle to the operating system's upstream trust
   --install-root             Authorize root installation without a console question; OS consent still applies
   --no-install-root          Use manual HTTPS certificate setup
   --persistent-root          Keep and reuse an OS-user-protected CLI root (default: fresh root, key in memory)
-  --no-system-proxy          Leave Windows proxy settings for manual configuration
+  --no-system-proxy          Leave proxy settings unchanged
   --redact                   Redact Authorization, Proxy-Authorization, Cookie and Set-Cookie values
   --retain-sensitive         Retain complete headers, including credentials and cookies (initial default)
   --request-body-limit BYTES Positive per-request retained byte limit (initial default: 25000000)
@@ -146,22 +138,35 @@ Usage: transmog-cli record [OPTIONS]
   --help, -h                 Show this help
 
 Redaction and request-body limits persist across CLI recordings. Other options apply to this run.
+Process inspection defaults to All. --process and --exclude-process cannot be combined.
+", "Names match executable basenames. Process names are case insensitive;
+extensionless names accept an omitted .exe suffix. Other extensions remain distinct.
+Proxy settings are configured and restored automatically unless --no-system-proxy is used.
+Remote listeners require --no-system-proxy.
+", "Process names are case sensitive and match exact executable basenames.
+Configure clients' HTTP/HTTPS proxy settings manually.
+Remove those proxy settings after recording.
+", "Process filters are unavailable on this platform.
+Configure clients' HTTP/HTTPS proxy settings manually.
+Remove those proxy settings after recording.
+", "With a process filter, unidentified and remote callers pass through without inspection or recording.
+--no-decrypt-https records selected HTTPS destination/byte summaries and selected plain HTTP.
+It cannot be combined with --install-root or --persistent-root; existing root cleanup is deferred.
 Bodies, URLs and metadata can contain private data even with --redact; review before sharing.
-Response bodies are recorded. Trace files have no fixed size ceiling.
+Inspectable HTTP response bodies are recorded. Trace files have no fixed size ceiling.
 Without --circular-buffer, records stream to disk and an interrupted file can be recovered.
 Circular auto uses half installed RAM; limits above that and unlimited use disk. Memory buffers
 are unsaved until stopping and are lost if the process is killed. A failed save retains a recovery file.
 Passwords are never remembered; protect password files yourself. Passwords cannot be recovered.
 
-Without an installation option, a console asks for consent; unattended runs must choose one.
-Windows configures and restores the host proxy automatically unless --no-system-proxy is used.
-Other platforms require manual HTTP/HTTPS proxy configuration. Remote Windows listeners also
-require --no-system-proxy. Apps may have separate certificate stores or certificate pinning.
-Ctrl+C once restores routing and drains active requests. Ctrl+C again stops unfinished work.
+With HTTPS decryption, a console asks for consent unless an installation option is supplied;
+unattended decrypting runs must choose one. --no-decrypt-https needs no certificate consent.
+Apps may have separate certificate stores or certificate pinning.
+Ctrl+C once drains active requests. Ctrl+C again stops unfinished work.
 In an interactive console, m then Enter records an issue marker; m NOTE adds a short note.
 Profile-only settings apply to this run and do not overwrite your preferences.
 
-Example: transmog-cli record --output support.tmcap --redact --encrypt";
+Example: transmog-cli record --output support.tmcap --redact --encrypt");
 
 const PROFILE:&str="Validate a support capture profile
 
@@ -172,15 +177,19 @@ Validation never installs roots, configures routing, writes output or loads cred
 Unknown fields/versions are rejected. The JSON result has schemaVersion, valid, profileId, revision and digest.
 Use record --profile FILE --output FILE to collect; profile hostnames are advisory, not retention filters.";
 
-const SERVE: &str = "Run an explicit proxy
+const SERVE: &str = platform_help!("Run an explicit proxy
 
 Usage: transmog-cli serve --ca-cert FILE --ca-key FILE [OPTIONS]
+       transmog-cli serve --no-decrypt-https [OPTIONS]
 
   --ca-cert FILE           PEM interception CA certificate
   --ca-key FILE            Matching protected or legacy PEM CA key; legacy keys are protected on load
   --upstream-ca-cert FILE  Add a PEM CA bundle to operating-system upstream trust
   --listen IP:PORT         Listener (default: 127.0.0.1:0; port 0 chooses a free port)
   --allow-remote           Permit non-loopback listening and remote clients
+  --process NAME           Inspect only this executable name; repeat for multiple names
+  --exclude-process NAME   Inspect all except this executable name; repeat for multiple names
+  --no-decrypt-https       Opaque HTTPS CONNECT tunnels; neither CA option is allowed or needed
   --route auto|h1|h2|h3     Upstream protocol (default: auto)
   --proof-id ID            Verification marker: add x-intercept-test, request identity encoding,
                           and add x-intercepted-by plus an escaped meta marker to HTML responses.
@@ -189,9 +198,18 @@ Usage: transmog-cli serve --ca-cert FILE --ca-key FILE [OPTIONS]
   --capture-bodies        Include body bytes; requires --capture (request retention capped at 25000000 bytes)
   --help, -h               Show this help
 
-Configure clients' proxy and HTTPS certificate trust manually. No host proxy or root installation
-is performed. Ctrl+C stops the proxy and seals an active capture.
-For guided setup, encryption or circular retention, use record.";
+Configure clients' proxy manually and arrange certificate trust when HTTPS decryption is enabled.
+No host proxy or root installation is performed. Ctrl+C stops the proxy and seals an active capture.
+Process inspection defaults to All. --process and --exclude-process cannot be combined.
+", "Names match executable basenames. Process names are case insensitive;
+extensionless names accept an omitted .exe suffix. Other extensions remain distinct.
+", "Process names are case sensitive and match exact executable basenames.
+", "Process filters are unavailable on this platform.
+", "With a filter, unidentified and remote callers pass through
+without inspection, proof markers or recording. Choices apply only to this run.
+Opaque HTTPS records destination and byte summaries when --capture is used; selected plain HTTP
+is still captured. --no-decrypt-https never loads or creates an interception CA.
+For guided setup, encryption or circular retention, use record.");
 
 const ROOTS: &str = "Clean up CLI-owned roots
 
@@ -230,7 +248,8 @@ Usage: transmog-cli ca generate --cert FILE --key FILE [--name NAME]
 The CA is valid for 365 days. Install only the public certificate; trust installation is manual.
 Existing files are never overwritten. Keys are bound to the current OS user and credential store.";
 
-const CA_PROTECT: &str = "Protect an existing CA key
+const CA_PROTECT: &str = platform_help!(
+    "Protect an existing CA key
 
 Usage: transmog-cli ca protect --ca-cert FILE --ca-key FILE
 
@@ -238,8 +257,13 @@ Usage: transmog-cli ca protect --ca-cert FILE --ca-key FILE
   --ca-key FILE   Existing private key to protect in place for the current OS user
   --help, -h      Show this help
 
-Already protected keys are verified. Protection failures preserve existing material.
-On Linux, OS key protection requires a working Secret Service.";
+Already protected keys are verified. Protection failures preserve existing material.",
+    "",
+    "
+OS key protection requires a working Secret Service.",
+    "",
+    ""
+);
 
 const CA_ISSUE: &str = "Issue a server leaf certificate
 
@@ -405,6 +429,14 @@ mod tests {
         );
         assert_eq!(
             requested(&["context".into(), "--password".into(), "--help".into()]).unwrap(),
+            None
+        );
+        assert_eq!(
+            requested(&["record".into(), "--process".into(), "-h".into()]).unwrap(),
+            None
+        );
+        assert_eq!(
+            requested(&["serve".into(), "--exclude-process".into(), "--help".into()]).unwrap(),
             None
         );
         assert_eq!(

@@ -381,6 +381,12 @@ export class AppShell extends WebUIElement {
   @observable lifecycleLabel = initialState.lifecycleLabel;
   @observable lifecycleKind = initialState.lifecycleKind;
   @observable listener = initialState.listener;
+  @observable processScopeLabel = initialState.processScopeLabel;
+  @observable httpsModeLabel = initialState.httpsModeLabel;
+  @observable unresolvedProcessLabel = initialState.unresolvedProcessLabel;
+  @observable tunnelStartAvailable = initialState.tunnelStartAvailable;
+  @observable noticeTunnelStart = initialState.noticeTunnelStart;
+  private certificateUnavailable = true;
   @observable diagnosticText = initialState.diagnosticText;
   @observable proxyReady = initialState.proxyReady;
   @observable noticeVisible = initialState.noticeVisible;
@@ -726,10 +732,23 @@ export class AppShell extends WebUIElement {
     this.noticeMessageText = event.detail.message;
     this.noticeActionLabel = event.detail.actionLabel ?? "";
     this.noticeAction = event.detail.action;
+    this.noticeTunnelStart =
+      event.detail.action === "setup-ca" || event.detail.action === "reset-ca";
     this.noticeVisible = true;
   }
   onStatus(event: CustomEvent<AppStatus>): void {
     this.applyStatus(event.detail);
+  }
+  onCertificateState(event: CustomEvent<{ unavailable: boolean }>): void {
+    this.certificateUnavailable = event.detail.unavailable;
+    this.updateTunnelStart();
+  }
+  private updateTunnelStart(): void {
+    this.tunnelStartAvailable =
+      this.certificateUnavailable && ["stopped", "failed"].includes(this.lifecycleKind);
+  }
+  async startHttpsTunnels(): Promise<void> {
+    await this.settings.startHttpsTunnels();
   }
   onCaptureStatus(event: CustomEvent<AppStatus>): void {
     event.stopPropagation();
@@ -740,6 +759,19 @@ export class AppShell extends WebUIElement {
       status.lifecycle === "draining" ? status.summary : lifecycleLabel(status.lifecycle);
     this.lifecycleKind = status.lifecycle;
     this.listener = status.listener ?? "Not listening";
+    const policy = status.processInspection ?? { mode: "all", include: [], exclude: [] };
+    const count = policy.mode === "only" ? policy.include.length : policy.exclude.length;
+    this.processScopeLabel =
+      policy.mode === "all"
+        ? "All processes"
+        : policy.mode === "only"
+          ? `${count} ${count === 1 ? "process" : "processes"}`
+          : `All except ${count}`;
+    this.httpsModeLabel = status.httpsDecryption === false ? "HTTPS tunnels" : "";
+    this.unresolvedProcessLabel = status.unresolvedProcessConnections
+      ? `${status.unresolvedProcessConnections} connections bypassed: process unknown.`
+      : "";
+    this.updateTunnelStart();
     if (status.hostRestorePending) {
       this.diagnosticText = "Host restoration is pending and must be retried before restart.";
     } else if (
@@ -936,6 +968,8 @@ export class AppShell extends WebUIElement {
       void this.settings.resetCa();
     } else if (action === "start-proxy") {
       void this.startProxy();
+    } else if (action === "https-preferences") {
+      void this.returnToHttpsPreferences();
     } else if (action === "recover-proxy") {
       void this.settings.recoverProxy();
     }
@@ -943,6 +977,11 @@ export class AppShell extends WebUIElement {
   async openConnectionSettings(): Promise<void> {
     if (await this.activateView("settings")) {
       this.settings.showSettingsSection("connection");
+    }
+  }
+  private async returnToHttpsPreferences(): Promise<void> {
+    if (await this.activateView("settings")) {
+      this.settings.backToPreferences();
     }
   }
   dismissNotice(): void {

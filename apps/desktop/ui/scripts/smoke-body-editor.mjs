@@ -7,7 +7,7 @@ export async function smokeBodyEditor(call, evaluate, screenshotPath) {
     "document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace response-body-editor')";
   const wait = async (expression) =>
     evaluate(
-      `(async()=>{const deadline=Date.now()+15000;while(!(${expression})&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,25));if(!(${expression}))throw new Error(${JSON.stringify("Timed out: " + expression)});})()`,
+      `(async()=>{const deadline=Date.now()+15000;while(!(${expression})&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,25));if(!(${expression})){const shell=document.querySelector('app-shell'),w=${widget};throw new Error(${JSON.stringify("Timed out: " + expression)}+' '+JSON.stringify({shellTheme:shell.theme,workspaceTheme:shell.automation?.theme,widgetTheme:w?.theme,scriptTheme:shell.automation?.scriptAuthoring?.theme,forcedColors:matchMedia('(forced-colors: active)').matches,prefersDark:matchMedia('(prefers-color-scheme: dark)').matches,editorClasses:w?.editorHost?.querySelector('.monaco-editor')?.className}));}})()`,
     );
   const escape = async () => {
     await call("Input.dispatchKeyEvent", {
@@ -81,7 +81,7 @@ export async function smokeBodyEditor(call, evaluate, screenshotPath) {
   try {
     await evaluate(`(async()=>{
       const shell=document.querySelector('app-shell'),root=shell.shadowRoot;
-      globalThis.__bodyEditorProbe={view:shell.activeView,focus:root.activeElement};
+      globalThis.__bodyEditorProbe={view:shell.activeView,focus:root.activeElement,shellTheme:shell.theme};
       root.querySelector('a[data-view="automation"]').click();
       const deadline=Date.now()+15000;while(!root.querySelector('automation-workspace response-body-editor')?.open&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,25));
       const w=root.querySelector('automation-workspace'),editor=w.bodyEditor;
@@ -129,8 +129,14 @@ export async function smokeBodyEditor(call, evaluate, screenshotPath) {
     await wait(
       `!${widget}.overflowHost.querySelector('.colorpicker-widget')?.getClientRects().length`,
     );
-    await evaluate(`${widget}.theme='dark'`);
-    await wait(`${widget}.editorHost.querySelector('.vs-dark')`);
+    // Monaco shares one theme across the window. Use the shell preference so
+    // other mounted editors receive the same forced-color transition.
+    await evaluate(
+      `(()=>{const shell=document.querySelector('app-shell');shell.theme='dark';shell.$flushUpdates();shell.automation.$flushUpdates();})()`,
+    );
+    await wait(
+      `${widget}.theme==='dark'&&document.querySelector('app-shell').automation.scriptAuthoring.theme==='dark'&&${widget}.editorHost.querySelector('.vs-dark')`,
+    );
     positions.push(await clickColor());
     await screenshot("dark");
     await escape();
@@ -222,7 +228,7 @@ export async function smokeBodyEditor(call, evaluate, screenshotPath) {
     await call("Emulation.clearDeviceMetricsOverride");
     await call("Emulation.setEmulatedMedia", { media: "screen", features: [] });
     await evaluate(
-      `(()=>{const probe=globalThis.__bodyEditorProbe;if(!probe)return;const shell=document.querySelector('app-shell'),root=shell.shadowRoot,editor=root.querySelector('automation-workspace response-body-editor');if(editor){editor.editor?.trigger('probe','editor.action.fontZoomReset',{});editor.theme=probe.theme??'system';editor.close();}const workspace=root.querySelector('automation-workspace');if(probe.editorHidden!==undefined)workspace.editorHidden=probe.editorHidden;if(probe.section)workspace.showAutomationSection(probe.section);workspace.$flushUpdates();root.querySelector('a[data-view="'+probe.view+'"]').click();if(probe.focus?.isConnected&&probe.focus.getClientRects().length)probe.focus.focus();delete globalThis.__bodyEditorProbe;})()`,
+      `(()=>{const probe=globalThis.__bodyEditorProbe;if(!probe)return;const shell=document.querySelector('app-shell'),root=shell.shadowRoot,editor=root.querySelector('automation-workspace response-body-editor'),workspace=root.querySelector('automation-workspace');shell.theme=probe.shellTheme??'system';shell.$flushUpdates();workspace.$flushUpdates();if(editor){editor.editor?.trigger('probe','editor.action.fontZoomReset',{});editor.theme=probe.theme??'system';editor.close();}if(probe.editorHidden!==undefined)workspace.editorHidden=probe.editorHidden;if(probe.section)workspace.showAutomationSection(probe.section);workspace.$flushUpdates();root.querySelector('a[data-view="'+probe.view+'"]').click();if(probe.focus?.isConnected&&probe.focus.getClientRects().length)probe.focus.focus();delete globalThis.__bodyEditorProbe;})()`,
     );
   }
 }
