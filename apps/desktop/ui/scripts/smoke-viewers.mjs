@@ -258,11 +258,45 @@ try {
       "Viewer imported into the main catalog",
     );
     await smokeWindowShortcuts(main, viewer, targets, connect, waitFor, closeNative);
+    // Taskbar Shift-click / middle-click relaunch the executable without files.
+    const beforeRelaunch = await targets();
+    const relaunched = spawn(executable, [], { windowsHide: true, stdio: "ignore" });
+    await new Promise((resolve, reject) => {
+      relaunched.once("error", reject);
+      relaunched.once("exit", (code) =>
+        code === 0 ? resolve() : reject(new Error("Taskbar relaunch exited " + code)),
+      );
+    });
+    const relaunchedTarget = await waitFor(
+      async () =>
+        (await targets()).find(
+          (target) => !beforeRelaunch.some((before) => before.id === target.id),
+        ),
+      "Taskbar relaunch did not create a viewer",
+    );
+    const blankViewer = await connect(relaunchedTarget);
+    await waitFor(
+      () => blankViewer.evaluate(`${root}?.viewerMode && ${traffic}?.queryLoaded`),
+      "Relaunched viewer did not initialize",
+    );
+    assert.equal(await blankViewer.evaluate(`${traffic}.sessions.length`), 0);
+    assert.equal(
+      await main.evaluate(`${root}.viewerMode`),
+      false,
+      "Relaunch replaced the main window",
+    );
+    await blankViewer.evaluate("window.__TAURI_INTERNALS__.invoke('close_trace_window')");
+    await waitFor(
+      async () => !(await targets()).some((target) => target.id === relaunchedTarget.id),
+      "Relaunched viewer did not close",
+    );
+    blankViewer.close();
+    process.stdout.write("Taskbar relaunch opened an independent empty viewer.\n");
     await smokeIncidentRecording(
       main,
       viewer,
       traffic,
-      join(dirname(source), "desktop-marker.tmcap"),
+      join(dirname(source), "desktop-marker captured Ünicode, recording.tmcap"),
       screenshot,
       waitFor,
     );

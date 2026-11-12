@@ -1,5 +1,36 @@
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+async function fileRevealProbe(path, existingWindows) {
+  const args = [
+    "-NoProfile",
+    "-NonInteractive",
+    "-File",
+    fileURLToPath(new URL("../../../../scripts/assert-file-reveal.ps1", import.meta.url)),
+    "-Path",
+    path,
+  ];
+  args.push(
+    ...(existingWindows === undefined
+      ? ["-Snapshot"]
+      : ["-ExistingWindows", existingWindows.join(",")]),
+  );
+  const child = spawn("pwsh.exe", args, {
+    windowsHide: true,
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  let output = "";
+  child.stdout.on("data", (data) => (output += data));
+  await new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", (code) =>
+      code === 0 ? resolve() : reject(new Error("File reveal probe exited " + code)),
+    );
+  });
+  return existingWindows === undefined ? JSON.parse(output) : output;
+}
 
 export async function smokeIncidentRecording(main, viewer, traffic, path, screenshot, waitFor) {
   const original = await main.evaluate("window.__TAURI_INTERNALS__.invoke('product_state')");
@@ -42,7 +73,27 @@ export async function smokeIncidentRecording(main, viewer, traffic, path, screen
       const image = await main.call("Page.captureScreenshot", { format: "png" });
       await writeFile(screenshot.replace(".png", "-mark.png"), Buffer.from(image.data, "base64"));
     }
-    await main.evaluate("window.__TAURI_INTERNALS__.invoke('stop_capture')");
+    await main.evaluate(
+      "document.querySelector('app-shell').shadowRoot.querySelector('capture-workspace').stopCapture()",
+    );
+    assert.equal(
+      await main.evaluate(
+        "document.querySelector('app-shell').shadowRoot.querySelector('capture-workspace').captureSaved",
+      ),
+      true,
+    );
+    const explorerWindows = await fileRevealProbe(path);
+    await main.evaluate(
+      "document.querySelector('app-shell').shadowRoot.querySelector('capture-workspace').showRecordingFile()",
+    );
+    await fileRevealProbe(path, explorerWindows);
+    assert.equal(
+      await viewer.evaluate(
+        "window.__TAURI_INTERNALS__.invoke('show_recording_file').then(()=>false,()=>true)",
+      ),
+      true,
+      "Viewer revealed the main recording",
+    );
     const metadata = await main.evaluate(
       `window.__TAURI_INTERNALS__.invoke('inspect_trace_metadata',{request:{path:${JSON.stringify(path)},password:null}})`,
     );
@@ -155,6 +206,24 @@ export async function smokeMarkerReview(client, traffic, screenshot) {
         JSON.stringify(layout),
       );
       assert.equal(layout.side, "response");
+      const refreshing = await client.evaluate(
+        `(async()=>{const w=${traffic};const bounds=()=>{const b=w.timeline.getBoundingClientRect();return {top:b.top,height:b.height};};const before=bounds(),refresh=w.refreshTimeline();w.$flushUpdates();const during=bounds();await refresh;w.$flushUpdates();return {before,during,after:bounds()};})()`,
+      );
+      assert.deepEqual(
+        refreshing.during,
+        refreshing.before,
+        "Native timeline moved during refresh",
+      );
+      assert.deepEqual(refreshing.after, refreshing.before, "Native timeline moved after refresh");
+      const distant = await client.evaluate(
+        `(async()=>{const w=${traffic},original=w.markerItems,marker=original.find(m=>m.id===${JSON.stringify(id)});try{w.markerItems=original.map(m=>m===marker?{...m,unixMillis:m.unixMillis+300000}:m);await w.markerTimeRequest(new CustomEvent('marker-time-request',{detail:{traceId:marker.traceId,markerId:marker.id,highlight:true}}));w.$flushUpdates();const row=w.getRootNode().getElementById('timeline-'+marker.entryId),bounds=row?.getBoundingClientRect(),viewport=w.timeline.viewport.getBoundingClientRect();return {selected:[...w.trafficSelection.ids],visible:!!bounds&&bounds.height>0&&bounds.top>=viewport.top-1&&bounds.top+Math.min(20,bounds.height)<=viewport.bottom+1};}finally{w.markerItems=original;await w.markerTimeRequest(new CustomEvent('marker-time-request',{detail:{traceId:marker.traceId,markerId:marker.id,highlight:true}}));}})()`,
+      );
+      assert.deepEqual(distant.selected, [result.review.markerEntries[id]]);
+      assert.equal(
+        distant.visible,
+        true,
+        "Native Timeline did not reveal a distant linked request",
+      );
       const ax = await client.call("Accessibility.getFullAXTree");
       assert.ok(
         ax.nodes.some(

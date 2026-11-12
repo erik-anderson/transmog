@@ -447,10 +447,10 @@ export class TrafficWorkspace extends WorkspaceElement {
     }
   }
   async markerTimeRequest(
-    event: CustomEvent<{ traceId: string; markerId: string }>,
+    event: CustomEvent<{ traceId: string; markerId: string; highlight?: boolean }>,
   ): Promise<void> {
     event.stopPropagation();
-    await this.goToMarker(event.detail.traceId, event.detail.markerId);
+    await this.goToMarker(event.detail.traceId, event.detail.markerId, event.detail.highlight);
   }
   async timelineMarker(event: CustomEvent<string>): Promise<void> {
     event.stopPropagation();
@@ -459,7 +459,11 @@ export class TrafficWorkspace extends WorkspaceElement {
       await this.goToMarker(marker.traceId, marker.id);
     }
   }
-  private async goToMarker(traceId: string, id: string): Promise<void> {
+  timelineRangeChanged(event: CustomEvent<void>): void {
+    event.stopPropagation();
+    this.markerNavigation++;
+  }
+  private async goToMarker(traceId: string, id: string, highlight = false): Promise<void> {
     const marker = this.markerItems.find((m) => m.traceId === traceId && m.id === id);
     if (!marker) {
       return;
@@ -472,7 +476,19 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.importStatus = "";
     }
     const navigation = ++this.markerNavigation,
+      revision = this.queryRevision,
       focus = this.trackNavigationFocus();
+    let inspection = this.inspectionGeneration,
+      selection = this.trafficSelectionRevision;
+    const current = () =>
+      navigation === this.markerNavigation &&
+      inspection === this.inspectionGeneration &&
+      selection === this.trafficSelectionRevision &&
+      revision === this.queryRevision &&
+      this.isConnected &&
+      this.view === "traffic" &&
+      this.markersTraceId === traceId &&
+      this.markerCurrent === marker.key;
     this.markersOpen = true;
     this.markersTraceId = traceId;
     this.markerCurrent = marker.key;
@@ -480,12 +496,17 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.$flushUpdates();
     this.markerIntake.selectMarker(id, false);
     this.followLatest = false;
+    let view: TrafficView | null = null;
     try {
       if (!this.trafficView) {
         await this.refreshSessions(undefined, true);
       }
-      const view = this.trafficView;
-      if (!view) {
+      if (!current()) {
+        return;
+      }
+      // Hold our own membership snapshot while live refreshes replace the displayed view.
+      view = await invoke<TrafficView>("query_traffic_view", { query: this.trafficQuery() });
+      if (!current()) {
         return;
       }
       let nearest: TrafficTimelineRow | undefined,
@@ -496,11 +517,7 @@ export class TrafficWorkspace extends WorkspaceElement {
           offset,
           limit: 2048,
         });
-        if (
-          navigation !== this.markerNavigation ||
-          !this.isConnected ||
-          view !== this.trafficView
-        ) {
+        if (!current()) {
           return;
         }
         for (const row of rows) {
@@ -516,25 +533,34 @@ export class TrafficWorkspace extends WorkspaceElement {
           }
         }
       }
-      if (marker.entryId && nearest?.id === marker.entryId) {
-        await this.inspectTimelineRequest(nearest.id);
-        if (navigation !== this.markerNavigation) {
+      if (nearest && (highlight || nearest.id === marker.entryId)) {
+        if (highlight) {
+          this.trafficSelection.replace(nearest.id);
+          this.updateTrafficSelection();
+          selection = this.trafficSelectionRevision;
+        }
+        const loading = this.inspectTimelineRequest(nearest.id);
+        inspection = this.inspectionGeneration;
+        await loading;
+        if (!current()) {
           return;
         }
-        this.inspectorSide = marker.boundary || "response";
+        if (nearest.id === marker.entryId) {
+          this.inspectorSide = marker.boundary || "response";
+        }
       }
       if (this.timelineMode) {
+        const generation = this.timelineGeneration;
         await this.refreshTimeline();
-        if (navigation !== this.markerNavigation) {
+        if (!current() || !this.timelineMode || generation !== this.timelineGeneration) {
           return;
         }
         this.timeline.goToTime(marker.unixMillis, nearest?.id, focus.unchanged());
       } else if (nearest) {
-        await this.revealCurrent(
-          nearest.id,
-          false,
-          () => navigation === this.markerNavigation && view === this.trafficView,
-        );
+        await this.revealCurrent(nearest.id, false, current);
+      }
+      if (!current()) {
+        return;
       }
       if (marker.entryId && !view.ids.includes(marker.entryId)) {
         this.markerStatus =
@@ -550,10 +576,11 @@ export class TrafficWorkspace extends WorkspaceElement {
           "Showing the nearest available request. No requests are available in the nearby time range.";
       }
     } catch (error: unknown) {
-      if (navigation === this.markerNavigation) {
+      if (current()) {
         this.markerStatus = "Could not go to marker: " + describeError(error);
       }
     } finally {
+      this.releaseView(view);
       focus.dispose();
     }
   }

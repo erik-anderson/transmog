@@ -301,7 +301,7 @@ export class IncidentIntake extends WorkspaceElement {
     return this.mutation;
   }
   setInterval(side: string, event: Event): void {
-    const value = Number((event.currentTarget as HTMLInputElement).value);
+    const value = (event.currentTarget as HTMLInputElement).valueAsNumber;
     if (side === "before") {
       this.incidentBefore = value;
     } else {
@@ -311,14 +311,31 @@ export class IncidentIntake extends WorkspaceElement {
   setRelevant(event: Event): void {
     this.incidentRelevantOnly = (event.currentTarget as HTMLInputElement).checked;
   }
+  highlightClosestRequest(): void {
+    if (this.intakeBusy || !this.activeMarker.id) {
+      return;
+    }
+    this.$emit("marker-time-request", {
+      traceId: this.traceId,
+      markerId: this.activeMarker.id,
+      highlight: true,
+    });
+  }
+  applyTimeFilter(event: Event): void {
+    event.preventDefault();
+    if (!this.intakeBusy && this.activeMarker.id) {
+      this.showMarker(this.activeMarker.id);
+    }
+  }
   showMarker(markerId: string): void {
     if (
-      !Number.isInteger(this.incidentBefore) ||
-      !Number.isInteger(this.incidentAfter) ||
-      this.incidentBefore < 0 ||
-      this.incidentAfter < 0 ||
-      this.incidentBefore > 86400 ||
-      this.incidentAfter > 86400
+      markerId &&
+      (!Number.isInteger(this.incidentBefore) ||
+        !Number.isInteger(this.incidentAfter) ||
+        this.incidentBefore < 0 ||
+        this.incidentAfter < 0 ||
+        this.incidentBefore > 86400 ||
+        this.incidentAfter > 86400)
     ) {
       this.intakeStatus = "Choose 0–86400 seconds before and after the marker.";
       return;
@@ -326,8 +343,8 @@ export class IncidentIntake extends WorkspaceElement {
     const window: IncidentWindow = {
       traceId: this.traceId,
       markerId,
-      beforeSeconds: this.incidentBefore,
-      afterSeconds: this.incidentAfter,
+      beforeSeconds: markerId ? this.incidentBefore : 0,
+      afterSeconds: markerId ? this.incidentAfter : 0,
       relevantHostsOnly: markerId ? this.incidentRelevantOnly : false,
     };
     const detail = {

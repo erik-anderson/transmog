@@ -526,6 +526,8 @@ export async function checkTrafficTimeline(page, root) {
         id: "tl-later",
         requestNumber: "7",
         startedAt: 1800000050000,
+        terminal: "active",
+        stream: { kind: "websocket", observed: 3, revision: 3, ended: false },
       });
       await t.refreshSessions();
       await t.refreshTimeline();
@@ -562,6 +564,22 @@ export async function checkTrafficTimeline(page, root) {
     await page.evaluate(() => {
       const s = globalThis.__workspaceFixture;
       s.deferTimeline = true;
+      void document.querySelector("app-shell").traffic.refreshTimeline();
+    });
+    await page.waitForFunction(() => globalThis.__workspaceFixture.timelinePending);
+    const duringRefresh = await timeline.boundingBox();
+    assert.equal(await traffic.locator(".timeline-surface").getAttribute("aria-busy"), "true");
+    assert.equal(
+      await traffic.locator(".timeline-load-state").innerText(),
+      "",
+      "A routine refresh displayed a shifting status banner",
+    );
+    await page.evaluate(() => globalThis.__workspaceFixture.releaseTimeline());
+    await settle();
+    const afterRefresh = await timeline.boundingBox();
+    assert.deepEqual(afterRefresh, duringRefresh, "Timeline moved when its refresh finished");
+    await page.evaluate(() => {
+      globalThis.__workspaceFixture.deferTimeline = true;
       void document.querySelector("app-shell").traffic.refreshTimeline();
     });
     await page.waitForFunction(() => globalThis.__workspaceFixture.timelinePending);

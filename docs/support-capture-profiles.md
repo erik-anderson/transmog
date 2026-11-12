@@ -109,11 +109,18 @@ Timeline shows flags in its overview and visible range. Click a flag or marker
 row to go to its recorded time and scroll the nearest matching request into view.
 Overlapping flags open a chooser. Keyboard users can Tab to a flag, use Left/Right
 to move between flags, and Enter to open one. Navigation preserves request
-selection and ordinary filters. **Show nearby requests** explicitly applies a
-source-specific time filter, initially 30 seconds before and after the marker.
-**Time range** adjusts those intervals from 0 to 86,400 seconds and optionally
-restricts suggested hosts. **Clear time filter** restores the preceding view;
-**Clear other filters** also removes ordinary Traffic filters. **Show full trace**
+selection and ordinary filters. **Highlight closest request** selects and reveals
+the linked request, or the closest available request from that trace, in Traffic
+and the inspector without applying a filter. Timeline widens its visible range
+when needed to include both the marker and that request. Later request selection
+or manual range adjustments cancel pending marker navigation.
+**Filter around marker** groups a source-specific time window, initially
+30 seconds before and after the selected
+marker, with its **Apply time filter** button. Adjust the intervals from 0 to
+86,400 seconds and optionally restrict suggested hosts, then apply the filter.
+Editing these values alone does not change Traffic. **Clear time filter** restores
+the preceding view; **Clear other filters** also removes ordinary Traffic filters.
+**Show full trace**
 works when no markers are present. Source clocks may differ, and missing nearby
 requests do not establish a network failure.
 

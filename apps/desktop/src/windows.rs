@@ -2371,6 +2371,28 @@ fn capture_status(state: State<'_, DesktopState>) -> CaptureReadModel {
 }
 
 #[tauri::command]
+fn show_recording_file(state: State<'_, DesktopState>) -> Result<(), String> {
+    use std::os::windows::process::CommandExt as _;
+    let CaptureReadModel::Sealed { path, .. } = state.application.capture_status() else {
+        return Err("Stop recording and save the file before showing it in File Explorer.".into());
+    };
+    if !path.is_absolute() || !path.is_file() {
+        return Err("The recording file was moved or deleted. Check its saved location.".into());
+    }
+    let system =
+        std::env::var_os("SystemRoot").map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from);
+    std::process::Command::new(system.join("explorer.exe"))
+        .arg("/select,")
+        .arg(path)
+        .creation_flags(0x0800_0000)
+        .spawn()
+        .map(|_| ())
+        .map_err(|_| {
+            "Windows could not open File Explorer. Try again from the saved location.".into()
+        })
+}
+
+#[tauri::command]
 async fn import_capture(
     request: ImportRequest,
     state: State<'_, DesktopState>,
@@ -2932,6 +2954,7 @@ pub fn run() {
                 start_capture,
                 stop_capture,
                 capture_status,
+                show_recording_file,
                 import_capture,
                 inspect_trace_metadata,
                 export_capture,

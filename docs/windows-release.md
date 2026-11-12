@@ -619,8 +619,9 @@ prevents creation of a publishable draft.
   MCP connectors to exit; restart the agent's MCP connection to load the new CLI.
 - Evergreen WebView2 is an operating-system prerequisite and is never bundled.
   Diagnostics report the actual runtime version.
-- Tauri's single-instance plugin is registered first. A second launch focuses
-  the existing main window and exits; it cannot create a competing proxy owner.
+- Tauri's single-instance plugin is registered first. A second launch without
+  files opens an empty viewer in the existing process and exits; it cannot create
+  a competing proxy owner. File launches retain the import/viewer choice.
 - **Prepare safe update handoff** detaches breakpoint control, seals/stops
   active capture, stops the proxy, and restores host state. The app must then
   be closed before the installer runs.

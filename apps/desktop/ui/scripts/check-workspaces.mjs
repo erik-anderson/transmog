@@ -2933,9 +2933,13 @@ await page.addInitScript(
               await new Promise((resolve) => (state.releaseFocus = resolve));
             }
             if (state.deferRefresh && !args.query.focusId) {
-              state.deferRefresh = false;
-              state.refreshPending = true;
-              await new Promise((resolve) => (state.releaseRefresh = resolve));
+              if (state.deferRefreshSkip > 0) {
+                state.deferRefreshSkip--;
+              } else {
+                state.deferRefresh = false;
+                state.refreshPending = true;
+                await new Promise((resolve) => (state.releaseRefresh = resolve));
+              }
             }
             await new Promise((resolve) => setTimeout(resolve, state.queryDelay));
             state.lastQuery = args.query;
@@ -4228,6 +4232,11 @@ await page.addInitScript(
           case "stop_capture":
             state.capture = { ...state.capture, state: "sealed" };
             return structuredClone(state.capture);
+          case "show_recording_file":
+            if (state.recordingRevealError)
+              throw new Error("The recording file was moved or deleted.");
+            state.revealedRecording = state.capture.path;
+            return null;
           case "pick_capture_path":
             state.lastCapturePick = structuredClone(args);
             return state.capturePick ?? null;
@@ -8370,6 +8379,15 @@ try {
   );
   await captures.getByRole("button", { name: "Start recording…", exact: true }).click();
   await captureIdle();
+  const showRecording = captures.getByRole("button", {
+    name: "Show in File Explorer",
+    exact: true,
+  });
+  assert.equal(
+    await showRecording.isVisible(),
+    false,
+    "An active recording exposed a saved-file action",
+  );
   await captures
     .locator(".capture-state")
     .getByText("Recording · 2 KiB written", { exact: true })
@@ -8386,6 +8404,25 @@ try {
   );
   await captures.getByRole("button", { name: "Stop recording", exact: true }).click();
   await captureIdle();
+  await showRecording.focus();
+  await page.keyboard.press("Enter");
+  await captureIdle();
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.revealedRecording),
+    "C:/captures/placeholder.tmcap",
+  );
+  await page.evaluate(() => (globalThis.__workspaceFixture.recordingRevealError = true));
+  await showRecording.click();
+  await page
+    .getByRole("alertdialog", { name: "Could not show recording file", exact: true })
+    .getByRole("button", { name: "Close", exact: true })
+    .click();
+  await captureIdle();
+  await page.evaluate(() => delete globalThis.__workspaceFixture.recordingRevealError);
+  await showRecording.click();
+  await captureIdle();
+  assert.equal(await showRecording.isEnabled(), true, "A reveal failure prevented retry");
+  await page.screenshot({ path: resolve(root, "../../../target/ui-check/recording-saved.png") });
   await page.waitForFunction(
     () =>
       !document.querySelector("app-shell").shadowRoot.querySelector("capture-workspace")

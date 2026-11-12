@@ -67,7 +67,8 @@ export async function checkIncidents(page, root) {
   });
   const source = page.locator(".trace-markers-panel");
   const intake = source.locator("incident-intake");
-  await intake.getByRole("button", { name: "Show nearby requests" }).waitFor();
+  const highlight = intake.getByRole("button", { name: "Highlight closest request", exact: true });
+  await highlight.waitFor();
   await intake.getByText("Capture details", { exact: true }).click();
   assert.match(await intake.textContent(), /Customer entered browser 123/);
   await intake.getByText("Capture details", { exact: true }).click();
@@ -78,18 +79,132 @@ export async function checkIncidents(page, root) {
     [800, 600],
   ]) {
     await page.setViewportSize({ width, height });
-    await intake.getByRole("button", { name: "Show nearby requests" }).scrollIntoViewIfNeeded();
+    await highlight.scrollIntoViewIfNeeded();
     const bounds = await source.boundingBox();
     assert.ok(bounds.width <= width && bounds.height <= height);
     await page.screenshot({
       path: resolve(root, `../../../target/ui-check/incident-intake-${width}.png`),
     });
   }
-  await intake.getByText("Time range", { exact: true }).click();
+  await highlight.click();
+  await page.waitForFunction(
+    () => document.querySelector("app-shell").traffic.selectedSessionId === "first",
+  );
+  assert.deepEqual(
+    await page.evaluate(() => [
+      ...document.querySelector("app-shell").traffic.trafficSelection.ids,
+    ]),
+    ["first"],
+  );
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").traffic.incidentWindow),
+    null,
+  );
+  assert.equal(
+    await page.locator('tr[data-session-id="first"]').getAttribute("aria-selected"),
+    "true",
+  );
+  await page.evaluate(() => (globalThis.__workspaceFixture.deferTimeline = true));
+  await highlight.click();
+  await page.waitForFunction(() => globalThis.__workspaceFixture.timelinePending);
+  await page.evaluate(async () => {
+    const t = document.querySelector("app-shell").traffic;
+    await t.inspectTimelineRequest("cached");
+    t.trafficSelection.replace("cached");
+    t.updateTrafficSelection();
+    globalThis.__workspaceFixture.releaseTimeline();
+  });
+  await page.waitForFunction(() => !globalThis.__workspaceFixture.timelinePending);
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").traffic.selectedSessionId),
+    "cached",
+    "Late marker navigation replaced a newer inspection",
+  );
+  await page.evaluate(() => (globalThis.__workspaceFixture.deferTimeline = true));
+  await highlight.click();
+  await page.waitForFunction(() => globalThis.__workspaceFixture.timelinePending);
+  await page.evaluate(async () => {
+    const t = document.querySelector("app-shell").traffic,
+      s = globalThis.__workspaceFixture;
+    t.clearTrafficSelection();
+    s.releaseTimeline();
+  });
+  await page.waitForFunction(() => !globalThis.__workspaceFixture.timelinePending);
+  assert.deepEqual(
+    await page.evaluate(() => [
+      ...document.querySelector("app-shell").traffic.trafficSelection.ids,
+    ]),
+    [],
+    "A late highlight undid a newer selection clear",
+  );
+  await page.evaluate(() => {
+    const t = document.querySelector("app-shell").traffic;
+    t.trafficSelection.replace("cached");
+    t.updateTrafficSelection();
+  });
+  await page.evaluate(() => {
+    const s = globalThis.__workspaceFixture,
+      t = document.querySelector("app-shell").traffic;
+    s.deferTimeline = true;
+    s.pendingMarkerHighlight = t.markerTimeRequest(
+      new CustomEvent("marker-time-request", {
+        detail: { traceId: "customer-source", markerId: "marker-1", highlight: true },
+      }),
+    );
+  });
+  await page.waitForFunction(() => globalThis.__workspaceFixture.timelinePending);
+  await page.evaluate(async () => {
+    const s = globalThis.__workspaceFixture,
+      t = document.querySelector("app-shell").traffic;
+    await t.refreshSessions();
+    s.releaseTimeline();
+    await s.pendingMarkerHighlight;
+  });
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").traffic.selectedSessionId),
+    "first",
+    "A background traffic refresh canceled the requested highlight",
+  );
+  await page.evaluate(async () => {
+    const t = document.querySelector("app-shell").traffic;
+    await t.inspectTimelineRequest("cached");
+    t.trafficSelection.replace("cached");
+    t.updateTrafficSelection();
+  });
+  await intake.getByText("Filter around marker", { exact: true }).click();
   await intake.getByLabel("Before (seconds)", { exact: true }).fill("10");
   await intake.getByLabel("After (seconds)", { exact: true }).fill("10");
   await intake.getByRole("checkbox", { name: "Suggested hosts only" }).check();
-  await intake.getByRole("button", { name: "Show nearby requests" }).click();
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").traffic.incidentWindow),
+    null,
+    "Editing the time window applied an unsubmitted draft",
+  );
+  const applyFilter = intake.getByRole("button", { name: "Apply time filter", exact: true });
+  await intake.getByLabel("Before (seconds)", { exact: true }).fill("");
+  await applyFilter.click();
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").traffic.incidentWindow),
+    null,
+    "An empty interval applied a filter",
+  );
+  await intake.getByLabel("Before (seconds)", { exact: true }).fill("10");
+  for (const [width, height] of [
+    [1440, 900],
+    [960, 720],
+    [800, 600],
+  ]) {
+    await page.setViewportSize({ width, height });
+    await applyFilter.scrollIntoViewIfNeeded();
+    const bounds = await applyFilter.boundingBox();
+    assert.ok(
+      bounds.x >= 0 && bounds.x + bounds.width <= width && bounds.y + bounds.height <= height,
+    );
+    await page.screenshot({
+      path: resolve(root, `../../../target/ui-check/incident-filter-${width}.png`),
+    });
+  }
+  await intake.getByLabel("After (seconds)", { exact: true }).press("Enter");
   await page.waitForFunction(() => document.querySelector("app-shell").traffic.totalMatched === 2);
   assert.equal(await source.evaluate((d) => d.open), true);
   assert.equal(
@@ -139,6 +254,108 @@ export async function checkIncidents(page, root) {
     null,
   );
   assert.equal(await timeline.locator(".timeline-marker[data-current]").count(), 2);
+  await highlight.focus();
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(
+    () => document.querySelector("app-shell").traffic.selectedSessionId === "first",
+  );
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").traffic.incidentWindow),
+    null,
+  );
+  // A highlight waiting for Timeline must not undo a later request inspection.
+  await page.evaluate(() => {
+    const s = globalThis.__workspaceFixture,
+      t = document.querySelector("app-shell").traffic;
+    s.deferRefresh = true;
+    s.deferRefreshSkip = 1;
+    s.refreshPending = false;
+    s.pendingMarkerHighlight = t.markerTimeRequest(
+      new CustomEvent("marker-time-request", {
+        detail: { traceId: "customer-source", markerId: "marker-1", highlight: true },
+      }),
+    );
+  });
+  await page.waitForFunction(() => globalThis.__workspaceFixture.refreshPending);
+  const newerRange = await page.evaluate(async () => {
+    const t = document.querySelector("app-shell").traffic;
+    await t.inspectTimelineRequest("cached");
+    t.timeline.goToTime(1800000100000);
+    return [t.timeline.from, t.timeline.to];
+  });
+  await page.evaluate(async () => {
+    const s = globalThis.__workspaceFixture;
+    s.releaseRefresh();
+    await s.pendingMarkerHighlight;
+  });
+  assert.deepEqual(
+    await page.evaluate(() => {
+      const t = document.querySelector("app-shell").traffic;
+      return [t.timeline.from, t.timeline.to];
+    }),
+    newerRange,
+    "A late highlight reset the newer Timeline position",
+  );
+  await page.evaluate(() => {
+    const s = globalThis.__workspaceFixture,
+      t = document.querySelector("app-shell").traffic;
+    s.deferRefresh = true;
+    s.deferRefreshSkip = 1;
+    s.refreshPending = false;
+    s.pendingMarkerHighlight = t.markerTimeRequest(
+      new CustomEvent("marker-time-request", {
+        detail: { traceId: "customer-source", markerId: "marker-1", highlight: true },
+      }),
+    );
+  });
+  await page.waitForFunction(() => globalThis.__workspaceFixture.refreshPending);
+  await timeline.getByRole("slider", { name: "Timeline window", exact: true }).focus();
+  await page.keyboard.press("+");
+  const adjustedRange = await timeline.locator(".timeline-scale > span").first().textContent();
+  await page.evaluate(async () => {
+    const s = globalThis.__workspaceFixture;
+    s.releaseRefresh();
+    await s.pendingMarkerHighlight;
+  });
+  assert.equal(
+    await timeline.locator(".timeline-scale > span").first().textContent(),
+    adjustedRange,
+    "A late highlight undid a newer Timeline range adjustment",
+  );
+
+  // Closest retained traffic can be minutes away from a marker in a sparse trace.
+  const distantMarker = await page.evaluate(async () => {
+    const t = document.querySelector("app-shell").traffic,
+      marker = t.markerItems.find((m) => m.id === "marker-1"),
+      original = marker.unixMillis;
+    t.markerItems = t.markerItems.map((m) =>
+      m === marker ? { ...m, unixMillis: original + 300000 } : m,
+    );
+    await t.markerTimeRequest(
+      new CustomEvent("marker-time-request", {
+        detail: { traceId: "customer-source", markerId: "marker-1", highlight: true },
+      }),
+    );
+    return original;
+  });
+  const closest = timeline.locator("#timeline-second");
+  assert.equal(
+    await closest.isVisible(),
+    true,
+    "Highlight left the closest request outside the Timeline range",
+  );
+  await page.evaluate(async (original) => {
+    const t = document.querySelector("app-shell").traffic;
+    t.markerItems = t.markerItems.map((m) =>
+      m.id === "marker-1" ? { ...m, unixMillis: original } : m,
+    );
+    await t.markerTimeRequest(
+      new CustomEvent("marker-time-request", {
+        detail: { traceId: "customer-source", markerId: "marker-1", highlight: true },
+      }),
+    );
+  }, distantMarker);
+  await page.waitForFunction(() => globalThis.__workspaceFixture.trafficViews.size === 1);
   await timeline.locator(".timeline-marker-lane .timeline-marker").first().focus();
   await page.keyboard.press("Enter");
   await intake.getByRole("button", { name: "Edit note", exact: true }).click();

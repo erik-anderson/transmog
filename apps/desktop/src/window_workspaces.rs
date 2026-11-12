@@ -407,13 +407,9 @@ pub(super) fn agent_review_command_allowed(command: &str) -> bool {
 }
 
 pub(super) fn activate_files(app: &tauri::AppHandle, paths: Vec<PathBuf>) {
-    if paths.is_empty() {
-        if let Some(window) = app.get_webview_window("main") {
-            focus(&window);
-        }
-        return;
-    }
-    if let Some(window) = app.get_webview_window("main") {
+    // Shift-click and middle-click on the taskbar relaunch the executable.
+    // Keep proxy ownership in this process and give that launch a fresh viewer.
+    if let Some(window) = app.get_webview_window("main").filter(|_| !paths.is_empty()) {
         app.state::<DesktopState>().workspaces.queue("main", paths);
         focus(&window);
         let _ = window.emit("trace-open-request", ());
@@ -646,6 +642,7 @@ mod tests {
             "package_extension",
             "export_extension",
             "stop_capture",
+            "show_recording_file",
             "activate_automation",
             "change_header_rule",
             "change_response_transform",

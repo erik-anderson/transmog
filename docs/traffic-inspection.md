@@ -271,8 +271,9 @@ inside help. **Compact rows** applies to both List and Timeline;
 **List columns** is available only in List. Layout places the **Inspector below**
 (default) or **Inspector beside** the traffic view.
 
-Live updates preserve adjusted ranges and do not steal focus. The overview
-summarizes overlapping activity; rows are virtualized across the full scope.
+Live updates preserve adjusted ranges and do not steal focus. Routine refreshes
+stay quiet and preserve the chart's layout; failed refreshes retain Retry.
+The overview summarizes overlapping activity; rows are virtualized across the full scope.
 Timeline mode, ordering and range are temporary investigation state, retained
 while switching workspaces but not saved into captures or preferences.
 

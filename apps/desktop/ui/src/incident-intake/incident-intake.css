@@ -11,6 +11,8 @@ incident-intake .marker-actions{display:flex;align-items:baseline;flex-wrap:wrap
 incident-intake .marker-actions details[open]{display:flex;flex-wrap:wrap;gap:.3rem}
 incident-intake .marker-editor textarea{width:100%;box-sizing:border-box;resize:vertical;min-height:2.8rem;max-height:5rem}
 incident-intake .marker-shared-actions{border-top:1px solid var(--line);padding-top:.3rem}
+incident-intake .marker-filter{margin:.3rem 0}
+incident-intake .marker-filter .field-help{margin:.3rem 0}
 incident-intake .incident-window-controls{display:flex;gap:.5rem;align-items:baseline;flex-wrap:wrap}
 incident-intake .incident-window-controls label{display:flex;gap:.25rem;align-items:baseline}
 incident-intake input[type=number]{width:4.5rem}

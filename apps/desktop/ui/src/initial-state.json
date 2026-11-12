@@ -1543,6 +1543,7 @@
   "captureError": "",
   "captureBusy": false,
   "captureActive": false,
+  "captureSaved": false,
   "captureStateText": "Not recording",
   "capturePathText": "",
   "captureDetails": "",

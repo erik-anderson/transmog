@@ -71,6 +71,7 @@ export class CaptureWorkspace extends WorkspaceElement {
   @observable captureError = "";
   @observable captureBusy = false;
   @observable captureActive = false;
+  @observable captureSaved = false;
   @observable captureStateText = "Not recording";
   @observable capturePathText = "";
   @observable captureDetails = "";
@@ -149,6 +150,7 @@ export class CaptureWorkspace extends WorkspaceElement {
   }
   private renderCapture(status: CaptureReadModel): void {
     this.captureActive = status.state === "active";
+    this.captureSaved = status.state === "sealed" && Boolean(status.path);
     if (this.captureActive && this.captureText === "Capture is idle.") {
       this.captureText =
         "Recording directly to file. Import the saved file to inspect its traffic.";
@@ -287,6 +289,14 @@ export class CaptureWorkspace extends WorkspaceElement {
       this.renderCapture(status);
       this.captureText = "Saved recording: " + (status.path ?? "") + ".";
       this.$emit("status-changed", await invoke("app_status"));
+    });
+  }
+  async showRecordingFile(): Promise<void> {
+    if (!this.captureSaved) {
+      return;
+    }
+    await this.runCapture("Could not show recording file", async () => {
+      await invoke("show_recording_file");
     });
   }
   async refreshCapture(): Promise<void> {

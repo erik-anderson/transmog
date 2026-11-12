@@ -154,6 +154,9 @@ a viewer does not stop the main window's proxy.
 
 **Ctrl+N** opens an empty Capture viewer from either window. The same action is
 beside the **View** heading in Traffic's View flyout: **Open new viewer window**.
+Shift-clicking or middle-clicking the Windows taskbar icon also opens an empty
+Capture viewer. Launching Transmog again without a file uses the same behavior;
+the existing process remains the sole proxy owner.
 **Ctrl+W** closes the current viewer through the normal close flow, including
 the unsaved-marker prompt; it does not close the main proxy window.
 **Ctrl+O** opens the import picker for the current window and brings Traffic
@@ -177,7 +180,8 @@ rules and evidence through [portable cases](portable-investigations.md#desktop-t
 proxy and writes directly to that file without retaining entries in Traffic.
 Switching from live capture waits for active requests and offers cancellation
 while waiting. Choose **Headers only** or **Headers and bodies**. Stopping seals
-the file and restores Windows proxy settings. The [CLI
+the file and restores Windows proxy settings. **Show in File Explorer** then
+opens its folder with the saved recording selected. The [CLI
 recorder](cli-support-capture.md) also runs without the desktop; it is included
 in the installer and published separately.
 

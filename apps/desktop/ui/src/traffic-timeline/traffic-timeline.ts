@@ -143,6 +143,7 @@ export class TrafficTimeline extends WebUIElement {
     this.renderRange();
   }
   resetRange(): void {
+    this.$emit("timeline-range-change", undefined);
     this.markerNavigation = false;
     this.adjusted = false;
     this.rebuild();
@@ -302,6 +303,11 @@ export class TrafficTimeline extends WebUIElement {
     const width = Math.max(2000, Math.min(60000, this.to - this.from));
     this.from = time - width / 2;
     this.to = time + width / 2;
+    const request = id ? this.entries.find((row) => row.id === id) : undefined;
+    if (request?.startMillis != null && !overlaps(request, this.from, this.to)) {
+      this.from = Math.min(this.from, request.startMillis - width / 2);
+      this.to = Math.max(this.to, (intervalEnd(request) ?? request.startMillis) + width / 2);
+    }
     this.adjusted = true;
     this.rebuild();
     if (id) {
@@ -568,6 +574,7 @@ export class TrafficTimeline extends WebUIElement {
     event.stopPropagation();
     const target = event.target as Element,
       part = target.getAttribute("data-part") ?? "new";
+    this.$emit("timeline-range-change", undefined);
     (target instanceof SVGElement && target.hasAttribute("tabindex")
       ? target
       : this.overview
@@ -668,6 +675,7 @@ export class TrafficTimeline extends WebUIElement {
       this.resetRange();
       return;
     }
+    this.$emit("timeline-range-change", undefined);
     const extent = this.maximum - this.minimum;
     if (event.key === "+" || event.key === "-") {
       const width = Math.min(

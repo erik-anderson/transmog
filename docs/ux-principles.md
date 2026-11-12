@@ -19,8 +19,9 @@ when changing the experience.
   keep packaging internals out of the save flow. Traffic interchange formats,
   including SAZ, remain in the ordinary traffic workflow.
 - Review markers alongside traffic, with concise notes and actions sharing
-  horizontal space. Marker navigation reveals time or linked evidence; applying
-  a time filter is explicit. Preserve edits in a new copy and distinguish clearing
+  horizontal space. Marker navigation reveals time or linked evidence; an explicit
+  highlight action selects the closest request. Group time-filter inputs with
+  their Apply action. Preserve edits in a new copy and distinguish clearing
   note text from deleting its marker.
 - Keep primary actions beside their content. Put occasional actions in menus,
   advanced settings in disclosures and technical evidence behind readable
