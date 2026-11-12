@@ -16,12 +16,12 @@ debugger = ["dep:serde_json"]
 [dependencies]
 percent-encoding.workspace = true
 serde_json = { workspace = true, optional = true }
-transmog-script-diagnostics = { version = "=0.1.23", path = "../script-diagnostics" }
+transmog-script-diagnostics = { version = "=0.1.24", path = "../script-diagnostics" }
 url.workspace = true
 v8.workspace = true
 
 [dev-dependencies]
-transmog-process-sandbox = { version = "=0.1.23", path = "../process-sandbox" }
+transmog-process-sandbox = { version = "=0.1.24", path = "../process-sandbox" }
 
 [[example]]
 name = "inspector-probe"

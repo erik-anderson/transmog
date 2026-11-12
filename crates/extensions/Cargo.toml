@@ -15,8 +15,8 @@ serde_json.workspace = true
 hex.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
-transmog-package-zip = { version = "=0.1.23", path = "../package-zip" }
-transmog-script-diagnostics = { version = "=0.1.23", path = "../script-diagnostics" }
+transmog-package-zip = { version = "=0.1.24", path = "../package-zip" }
+transmog-script-diagnostics = { version = "=0.1.24", path = "../script-diagnostics" }
 
 [dev-dependencies]
 tempfile.workspace = true

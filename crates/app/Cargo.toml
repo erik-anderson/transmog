@@ -8,12 +8,12 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-transmog-auth = { version = "=0.1.23", path = "../auth" }
+transmog-auth = { version = "=0.1.24", path = "../auth" }
 boring.workspace = true
 tokio-boring.workspace = true
 sysinfo.workspace = true
 url = "=2.5.8"
-transmog-network = { version = "=0.1.23", path = "../network" }
+transmog-network = { version = "=0.1.24", path = "../network" }
 bytes.workspace = true
 base64.workspace = true
 getrandom.workspace = true
@@ -28,35 +28,35 @@ unicode-normalization.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sourcemap.workspace = true
-transmog-script-diagnostics = { version = "=0.1.23", path = "../script-diagnostics" }
-transmog-extension-supervisor = { version = "=0.1.23", path = "../extension-supervisor" }
+transmog-script-diagnostics = { version = "=0.1.24", path = "../script-diagnostics" }
+transmog-extension-supervisor = { version = "=0.1.24", path = "../extension-supervisor" }
 hex.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 tempfile.workspace = true
 zeroize.workspace = true
-transmog-key-protection = { version = "=0.1.23", path = "../key-protection" }
+transmog-key-protection = { version = "=0.1.24", path = "../key-protection" }
 time.workspace = true
 tokio.workspace = true
 zip.workspace = true
-transmog-content = { version = "=0.1.23", path = "../proxy-content" }
-transmog-extensions = { version = "=0.1.23", path = "../extensions" }
-transmog-extension-registry = { version = "=0.1.23", path = "../extension-registry" }
-transmog-automation = { version = "=0.1.23", path = "../proxy-automation" }
-transmog-portable = { version = "=0.1.23", path = "../portable" }
-transmog-control-model = { version = "=0.1.23", path = "../proxy-control-model" }
-transmog-control-transport = { version = "=0.1.23", path = "../proxy-control-transport" }
-transmog-capture = { version = "=0.1.23", path = "../proxy-capture" }
-transmog-core = { version = "=0.1.23", path = "../proxy-core" }
-transmog-http = { version = "=0.1.23", path = "../proxy-http" }
-transmog-h3 = { version = "=0.1.23", path = "../proxy-h3" }
-transmog-preview-worker = { version = "=0.1.23", path = "../preview-worker" }
-transmog-runtime = { version = "=0.1.23", path = "../proxy-runtime" }
-transmog-saz = { version = "=0.1.23", path = "../proxy-saz" }
-transmog-script = { version = "=0.1.23", path = "../proxy-script" }
-transmog-script-supervisor = { version = "=0.1.23", path = "../script-supervisor" }
-transmog-session = { version = "=0.1.23", path = "../proxy-session" }
-transmog-tls = { version = "=0.1.23", path = "../proxy-tls" }
+transmog-content = { version = "=0.1.24", path = "../proxy-content" }
+transmog-extensions = { version = "=0.1.24", path = "../extensions" }
+transmog-extension-registry = { version = "=0.1.24", path = "../extension-registry" }
+transmog-automation = { version = "=0.1.24", path = "../proxy-automation" }
+transmog-portable = { version = "=0.1.24", path = "../portable" }
+transmog-control-model = { version = "=0.1.24", path = "../proxy-control-model" }
+transmog-control-transport = { version = "=0.1.24", path = "../proxy-control-transport" }
+transmog-capture = { version = "=0.1.24", path = "../proxy-capture" }
+transmog-core = { version = "=0.1.24", path = "../proxy-core" }
+transmog-http = { version = "=0.1.24", path = "../proxy-http" }
+transmog-h3 = { version = "=0.1.24", path = "../proxy-h3" }
+transmog-preview-worker = { version = "=0.1.24", path = "../preview-worker" }
+transmog-runtime = { version = "=0.1.24", path = "../proxy-runtime" }
+transmog-saz = { version = "=0.1.24", path = "../proxy-saz" }
+transmog-script = { version = "=0.1.24", path = "../proxy-script" }
+transmog-script-supervisor = { version = "=0.1.24", path = "../script-supervisor" }
+transmog-session = { version = "=0.1.24", path = "../proxy-session" }
+transmog-tls = { version = "=0.1.24", path = "../proxy-tls" }
 
 [build-dependencies]
 hex.workspace = true

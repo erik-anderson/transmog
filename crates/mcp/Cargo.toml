@@ -29,19 +29,19 @@ thiserror.workspace = true
 tokio.workspace = true
 tokio-boring.workspace = true
 tracing.workspace = true
-transmog-tls = { version = "=0.1.23", path = "../proxy-tls" }
-transmog-app = { version = "=0.1.23", path = "../app", optional = true }
-transmog-automation = { version = "=0.1.23", path = "../proxy-automation", optional = true }
-transmog-core = { version = "=0.1.23", path = "../proxy-core", optional = true }
+transmog-tls = { version = "=0.1.24", path = "../proxy-tls" }
+transmog-app = { version = "=0.1.24", path = "../app", optional = true }
+transmog-automation = { version = "=0.1.24", path = "../proxy-automation", optional = true }
+transmog-core = { version = "=0.1.24", path = "../proxy-core", optional = true }
 url.workspace = true
 zeroize.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-transmog-key-protection = { version = "=0.1.23", path = "../key-protection" }
+transmog-key-protection = { version = "=0.1.24", path = "../key-protection" }
 
 [lints]
 workspace = true
 
 [dev-dependencies]
-transmog-session = { version = "=0.1.23", path = "../proxy-session" }
+transmog-session = { version = "=0.1.24", path = "../proxy-session" }
 rmcp = { version = "=3.9.0", default-features = false, features = ["client", "server", "transport-io"] }
