@@ -228,8 +228,8 @@ impl Library {
         let mut undo = None;
         match change {
             TrafficFavoritesChange::Add { entries } => {
-                if entries.len() > 256 {
-                    return Err(invalid("Save at most 256 Favorites in one batch"));
+                if entries.len() > 1024 {
+                    return Err(invalid("Save at most 1024 Favorites in one batch"));
                 }
                 let entries = entries
                     .into_iter()
@@ -376,6 +376,47 @@ mod tests {
             value: Some(TrafficFilterValue::Text(value.into())),
             condition: None,
         }
+    }
+    #[test]
+    fn multi_field_apply_saves_one_complete_batch() {
+        let library = Library::default();
+        let entries = (0..512)
+            .map(|index| {
+                if index < 256 {
+                    host(&format!("host-{index}.test"))
+                } else {
+                    TrafficFavorite {
+                        dimension: TrafficDimension::Column(crate::TrafficColumn::Path),
+                        value: Some(TrafficFilterValue::Text(format!("/path/{index}"))),
+                        condition: None,
+                    }
+                }
+            })
+            .collect();
+        assert_eq!(
+            library
+                .change(TrafficFavoritesChange::Add { entries })
+                .unwrap()
+                .changed,
+            512
+        );
+        let dimension = host("a.test").dimension;
+        assert_eq!(library.page(dimension, 0, 256).unwrap().entries.len(), 256);
+        assert!(
+            library
+                .change(TrafficFavoritesChange::Add {
+                    entries: vec![host("new.test"), host("invalid:80")],
+                })
+                .is_err()
+        );
+        assert_eq!(library.page(dimension, 0, 256).unwrap().entries.len(), 256);
+        assert!(
+            library
+                .change(TrafficFavoritesChange::Add {
+                    entries: vec![host("new.test"); 1025],
+                })
+                .is_err()
+        );
     }
     #[test]
     fn library_starts_empty_persists_batches_and_undo_preserves_later_intent() {

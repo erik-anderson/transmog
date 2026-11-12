@@ -50,12 +50,15 @@ export async function smokeTrafficFavorites({
     assert.equal(ids.length, expected, "Filtered selection/export IDs disagree with the UI");
   };
   const reset = async (client, mode = "either", pick) => {
-    await evaluate(client, "t.clearPicker();");
+    await evaluate(
+      client,
+      "if(!t.filterPicker.querySelector('.filter-custom').open)t.filterPicker.querySelector('.filter-custom > summary').click();t.clearPicker();",
+    );
     await click(client, "Use saved term api.example.test");
     await click(client, "Use saved term *.domain.example");
     await evaluate(
       client,
-      `const select=t.filterPicker.querySelector('[aria-label="Combine selections"]');select.value=${JSON.stringify(mode)};select.dispatchEvent(new Event('change'));`,
+      `const select=t.filterPicker.querySelector('[aria-label="Combine groups"]');select.value=${JSON.stringify(mode)};select.dispatchEvent(new Event('change'));`,
     );
     if (pick) await click(client, "Pick observed host " + pick);
   };
@@ -116,8 +119,8 @@ export async function smokeTrafficFavorites({
       await open(client);
       assert.equal(
         await evaluate(client, "return t.filterPicker.querySelector('.filter-custom').open;"),
-        true,
-        "Persisted Favorites did not expand Advanced filters in a fresh window",
+        false,
+        "Idle Favorites expanded the saved/custom group in a fresh window",
       );
       assert.equal(
         await evaluate(
@@ -171,18 +174,33 @@ export async function smokeTrafficFavorites({
     await evaluate(main, "return t.filterPicker.querySelector('.filter-custom').open;"),
     false,
   );
+  assert.equal(
+    await evaluate(main, "return t.filterPicker.querySelector('.filter-combine').hidden;"),
+    true,
+    "The default native picker shows Combine groups without any custom values",
+  );
   await evaluate(main, "t.filterPicker.querySelector('.filter-custom > summary').click();");
   assert.equal(await evaluate(main, "return t.pickerRequirements.length;"), 0);
   await withFavoriteGate(
     main,
     't.filterPaste.value="cancelled-native.test";t.filterPaste.dispatchEvent(new Event("input"));review.operation=t.applyFilter(new Event("submit",{cancelable:true}));',
-    "[...t.filterPicker.querySelectorAll('button')].find(button=>button.textContent.trim()==='Cancel').click();",
+    "[...t.filterPicker.querySelectorAll('button')].find(button=>button.textContent.trim()==='Discard changes').click();",
   );
   assert.deepEqual(await evaluate(main, "return t.filterGroups;"), []);
   assert.equal(
     (await list(main)).entries.some((entry) => entry.value?.value === "cancelled-native.test"),
     true,
   );
+  await open(main);
+  await withFavoriteGate(
+    main,
+    't.filterPaste.value="late-native.test";t.filterPaste.dispatchEvent(new Event("input"));review.operation=t.applyFilter(new Event("submit",{cancelable:true}));',
+    't.filterInput.value="newer comparison";t.filterInput.dispatchEvent(new Event("input"));',
+  );
+  assert.deepEqual(await evaluate(main, "return t.filterGroups;"), []);
+  assert.equal(await evaluate(main, "return t.filterInput.value;"), "newer comparison");
+  assert.equal(await evaluate(main, "return t.pickerOpen;"), true);
+  await evaluate(main, "t.discardPicker();");
   await open(main);
   await evaluate(
     main,
@@ -228,9 +246,21 @@ export async function smokeTrafficFavorites({
     );
     await click(client, "Pick observed host domain.example");
     await preview(client, 5);
+    await evaluate(client, "t.closePicker();");
+    assert.equal(await evaluate(client, "return t.filterDraftPending;"), true);
+    await open(client);
+    assert.equal(
+      await evaluate(
+        client,
+        'return t.pickerOptions.find(row=>row.label==="domain.example").selected;',
+      ),
+      true,
+      "Native close/reopen lost the filter draft",
+    );
+    assert.equal(await evaluate(client, "return t.totalMatched;"), appliedBefore);
     await evaluate(
       client,
-      "[...t.filterPicker.querySelectorAll('button')].find(button=>button.textContent.trim()==='Cancel').click();",
+      "[...t.filterPicker.querySelectorAll('button')].find(button=>button.textContent.trim()==='Discard changes').click();",
     );
     await ready(client);
     assert.equal(await evaluate(client, "return t.totalMatched;"), appliedBefore);
@@ -255,6 +285,31 @@ export async function smokeTrafficFavorites({
       .map((node) => node.name?.value);
     assert.ok(checkboxNames.includes("Use saved term api.example.test"));
     assert.ok(checkboxNames.includes("Pick observed host api.example.test"));
+    await evaluate(
+      client,
+      't.favoriteSearch.value="api";t.favoriteSearch.dispatchEvent(new Event("input"));t.$flushUpdates();t.favoriteSearch.focus();',
+    );
+    await client.call("Input.dispatchKeyEvent", {
+      type: "keyDown",
+      key: "Enter",
+      code: "Enter",
+      windowsVirtualKeyCode: 13,
+    });
+    await client.call("Input.dispatchKeyEvent", {
+      type: "keyUp",
+      key: "Enter",
+      code: "Enter",
+      windowsVirtualKeyCode: 13,
+    });
+    assert.equal(
+      await evaluate(client, "return t.filterPicker.matches(':popover-open');"),
+      true,
+      "Native Favorite search submitted the filter form",
+    );
+    await evaluate(
+      client,
+      't.favoriteSearch.value="";t.favoriteSearch.dispatchEvent(new Event("input"));',
+    );
     assert.ok(
       accessibility.nodes.some(
         (node) =>
@@ -329,8 +384,12 @@ export async function smokeTrafficFavorites({
         accent:getComputedStyle(field).color===getComputedStyle(host).color,
         label:t.filterPicker.querySelector('.filter-list-entry label > span').textContent,
         example:t.filterPicker.querySelector('.filter-list-entry .filter-picker-hint').textContent,
-        modes:[...t.filterPicker.querySelector('[aria-label="Combine selections"]').options].map(option=>option.textContent),
+        modes:[...t.filterPicker.querySelector('[aria-label="Combine groups"]').options].map(option=>option.textContent),
         countNote:t.pickerScope,
+        savedHeading:t.filterPicker.querySelector('.filter-custom > summary').textContent,
+        observedHeading:t.filterPicker.querySelector('.filter-observed-group > h3').textContent,
+        groupSummary:t.pickerCombineSummary,
+        requirementHint:t.filterPicker.querySelector('.filter-requirements > summary').textContent,
       };
     `,
     );
@@ -343,11 +402,15 @@ export async function smokeTrafficFavorites({
       "Example: exact-domain.example, *.include-subdomains.example",
     );
     assert.deepEqual(presentation.modes, [
-      "Match either list",
-      "Require a match in both lists",
-      "Use observed values only",
+      "Match either group (OR)",
+      "Match both groups (AND)",
+      "Use observed hosts only",
     ]);
     assert.match(presentation.countNote, /Counts ignore this field’s filters/);
+    assert.match(presentation.savedHeading, /Saved and custom hosts.*2 selected/);
+    assert.match(presentation.observedHeading, /Observed hosts.*1 selected/);
+    assert.match(presentation.groupSummary, /Saved and custom hosts OR Observed hosts/);
+    assert.match(presentation.requirementHint, /All checked requirements must also match/);
     await click(client, "Use saved term api.example.test");
     await click(client, "Use saved term future.example.test");
     await click(client, "Pick observed host otherdomain.example");
@@ -370,7 +433,7 @@ export async function smokeTrafficFavorites({
     await preview(client, 1);
     await evaluate(
       client,
-      'const select=t.filterPicker.querySelector(\'[aria-label="Combine selections"]\');select.value="either";select.dispatchEvent(new Event("change"));',
+      'const select=t.filterPicker.querySelector(\'[aria-label="Combine groups"]\');select.value="either";select.dispatchEvent(new Event("change"));',
     );
     await preview(client, 5);
     await apply(client, 5);
@@ -399,6 +462,38 @@ export async function smokeTrafficFavorites({
     await preview(client, 3, 4);
     await evaluate(client, "t.closePicker();await t.clearFilters();");
     await open(client);
+    await click(client, "Pick observed host api.example.test");
+    await evaluate(
+      client,
+      't.filterField.value="method";t.filterField.dispatchEvent(new Event("change"));',
+    );
+    await ready(client);
+    await click(client, "POST");
+    await preview(client, 1, 2);
+    await apply(client, 1);
+    assert.deepEqual(
+      await evaluate(client, "return t.filterGroups.map(group=>group.dimension).sort();"),
+      ["host", "method"],
+    );
+    assert.equal(await evaluate(client, "return t.filterDraftPending;"), false);
+    await open(client);
+    await evaluate(client, "t.clearPicker();");
+    await click(client, "Pick observed host domain.example");
+    await evaluate(
+      client,
+      "t.closePicker();[...t.getRootNode().querySelectorAll('.filter-chip-remove')].find(button=>button.getAttribute('aria-label').startsWith('Remove Host:')).click();",
+    );
+    await ready(client);
+    await evaluate(client, "t.openFilterPicker('method');");
+    await ready(client);
+    await apply(client, 2);
+    assert.deepEqual(
+      await evaluate(client, "return t.filterGroups.map(group=>group.dimension);"),
+      ["method"],
+      "A native Apply resurrected the removed Host draft",
+    );
+    await evaluate(client, "await t.clearFilters();");
+    await open(client);
     await reset(client);
     const beforeRequirement = await list(client);
     await withFavoriteGate(
@@ -415,7 +510,37 @@ export async function smokeTrafficFavorites({
     )
       assert.equal((await list(client)).revision, beforeRequirement.revision);
 
-    await preview(client, 2);
+    await ready(client);
+    assert.match(
+      await evaluate(client, "return t.pickerPreview;"),
+      /Finish or correct pending fields/,
+    );
+    const beforeUnfinishedApply = await evaluate(client, "return t.totalMatched;");
+    await evaluate(client, 'await t.applyFilter(new Event("submit",{cancelable:true}));');
+    assert.equal(await evaluate(client, "return t.totalMatched;"), beforeUnfinishedApply);
+    assert.equal(await evaluate(client, "return t.pickerOpen;"), true);
+    assert.equal(await evaluate(client, "return t.filterInput.value;"), "next requirement");
+    await evaluate(
+      client,
+      't.getRootNode().getElementById("header-method").querySelector("button").click();',
+    );
+    await open(client);
+    assert.equal(
+      await evaluate(client, "return t.filterInput.value;"),
+      "next requirement",
+      "Opening a native column menu overwrote the retained comparison draft",
+    );
+    assert.equal(await evaluate(client, "return t.filterOperator.value;"), "equals");
+    await evaluate(
+      client,
+      't.filterInput.value="cdn";t.filterInput.dispatchEvent(new Event("input"));t.filterOperator.value="contains";await t.applyFilter(new Event("submit",{cancelable:true}));await t.addRequirement();',
+    );
+    assert.equal(await evaluate(client, "return t.filterInput.value;"), "");
+    assert.equal(
+      await evaluate(client, "return t.filterInput.checkValidity();"),
+      true,
+      "Adding the pending comparison left native Apply blocked by stale validity",
+    );
     await apply(client, 2);
     await open(client);
     if (screenshot) {
@@ -539,6 +664,7 @@ export async function smokeTrafficFavorites({
     preservesRequirementDraft: true,
     idempotentRetries: true,
     pickerEditingReview: true,
+    combinedFieldApply: true,
     wildcardApex: true,
   };
 }

@@ -293,6 +293,7 @@ export async function checkTrafficClassifications(page, root) {
     });
     await page.emulateMedia({ forcedColors: "none" });
     await heading.click();
+    await picker.getByRole("checkbox", { name: /MS-FSSHTTP/ }).check();
     await page.keyboard.press("Escape");
     await page.evaluate(() => {
       const s = globalThis.__workspaceFixture;
@@ -308,8 +309,22 @@ export async function checkTrafficClassifications(page, root) {
     );
     assert.equal(
       await traffic.getByRole("combobox", { name: "Filter field", exact: true }).inputValue(),
+      "extension:office:protocol",
+      "Removing an extension made its retained filter draft unreachable",
+    );
+    assert.equal(await picker.getByRole("checkbox", { name: /MS-FSSHTTP/ }).isChecked(), true);
+    await picker.getByRole("checkbox", { name: /MS-FSSHTTP/ }).uncheck();
+    await picker.getByRole("button", { name: "Discard changes", exact: true }).click();
+    assert.equal(
+      await page.evaluate(() => document.querySelector("app-shell").traffic.filterDraftPending),
+      false,
+    );
+    await page.evaluate(() =>
+      document.querySelector("app-shell").traffic.openFilters(new Event("click")),
+    );
+    assert.equal(
+      await picker.getByLabel("Filter field", { exact: true }).inputValue(),
       "traffic-type",
-      "Removed extension left Filters on a missing field",
     );
     await page.keyboard.press("Escape");
     const listeners = await page.evaluate(() =>

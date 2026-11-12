@@ -8,36 +8,36 @@ Today **Use exact value** accepts one unseen value at a time. **Custom match** r
 
 ## Interaction contract
 
-**Saved values** is the section name. **Favorite** is the term for the star and the persisted entry. Use an outline star with the tooltip **Add to favorites** and a filled star with **Remove from favorites**. Give the button a stable accessible name such as **Favorite api.example.test** and expose its pressed state.
+**Saved and custom hosts** and **Observed hosts** are the two membership groups; other fields use values instead of hosts. Favorites and other custom terms belong to the first group. **Favorite** is the term for the star and the persisted entry. Use an outline star with the tooltip **Add to favorites** and a filled star with **Remove from favorites**. Give the button a stable accessible name such as **Favorite api.example.test** and expose its pressed state.
 
 | Control | Immediate effect | Effect on Traffic |
 | --- | --- | --- |
 | Favorite star in either section | Add or remove the Favorite for this field across windows. | The current draft and applied selections keep their meaning. |
-| Checkbox under **Saved values** | Select a reusable term such as `*.domain.example` in the draft. | Participates in the saved selection on Apply. |
+| Checkbox under **Favorites** | Select a reusable term such as `*.domain.example` in the draft. | Participates in the saved selection on Apply. |
 | Checkbox under **Observed hosts** | Pick that exact hostname in the draft. | Participates in the picked selection on Apply. |
-| **Save and select** | Validate the entire paste, save its distinct values as Favorites, and check them in the saved selection. | Apply updates Traffic. |
+| **Save to Favorites** | Validate the entire paste and save its distinct values as Favorites, preserving checkbox selections. | Traffic remains unchanged. |
 | **Save and apply** | With pending text, validate and save first, then apply the draft in one action. | On success, update Traffic and close the picker. |
-| **Clear selection** | Clear both draft selections and checked additional requirements for this field. | Apply releases the field restriction. Favorites remain available. |
-| **Clear saved Host values** | Remove this field’s Favorites, including saved comparison terms. Report the count and offer **Undo**. | Existing selections and requirements retain their current values and roles. |
+| **Clear this field** | Clear both draft selections, checked additional requirements and input for this field. | Apply commits this change with the whole draft. Favorites remain available. |
+| **Clear all Host Favorites** | Remove this field’s Favorites, including saved comparison terms. Report the count and offer **Undo**. | Existing selections and requirements retain their current values and roles. |
 
-1. **Enter a list.** Put **Is in** directly in the Host picker, above the options. Accept comma- or newline-separated values even in empty Traffic or while counts load. Accept exact literals and Host wildcards together. Blank input adds nothing. A pending valid paste participates in the **After Apply** preview. For an invalid paste, keep the text, identify the offending item, and allow correction before committing any part of the batch.
-2. **Work with an outside host.** Keep **Saved values** above the searchable **Observed hosts** list. Clicking an observed star adds a saved row, initially unchecked. The observed row stays in place with its checkbox and focus intact. Its two accessible checkbox names distinguish **Use saved term api.example.test** from **Pick observed host api.example.test**. The same host may participate independently on both sides.
-3. **Remove a Favorite.** An active saved term keeps its value under **Selected for this filter** after the star is cleared. Identify it as a saved-selection term even when the Favorite is gone. Keep picked hosts accessible when option search or paging hides their rows. Clearing Favorites never transfers a selection from one side to the other. Undo restores removed Favorites and respects subsequent edits.
-4. **Apply or dismiss.** Checkbox changes, combination mode and enabled requirements are a per-window draft. Apply commits them. Escape discards the draft and unsubmitted text. Explicit successful Favorite actions survive dismissal. Restore focus to the opener. A chip describes the effective filter, for example **Host · 2 saved or 1 picked**. Remove or clear active filters without clearing Favorites. In Ignore mode, a saved selection alone produces no active-filter chip. Reopen the field to see the paused checkmarks.
-5. **Enter additional requirements.** Rename **Custom match** to **Also require**. A fresh field starts empty. The user chooses a comparison, enters a value and explicitly adds the condition. For example, **Host contains “cdn”** exists only after someone enters `cdn`. Save authored conditions by field, operator and canonical value, present them with individual enable controls, and keep them separate from **Is in** alternatives. All enabled Contains conditions must pass. Keep a single active Equals and one bound per endpoint. Selecting a different value preserves the prior authored value for reuse.
+1. **Enter a list.** Put **Is in** under **Add values** in the saved/custom group. Start this authoring disclosure open when no reusable values exist; otherwise keep idle authoring compact. Accept comma- or newline-separated values even in empty Traffic or while counts load. Accept exact literals and Host wildcards together. Blank input adds nothing. A pending valid paste participates in the complete **After Apply** preview. For an invalid paste, keep the text, identify the offending item, and allow correction before committing any part of the batch.
+2. **Work with an outside host.** Keep **Saved and custom hosts** above the searchable **Observed hosts** group, with **Combine groups** between them. Clicking an observed star adds a saved row, initially unchecked. The observed row stays in place with its checkbox and focus intact. Its two accessible checkbox names distinguish **Use saved term api.example.test** from **Pick observed host api.example.test**. The same host may participate independently on both sides.
+3. **Remove a Favorite.** An active saved term keeps its value under **Other filter values** after the star is cleared. Identify it as a saved-selection term even when the Favorite is gone. Keep picked hosts accessible when option search or paging hides their rows. Clearing Favorites never transfers a selection from one side to the other. Undo restores removed Favorites and respects subsequent edits.
+4. **Apply or dismiss.** Checkbox changes, combination mode and enabled requirements form one per-window draft across fields. Apply validates every edited field, saves pending pasted values atomically, and commits the whole draft. The preview includes all pending fields. Close, Escape, outside dismissal and field switching preserve drafts without prompting. Discard changes resets every field to its applied state; clearing all filters clears all drafts. The fixed footer, Filters button and field chooser expose unapplied state separately from applied filters. Explicit Favorite changes persist independently.
+5. **Enter additional requirements.** Put **Additional requirements** after both membership groups and state that all checked requirements must also match. A fresh field starts empty. The user chooses a comparison, enters a value and explicitly adds the condition. For example, **Host contains “cdn”** exists only after someone enters `cdn`. Save authored conditions by field, operator and canonical value, present them with individual enable controls, and keep them separate from **Is in** alternatives. All enabled Contains conditions must pass. Keep a single active Equals and one bound per endpoint. Selecting a different value preserves the prior authored value for reuse.
 
 ### One combination control per field
 
-Each nonempty selection matches any of its own checked terms. **Combine selections** applies to membership in this field. A Favorite star alone contributes no predicate.
+Each nonempty selection matches any of its own checked terms. **Combine groups** applies to membership in this field. A Favorite star alone contributes no predicate.
 
-| Saved selection | Picked selection | **Match either selection** (default) | **Match both selections** | **Ignore saved selection** |
+| Saved selection | Picked selection | **Match either group (OR)** (default) | **Match both groups (AND)** | **Use observed hosts only** |
 | --- | --- | --- | --- | --- |
 | Populated | Populated | Matches saved OR picked | Matches saved AND picked | Matches picked |
 | Populated | Empty | Matches saved | Matches saved | All pass membership |
 | Empty | Populated | Matches picked | Matches picked | Matches picked |
 | Empty | Empty | All pass membership | All pass membership | All pass membership |
 
-Apply enabled **Also require** conditions after the membership test, with AND. Other fields and the surrounding query scope also apply. Switching to Ignore retains the saved checkmarks. Adding Favorites or pasting while Ignore is selected preserves the mode. In Both mode, two nonempty disjoint sets legitimately return zero.
+Apply enabled **Additional requirements** conditions after the membership test, with AND. Other fields and the surrounding query scope also apply. Switching to Ignore retains the saved checkmarks. Adding Favorites or pasting while Ignore is selected preserves the mode. In Both mode, two nonempty disjoint sets legitimately return zero.
 
 ### Matching, inventory and feedback
 

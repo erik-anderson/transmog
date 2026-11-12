@@ -1,5 +1,10 @@
+import { fillFilterValues } from "./filter-picker-helpers.mjs";
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
+import { checkTrafficFilterDrafts } from "./check-traffic-filter-drafts.mjs";
+import { checkTrafficFilterGroups } from "./check-traffic-filter-groups.mjs";
+import { checkTrafficFilterEfficiency } from "./check-traffic-filter-efficiency.mjs";
+import { checkTrafficFilterReview } from "./check-traffic-filter-review.mjs";
 
 export async function checkTrafficSavedValues(
   page,
@@ -24,10 +29,10 @@ export async function checkTrafficSavedValues(
   const picked = (host) =>
     picker.getByRole("checkbox", { name: "Pick observed host " + host, exact: true });
   const reset = async (mode = "either", pick) => {
-    await picker.getByRole("button", { name: "Clear selection", exact: true }).click();
+    await picker.getByRole("button", { name: "Clear this field", exact: true }).click();
     await savedTerm("api.example.test").check();
     await savedTerm("*.domain.example").check();
-    await picker.getByLabel("Combine selections").selectOption(mode);
+    await picker.getByLabel("Combine groups").selectOption(mode);
     if (pick) await picked(pick).check();
   };
   try {
@@ -41,8 +46,9 @@ export async function checkTrafficSavedValues(
     });
     await open("host");
     assert.equal(await picker.locator(".filter-custom").evaluate((details) => details.open), false);
+    assert.equal(await picker.locator(".filter-combine").isVisible(), false);
     assert.equal(await picker.getByLabel("Is in", { exact: true }).isVisible(), false);
-    const customSettings = picker.getByText("Advanced filters", { exact: true });
+    const customSettings = picker.locator(".filter-custom > summary");
     await customSettings.focus();
     await page.keyboard.press("Enter");
     assert.equal(await picker.getByRole("checkbox", { name: /^Require / }).count(), 0);
@@ -58,12 +64,13 @@ export async function checkTrafficSavedValues(
       true,
     );
     assert.deepEqual(
-      await picker.getByLabel("Combine selections").locator("option").allTextContents(),
-      ["Match either list", "Require a match in both lists", "Use observed values only"],
+      await picker.getByLabel("Combine groups").locator("option").allTextContents(),
+      ["Match either group (OR)", "Match both groups (AND)", "Use observed hosts only"],
     );
-    await picker
-      .getByLabel("Is in", { exact: true })
-      .fill("API.EXAMPLE.TEST., *.domain.example, future.example.test, api.example.test");
+    await fillFilterValues(
+      picker,
+      "API.EXAMPLE.TEST., *.domain.example, future.example.test, api.example.test",
+    );
     assert.equal(
       await picker.locator(".filter-list-entry label > span").innerText(),
       "Is in (values separated by commas or newlines)",
@@ -106,7 +113,7 @@ export async function checkTrafficSavedValues(
     assert.equal(
       await picker.locator(".filter-custom").evaluate((details) => details.open),
       true,
-      "Saved values did not expand Advanced filters",
+      "Favorite values did not expand the saved/custom group",
     );
     await customSettings.click();
     await page.evaluate(async () => {
@@ -124,7 +131,7 @@ export async function checkTrafficSavedValues(
     await preview(5);
     await picked("domain.example").check();
     await preview(5);
-    await picker.getByRole("button", { name: "Cancel", exact: true }).click();
+    await picker.getByRole("button", { name: "Discard changes", exact: true }).click();
     await settle();
     assert.equal(
       await page.evaluate(() => document.querySelector("app-shell").traffic.totalMatched),
@@ -142,7 +149,8 @@ export async function checkTrafficSavedValues(
       5,
     );
     await open("host");
-    assert.equal(await picked("domain.example").isChecked(), false);
+    assert.equal(await picked("domain.example").isChecked(), true);
+    await picked("domain.example").uncheck();
     for (const host of ["domain.example", "cdn.domain.example", "eu.cdn.domain.example"])
       assert.match(
         await picked(host).locator("..").locator("..").textContent(),
@@ -202,7 +210,7 @@ export async function checkTrafficSavedValues(
     await reset("both", "domain.example");
     await savedTerm("domain.example").check();
     await preview(1);
-    await picker.getByLabel("Combine selections").selectOption("either");
+    await picker.getByLabel("Combine groups").selectOption("either");
     await preview(5);
     await reset();
     await page.evaluate(() => {
@@ -222,17 +230,22 @@ export async function checkTrafficSavedValues(
       void t.loadFacets();
     });
     await wait();
-    if (!(await picker.locator(".filter-custom").evaluate((details) => details.open))) {
-      await picker.locator(".filter-custom summary").click();
+    if (!(await picker.locator(".filter-requirements").evaluate((details) => details.open))) {
+      await picker.locator(".filter-requirements summary").click();
     }
     await page.evaluate(() => document.querySelector("app-shell").traffic.loadFacets());
     assert.equal(
-      await picker.locator(".filter-custom").evaluate((details) => details.open),
+      await picker.locator(".filter-requirements").evaluate((details) => details.open),
       true,
       "Counts collapsed the authored requirement editor",
     );
+    await openRequirements(picker);
     await picker.getByLabel("Column filter value").fill("cdn");
-    await preview(5);
+    await wait();
+    assert.match(
+      await picker.locator(".filter-preview").innerText(),
+      /Finish or correct pending fields/,
+    );
     await picker.getByRole("button", { name: "Add requirement", exact: true }).click();
     await preview(2);
     await apply();
@@ -241,8 +254,8 @@ export async function checkTrafficSavedValues(
       2,
     );
     await open("host");
-    await picker.getByRole("button", { name: "Clear selection", exact: true }).click();
-    await picker.getByLabel("Is in", { exact: true }).fill("ok.test, bad:443");
+    await picker.getByRole("button", { name: "Clear this field", exact: true }).click();
+    await fillFilterValues(picker, "ok.test, bad:443");
     await picker.getByRole("button", { name: "Save and apply", exact: true }).click();
     assert.match(
       await picker
@@ -255,7 +268,7 @@ export async function checkTrafficSavedValues(
       await picker.getByLabel("Is in", { exact: true }).inputValue(),
       "ok.test, bad:443",
     );
-    await picker.getByLabel("Is in", { exact: true }).fill("retry.example.test");
+    await fillFilterValues(picker, "retry.example.test");
     await page.evaluate(() => (globalThis.__workspaceFixture.favoriteWriteError = true));
     await picker.getByRole("button", { name: "Save and apply", exact: true }).click();
     assert.equal(
@@ -267,7 +280,7 @@ export async function checkTrafficSavedValues(
       2,
     );
     await page.evaluate(() => (globalThis.__workspaceFixture.favoriteWriteError = false));
-    await picker.getByRole("button", { name: "Save and select", exact: true }).click();
+    await saveAndSelect(page, picker);
     await wait();
     await reset();
     await savedTerm("api.example.test")
@@ -284,19 +297,19 @@ export async function checkTrafficSavedValues(
       true,
     );
     await preview(5);
-    await picker.getByRole("button", { name: "Clear saved Host values", exact: true }).click();
+    await picker.getByRole("button", { name: "Clear all Host Favorites", exact: true }).click();
     await wait();
     await preview(5);
-    await picker.getByLabel("Is in", { exact: true }).fill("intervening.test");
-    await picker.getByRole("button", { name: "Save and select", exact: true }).click();
+    await fillFilterValues(picker, "intervening.test");
+    await saveAndSelect(page, picker);
     await wait();
     await picker.getByRole("button", { name: "Undo", exact: true }).click();
     await wait();
     assert.equal(await savedTerm("intervening.test").isChecked(), true);
     await page.evaluate(() => (globalThis.__workspaceFixture.deferFacets = true));
-    await picker.getByLabel("Is in", { exact: true }).fill("first.test");
+    await fillFilterValues(picker, "first.test");
     await page.waitForFunction(() => globalThis.__workspaceFixture.facetPending);
-    await picker.getByLabel("Is in", { exact: true }).fill("newer.test");
+    await fillFilterValues(picker, "newer.test");
     await page.evaluate(() => globalThis.__workspaceFixture.releaseFacets());
     await preview(5);
     assert.equal(await picker.getByLabel("Is in", { exact: true }).inputValue(), "newer.test");
@@ -308,10 +321,10 @@ export async function checkTrafficSavedValues(
     );
     await page.keyboard.press("Escape");
     await open("host");
-    assert.equal(await picker.getByLabel("Is in", { exact: true }).inputValue(), "");
+    assert.equal(await picker.getByLabel("Is in", { exact: true }).inputValue(), "newer.test");
     const overLimit = Array.from({ length: 129 }, (_, index) => `host-${index}.test`).join(",");
-    await picker.getByLabel("Is in", { exact: true }).fill(overLimit);
-    await picker.getByRole("button", { name: "Save and select", exact: true }).click();
+    await fillFilterValues(picker, overLimit);
+    await picker.getByRole("button", { name: "Save and apply", exact: true }).click();
     assert.equal(await picker.getByLabel("Is in", { exact: true }).inputValue(), overLimit);
     assert.match(
       await picker
@@ -336,9 +349,7 @@ export async function checkTrafficSavedValues(
         .textContent(),
       "0",
     );
-    await picker
-      .getByLabel("Is in", { exact: true })
-      .fill("exact-domain.example, *.include-subdomains.example");
+    await fillFilterValues(picker, "exact-domain.example, *.include-subdomains.example");
     for (const [width, height] of [
       [1440, 900],
       [960, 720],
@@ -397,6 +408,10 @@ export async function checkTrafficSavedValues(
       animations: "disabled",
     });
     await page.emulateMedia({ forcedColors: "none" });
+    await checkTrafficFilterDrafts(page, root, { traffic, picker, open, settle });
+    await checkTrafficFilterGroups(page, root, { picker, open, wait, preview });
+    await checkTrafficFilterEfficiency(page, root, { picker, open, wait, settle });
+    await checkTrafficFilterReview(page, root, { traffic, picker, open, wait, settle });
     await checkFavoriteReviewRegressions(page, { picker, open, wait, settle });
     await checkPickerPresentation(page, { picker, open, wait, apply });
     await checkRetainedChoiceCounts(page, { picker, open, wait, preview });
@@ -527,22 +542,22 @@ async function checkPickerPresentation(page, { picker, open, wait, apply }) {
   await picker.getByRole("checkbox", { name: "POST", exact: true }).check();
   assert.equal(
     await field.locator('[value="method"]').textContent(),
-    "Method",
-    "An unapplied draft marked a field as filtered",
+    "Method · Unapplied changes",
+    "The field chooser did not identify its unapplied draft",
   );
-  await picker.getByRole("button", { name: "Cancel", exact: true }).click();
+  await picker.getByRole("button", { name: "Discard changes", exact: true }).click();
   await open("process");
   await picker.locator(".filter-custom > summary").click();
   assert.equal(
     await picker.getByLabel("Is in", { exact: true }).getAttribute("placeholder"),
     "Enter one literal value; commas are kept",
   );
-  await picker.getByLabel("Is in", { exact: true }).fill("app,helper.exe");
+  await fillFilterValues(picker, "app,helper.exe");
   assert.equal(
     await picker.locator(".filter-list-entry label > span").innerText(),
     "Is in (one literal value; commas are kept)",
   );
-  await picker.getByRole("button", { name: "Cancel", exact: true }).click();
+  await picker.getByRole("button", { name: "Discard changes", exact: true }).click();
   await page.evaluate(async () => {
     const t = document.querySelector("app-shell").traffic;
     await t.clearFilters();
@@ -619,13 +634,12 @@ async function checkRetainedChoiceCounts(page, { picker, open, wait, preview }) 
     await open("method");
     await wait();
     await picker.locator(".filter-custom > summary").click();
-    await picker.getByRole("button", { name: "Clear selection", exact: true }).click();
-    await picker
-      .getByLabel("Is in", { exact: true })
-      .fill(
-        Array.from({ length: 128 }, (_, index) => "Z" + String(index).padStart(3, "0")).join(","),
-      );
-    await picker.getByRole("button", { name: "Save and select", exact: true }).click();
+    await picker.getByRole("button", { name: "Clear this field", exact: true }).click();
+    await fillFilterValues(
+      picker,
+      Array.from({ length: 128 }, (_, index) => "Z" + String(index).padStart(3, "0")).join(","),
+    );
+    await saveAndSelect(page, picker);
     await preview(128, 256);
     const count = (name) =>
       picker
@@ -686,10 +700,12 @@ async function checkPickerEditingReview(page, { picker, open, wait, apply }) {
       findings.push(
         "Use exact value leaves its selected zero-count choice hidden under collapsed More values",
       );
+    await patch.uncheck();
     await picker.getByLabel("Filter field", { exact: true }).selectOption("host");
     await wait();
     await picker.locator(".filter-custom > summary").click();
-    await picker.getByLabel("Is in", { exact: true }).fill("editing-review.test");
+    await fillFilterValues(picker, "editing-review.test");
+    await wait();
     const cdp = await page.context().newCDPSession(page);
     try {
       const ax = await cdp.send("Accessibility.getFullAXTree");
@@ -704,7 +720,7 @@ async function checkPickerEditingReview(page, { picker, open, wait, apply }) {
     } finally {
       await cdp.detach();
     }
-    await picker.getByRole("button", { name: "Save and select", exact: true }).click();
+    await saveAndSelect(page, picker);
     await wait();
     await picker
       .getByRole("group", { name: "Saved values", exact: true })
@@ -829,7 +845,9 @@ async function checkFavoriteReviewRegressions(page, { picker, open, wait, settle
   });
   await open("host");
   await wait();
+  await openRequirements(picker);
   await picker.getByLabel("Filter comparison").selectOption("equals");
+  await openRequirements(picker);
   await picker.getByLabel("Column filter value").fill("future.example.test");
   await picker.getByRole("button", { name: "Add requirement", exact: true }).click();
   await wait();
@@ -840,7 +858,9 @@ async function checkFavoriteReviewRegressions(page, { picker, open, wait, settle
     true,
     "Replacing Equals at the requirement limit was rejected",
   );
+  await openRequirements(picker);
   await picker.getByLabel("Filter comparison").selectOption("contains");
+  await openRequirements(picker);
   await picker.getByLabel("Column filter value").fill("cdn");
   await picker.getByRole("button", { name: "Add requirement", exact: true }).click();
   assert.match(
@@ -871,6 +891,7 @@ async function checkFavoriteReviewRegressions(page, { picker, open, wait, settle
   });
   await open("host");
   await wait();
+  await openRequirements(picker);
   await picker.getByLabel("Filter comparison").selectOption("contains");
   await page.evaluate(() => {
     const t = document.querySelector("app-shell").traffic,
@@ -880,6 +901,7 @@ async function checkFavoriteReviewRegressions(page, { picker, open, wait, settle
     s.favoriteOperation = t.addRequirement();
   });
   await page.waitForFunction(() => globalThis.__workspaceFixture.favoriteWritePending);
+  await openRequirements(picker);
   await picker.getByLabel("Column filter value").fill("next requirement");
   await page.evaluate(async () => {
     const s = globalThis.__workspaceFixture;
@@ -903,6 +925,7 @@ async function checkFavoriteReviewRegressions(page, { picker, open, wait, settle
     s.favoriteOperation = t.addRequirement();
   });
   await page.waitForFunction(() => globalThis.__workspaceFixture.favoriteWritePending);
+  await openRequirements(picker);
   await picker.getByLabel("Filter comparison").selectOption("equals");
   await page.evaluate(async () => {
     const s = globalThis.__workspaceFixture;
@@ -955,4 +978,31 @@ async function checkFavoriteReviewRegressions(page, { picker, open, wait, settle
     t.closePicker();
     await t.clearFilters();
   });
+}
+
+// Exercise saving independently, then explicitly select the saved rows when a
+// scenario needs both actions.
+async function saveAndSelect(page, picker) {
+  const values = await page.evaluate(() => {
+    const t = document.querySelector("app-shell").traffic;
+    return t.previewSavedValues().map((value) => JSON.stringify(value));
+  });
+  await picker.getByRole("button", { name: "Save to Favorites", exact: true }).click();
+  await page.waitForFunction(() => !document.querySelector("app-shell").traffic.pickerSaving);
+  const labels = await page.evaluate((values) => {
+    const t = document.querySelector("app-shell").traffic;
+    return [...t.pickerSavedOptions, ...t.pickerSelectedOptions]
+      .filter((row) => values.includes(JSON.stringify(row.value)))
+      .map((row) => row.label);
+  }, values);
+  assert.equal(labels.length, values.length);
+  for (const label of labels) {
+    await picker.getByRole("checkbox", { name: "Use saved term " + label, exact: true }).check();
+  }
+}
+
+async function openRequirements(picker) {
+  if (!(await picker.locator(".filter-requirements").evaluate((details) => details.open))) {
+    await picker.locator(".filter-requirements > summary").click();
+  }
 }

@@ -42,6 +42,8 @@ pub struct ClassificationFacetPage {
     pub options: Vec<crate::TrafficFacetOption>,
     /// Candidate entries with this column unrestricted.
     pub matching_entries: usize,
+    /// Entries matching the complete draft, including this column's selection.
+    pub draft_entries: usize,
     /// Entries that could not be classified within metadata limits.
     pub omitted_entries: usize,
 }
@@ -362,6 +364,13 @@ impl Application {
         query.focus_id = None;
         query.sort = None;
         let ids = self.matching_traffic_ids(&query)?;
+        let draft = request
+            .query
+            .extension_filters
+            .iter()
+            .find(|filter| filter.column == request.column && !filter.values.is_empty())
+            .map(|filter| filter.prepare(&prepared.columns[0].1));
+        let mut draft_entries = if draft.is_none() { ids.len() } else { 0 };
         let mut counts = BTreeMap::<String, (String, usize)>::new();
         for value in &prepared.columns[0].1.values {
             counts
@@ -381,6 +390,9 @@ impl Application {
                 continue;
             }
             let labels = &row.values[&request.column];
+            if draft.as_ref().is_some_and(|filter| filter.matches(&row)) {
+                draft_entries += 1;
+            }
             if labels.is_empty() {
                 unmatched += 1;
             }
@@ -414,6 +426,7 @@ impl Application {
         Ok(ClassificationFacetPage {
             options,
             matching_entries: ids.len(),
+            draft_entries,
             omitted_entries,
         })
     }

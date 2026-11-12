@@ -539,7 +539,13 @@ async function checkAdvancedReviewFixes(page, traffic, picker, open, apply, sett
     const t = document.querySelector("app-shell").traffic;
     t.clearTrafficSelection();
     t.followLatest = true;
-    await t.refreshSessions(undefined, true);
+    await t.clearFilters();
   });
   await settle();
+}
+
+async function openRequirements(picker) {
+  if (!(await picker.locator(".filter-requirements").evaluate((details) => details.open))) {
+    await picker.locator(".filter-requirements > summary").click();
+  }
 }

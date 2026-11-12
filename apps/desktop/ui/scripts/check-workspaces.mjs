@@ -2769,7 +2769,12 @@ await page.addInitScript(
             });
             state.extensionFacetRequests ??= [];
             state.extensionFacetRequests.push(structuredClone(args.request));
-            return { options, matchingEntries: rows.length, omittedEntries: 0 };
+            return {
+              options,
+              matchingEntries: rows.length,
+              draftEntries: trafficRows(query).length,
+              omittedEntries: 0,
+            };
           }
           case "traffic_favorites": {
             const all = (state.favorites ?? [])
@@ -5898,7 +5903,7 @@ try {
     .locator("#column-actions")
     .getByRole("button", { name: "Filter Status…", exact: true })
     .click();
-  await page.locator("#traffic-filter-picker .filter-custom summary").click();
+  await page.locator("#traffic-filter-picker .filter-requirements summary").click();
   await page.getByRole("textbox", { name: "Column filter value" }).fill("304");
   await page
     .locator("#traffic-filter-picker")

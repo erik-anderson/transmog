@@ -70,7 +70,7 @@ export async function checkFilterCoverage(
     /HTTP\/2\.0/,
   );
   await open("protocol");
-  await picker.getByRole("button", { name: "Clear selection", exact: true }).click();
+  await picker.getByRole("button", { name: "Clear this field", exact: true }).click();
   await picker.getByRole("checkbox", { name: "Other", exact: true }).check();
   await apply();
   assert.equal(

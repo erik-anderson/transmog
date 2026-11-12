@@ -29,7 +29,12 @@ export async function checkTrafficFilters(page, root) {
       return !t.queryPending && !t.rowRequests.size && t.sessions.every((row) => !row.loading);
     });
   const open = async (dimension) => {
-    await traffic.getByRole("button", { name: /^Filters(?: \(\d+\))?$/, exact: false }).click();
+    await traffic
+      .getByRole("button", {
+        name: /^Filters(?: \(\d+\))?(?: · Unapplied changes)?$/,
+        exact: false,
+      })
+      .click();
     await picker.getByLabel("Filter field", { exact: true }).selectOption(dimension);
     await page.waitForFunction(() => !document.querySelector("app-shell").traffic.pickerLoading);
   };
@@ -304,8 +309,8 @@ export async function checkTrafficFilters(page, root) {
       .getByRole("button", { name: "Filter Method…", exact: true })
       .click();
     assert.equal(await picker.getByLabel("Filter field", { exact: true }).inputValue(), "method");
-    await picker.getByRole("button", { name: "Clear selection", exact: true }).click();
-    await picker.locator(".filter-custom summary").click();
+    await picker.getByRole("button", { name: "Clear this field", exact: true }).click();
+    await picker.locator(".filter-requirements summary").click();
     await picker.getByLabel("Column filter value", { exact: true }).fill("PO");
     await picker.getByRole("button", { name: "Add requirement", exact: true }).click();
     await apply();
@@ -314,7 +319,7 @@ export async function checkTrafficFilters(page, root) {
       225,
     );
     await traffic.getByRole("button", { name: /^Edit Method:/ }).click();
-    assert.match(await picker.locator(".filter-custom").textContent(), /contains “po”/);
+    assert.match(await picker.locator(".filter-requirements").textContent(), /contains “po”/);
     await page.keyboard.press("Escape");
     assert.equal(
       await traffic

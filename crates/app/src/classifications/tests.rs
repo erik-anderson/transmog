@@ -191,6 +191,7 @@ fn retained_classifications_use_both_client_heads_without_loading_code_or_bodies
         })
         .unwrap();
     assert_eq!(counts.matching_entries, 2);
+    assert_eq!(counts.draft_entries, 1);
     assert_eq!(counts.omitted_entries, 0);
     assert_eq!(
         counts
