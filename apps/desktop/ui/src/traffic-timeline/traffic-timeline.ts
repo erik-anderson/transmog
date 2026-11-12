@@ -62,6 +62,7 @@ export class TrafficTimeline extends WebUIElement {
   private markerNavigation = false;
   private order = "start";
   private rowHeight = 32;
+  private lastViewport: { scroll: number; height: number; rowHeight: number } | null = null;
   private rebuildPending = false;
   private drag: {
     pointer: number;
@@ -77,7 +78,7 @@ export class TrafficTimeline extends WebUIElement {
   } | null = null;
 
   protected hydratedCallback(): void {
-    this.observer = new ResizeObserver(() => this.renderRows());
+    this.observer = new ResizeObserver(() => this.resizeRows());
     this.observer.observe(this.viewport);
     this.observer.observe(this.rowMetric);
     this.rebuild();
@@ -314,6 +315,26 @@ export class TrafficTimeline extends WebUIElement {
       }
     }
   }
+  private resizeRows(): void {
+    const root = this.getRootNode(),
+      active = root instanceof ShadowRoot ? root.activeElement : document.activeElement,
+      id =
+        active instanceof HTMLElement && this.contains(active) && active.matches(".timeline-row")
+          ? active.dataset.id
+          : undefined,
+      index = id ? this.matching.findIndex((row) => row.id === id) : -1,
+      before = this.lastViewport;
+    // A resize must keep a visible keyboard target in view without undoing a manual scroll.
+    const keepVisible =
+      before &&
+      index >= 0 &&
+      index * before.rowHeight >= before.scroll - 1 &&
+      (index + 1) * before.rowHeight <= before.scroll + before.height + 1;
+    this.renderRows();
+    if (keepVisible && id) {
+      this.reveal(id);
+    }
+  }
   renderRows(scroll = this.viewport?.scrollTop ?? 0): void {
     // The CSS metric tracks rem-based density even when only text size changes.
     const measured = this.rowMetric?.getClientRects().length
@@ -391,6 +412,7 @@ export class TrafficTimeline extends WebUIElement {
         this.viewport.scrollTop = scroll;
       }
     }
+    this.lastViewport = { scroll: this.viewport?.scrollTop ?? scroll, height, rowHeight };
   }
   inspect(id: string): void {
     this.$emit("timeline-inspect", id);

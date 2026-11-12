@@ -740,6 +740,55 @@ export async function checkTrafficTimeline(page, root) {
       await page.evaluate(() => document.querySelector("app-shell").traffic.selectedTrafficCount),
       0,
     );
+    await timeline.locator(".timeline-viewport").focus();
+    await page.keyboard.press("End");
+    await page.setViewportSize({ width: 1440, height: 760 });
+    await page.waitForFunction(() => {
+      const element = document.querySelector("app-shell").traffic.timeline,
+        row = element.querySelector("#timeline-tl-load-9999"),
+        box = row?.getBoundingClientRect(),
+        viewport = element.viewport.getBoundingClientRect();
+      return (
+        element.getRootNode().activeElement === row &&
+        box.top >= viewport.top - 1 &&
+        box.bottom <= viewport.bottom + 1
+      );
+    });
+    assert.equal(
+      await timeline.evaluate((element) => element.getRootNode().activeElement?.id),
+      "timeline-tl-load-9999",
+      "Resize moved keyboard focus away from its timeline request",
+    );
+    await page.screenshot({
+      path: resolve(root, "../../../target/ui-check/traffic-timeline-resize-focused.png"),
+    });
+    await timeline
+      .locator(".timeline-viewport")
+      .evaluate((element) => (element.scrollTop -= 3 * 32));
+    await page.evaluate(
+      () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
+    );
+    const manuallyScrolled = await timeline
+      .locator(".timeline-viewport")
+      .evaluate((element) => element.scrollTop);
+    await page.setViewportSize({ width: 1440, height: 720 });
+    await page.evaluate(
+      () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
+    );
+    assert.ok(
+      Math.abs(
+        (await timeline.locator(".timeline-viewport").evaluate((element) => element.scrollTop)) -
+          manuallyScrolled,
+      ) < 1,
+      "Resize undid a deliberate manual timeline scroll",
+    );
+    const searchInput = traffic.getByLabel("Filter or search traffic", { exact: true });
+    await searchInput.focus();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.evaluate(
+      () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
+    );
+    assert.equal(await searchInput.evaluate((element) => element.matches(":focus")), true);
     // Text sizing changes rem lengths without applying browser zoom to pixels.
     for (const size of ["20px", "24px", "17.5px"]) {
       await page.evaluate((size) => (document.documentElement.style.fontSize = size), size);
