@@ -719,6 +719,8 @@ textarea {
   list-style: none;
   padding: 0;
   margin: 0;
+  max-height: 8rem;
+  overflow: auto;
 }
 .call-stack button {
   display: grid;
@@ -773,6 +775,13 @@ textarea {
 .watch > button {
   border: 0;
   padding: 0 0.2rem;
+}
+@container (min-width: 620px) and (max-width: 1000px) {
+  .toolbar { gap: .25rem; }
+  .toolbar > strong { display: none; }
+  .status select { max-width: 19rem; }
+  .source-pane > header { gap: .25rem; }
+  .source-pane > header button { font-size: .75rem; padding: .2rem .35rem; }
 }
 .debug-inline-value {
   color: var(--muted);

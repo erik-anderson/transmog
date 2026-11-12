@@ -719,6 +719,7 @@ impl Session {
         let pause = match &action {
             DebugAction::Evaluate { pause, .. }
             | DebugAction::Inspect { pause, .. }
+            | DebugAction::SetValue { pause, .. }
             | DebugAction::Complete { pause, .. }
             | DebugAction::Resume { pause, .. }
             | DebugAction::ContinueTo { pause, .. }

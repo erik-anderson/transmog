@@ -185,6 +185,14 @@ when changing the experience.
   in scrollable trees, with expandable ranges for large collections. Automatic
   previews and watches reject side effects; property inspection and completion
   never run getters or proxy traps. Explicit Console commands may change the worker.
+  Edit runtime values directly at the inspected binding or own writable property;
+  replacement expressions reject side effects. Keep failed edit drafts and explain
+  read-only values. Refresh inspection after explicit commands and edits, preserving
+  expanded paths, reading position and useful focus through stepping. Presentation
+  memory never reuses expired runtime handles. Separate editing a Watch expression,
+  changing a runtime value and opening the current script draft.
+  Use 1024×768 as the practical docked debugger baseline, with resizing and undocking
+  available when the user needs more room for code and variables.
   Expire values when their execution scope changes, and keep ordinary Console
   output readable with technical identifiers behind details.
   Show ordinary Console logs, warnings and errors by default. Let users combine

@@ -1,5 +1,10 @@
 import type { DebugAction, DebugEvent, DebugValue } from "./models.js";
-import { PropertyTree, type PropertyRow } from "./properties.js";
+import {
+  isCompletePropertyPath,
+  PropertyTree,
+  valuePreview,
+  type PropertyRow,
+} from "./properties.js";
 
 export interface InspectionScope {
   generation?: number;
@@ -20,10 +25,44 @@ export interface ValueView {
   expired: boolean;
   loading: boolean;
   issue: string;
+  preview: string;
+  editable: boolean;
+  epoch: string;
+  restoring: boolean;
+}
+export interface InspectionState {
+  open: boolean;
+  paths: string[][];
+  values: Array<[string, string]>;
+  pages?: Array<[string[], number]>;
+}
+export interface ValueEditRequest {
+  key: string;
+  row: PropertyRow;
+  expression: string;
+  reply: (issue: string) => void;
+}
+export interface ValueWatchRequest {
+  key: string;
+  row: PropertyRow;
+}
+export interface ValueEditDraft {
+  key: string;
+  label: string;
+  epoch: string;
+  path: string[];
+  text: string;
+  issue?: string;
+}
+export interface ValueEditOutcome {
+  issue: string;
+  refresh: boolean;
 }
 interface Root {
   view: ValueView;
   tree: PropertyTree;
+  previous?: Map<string, string>;
+  restoration?: InspectionState;
   scope: InspectionScope;
 }
 interface Pending {
@@ -96,12 +135,184 @@ export class Inspection {
       expired: false,
       loading: false,
       issue: "",
+      preview: valuePreview(value),
+      editable: scope.pause > 0 && scope.frame !== null,
+      epoch: JSON.stringify(scope),
+      restoring: false,
     };
     this.roots.set(key, { view, tree: new PropertyTree(), scope });
     return view;
   }
   get(key: string): ValueView | undefined {
     return this.roots.get(key)?.view;
+  }
+  capture(key: string): InspectionState | undefined {
+    const root = this.roots.get(key);
+    if (!root) {
+      return;
+    }
+    if (root.view.restoring && root.restoration) {
+      return { ...root.restoration, open: root.view.expanded };
+    }
+    const unique = new Set<string>();
+    const ambiguous = new Set<string>();
+    for (const row of root.view.rows) {
+      const path = JSON.stringify(row.path);
+      if (unique.has(path)) {
+        ambiguous.add(path);
+      }
+      unique.add(path);
+    }
+    let valueBudget = 32768;
+    let pathBudget = 32768;
+    const pages = new Map<string, number>();
+    for (const row of root.view.rows) {
+      if (row.propertyIndex === undefined) {
+        continue;
+      }
+      const parent = JSON.stringify(row.path.slice(0, -1));
+      pages.set(parent, Math.max(pages.get(parent) ?? 0, row.propertyIndex + 1));
+    }
+    return {
+      open: root.view.expanded,
+      paths: root.view.rows
+        .filter(
+          (row) =>
+            row.expanded &&
+            isCompletePropertyPath(row.path) &&
+            !ambiguous.has(JSON.stringify(row.path)) &&
+            (pathBudget -= JSON.stringify(row.path).length) >= 0,
+        )
+        .slice(0, 64)
+        .map((row) => row.path),
+      values: root.view.rows
+        .filter(
+          (row) =>
+            row.propertyIndex !== undefined &&
+            isCompletePropertyPath(row.path) &&
+            !ambiguous.has(JSON.stringify(row.path)) &&
+            (valueBudget -= JSON.stringify(row.path).length + row.preview.length) >= 0,
+        )
+        .slice(0, 256)
+        .map((row) => [JSON.stringify(row.path), valuePreview(row.value)]),
+      pages: [...pages].slice(0, 64).map(([path, count]) => [JSON.parse(path) as string[], count]),
+    };
+  }
+  private rows(root: Root): PropertyRow[] {
+    return root.tree.rows().map((row) => ({
+      ...row,
+      changed:
+        root.previous?.has(JSON.stringify(row.path)) === true &&
+        root.previous.get(JSON.stringify(row.path)) !== row.preview,
+    }));
+  }
+  async restore(key: string, state: InspectionState): Promise<void> {
+    const root = this.roots.get(key);
+    if (!root) {
+      return;
+    }
+    root.previous = new Map(state.values);
+    if (!state.open) {
+      return;
+    }
+    root.view.restoring = true;
+    root.restoration = state;
+    let reads = 0;
+    const current = (): boolean =>
+      this.roots.get(key) === root && this.valid(root.scope) && root.view.expanded;
+    const pages = async (): Promise<void> => {
+      for (const [path, count] of state.pages ?? []) {
+        while (current() && reads < 64 && !root.view.issue) {
+          const more = root.view.rows.find(
+            (row) =>
+              row.offset !== undefined &&
+              row.offset < count &&
+              JSON.stringify(row.path.slice(0, -1)) === JSON.stringify(path),
+          );
+          if (!more) {
+            break;
+          }
+          reads++;
+          await this.toggle(key, more);
+        }
+      }
+    };
+    try {
+      await this.toggle(key);
+      await pages();
+      for (const path of [...state.paths].sort((a, b) => a.length - b.length)) {
+        if (!isCompletePropertyPath(path)) {
+          continue;
+        }
+        if (!current() || reads >= 64) {
+          return;
+        }
+        let matches = root.view.rows.filter(
+          (row) => JSON.stringify(row.path) === JSON.stringify(path),
+        );
+        while (!matches.length && current() && reads < 64 && !root.view.issue) {
+          const more = root.view.rows.find(
+            (row) =>
+              row.offset !== undefined &&
+              JSON.stringify(row.path.slice(0, -1)) === JSON.stringify(path.slice(0, -1)),
+          );
+          if (!more) {
+            break;
+          }
+          reads++;
+          await this.toggle(key, more);
+          matches = root.view.rows.filter(
+            (row) => JSON.stringify(row.path) === JSON.stringify(path),
+          );
+        }
+        const row = matches.length === 1 ? matches[0] : undefined;
+        if (row?.expandable && !row.expanded) {
+          reads++;
+          await this.toggle(key, row);
+          await pages();
+        }
+      }
+    } finally {
+      root.view.restoring = false;
+      delete root.restoration;
+      if (this.roots.get(key) === root) {
+        this.changed();
+      }
+    }
+  }
+  async edit(key: string, row: PropertyRow, expression: string): Promise<ValueEditOutcome> {
+    const root = this.roots.get(key);
+    if (!root || !this.valid(root.scope) || !root.view.editable || !row.writable) {
+      return { issue: "This value is read-only or no longer available.", refresh: false };
+    }
+    const property = root.tree.property(row);
+    if (
+      !property ||
+      !root.view.rows.some(
+        (current) =>
+          current.key === row.key && JSON.stringify(current.path) === JSON.stringify(row.path),
+      )
+    ) {
+      return { issue: "This property is no longer available.", refresh: false };
+    }
+    const event = await this.request(
+      {
+        kind: "set-value",
+        pause: root.scope.pause,
+        frame: root.scope.frame!,
+        ...property,
+        expression,
+      },
+      root.scope,
+    );
+    return event?.kind === "acknowledged"
+      ? { issue: "", refresh: true }
+      : event?.kind === "rejected"
+        ? { issue: event.message, refresh: false }
+        : {
+            issue: "The edit could not be confirmed. Inspect the current value before retrying.",
+            refresh: true,
+          };
   }
   leases(): ValueLease[] {
     const groups = new Map<string, { scope: InspectionScope; handles: Set<number> }>();
@@ -231,7 +442,7 @@ export class Inspection {
         return;
       }
       root.tree.update(row, event.value);
-      root.view.rows = root.tree.rows();
+      root.view.rows = this.rows(root);
       if (!event.value.handle) {
         root.view.issue = ["object", "array", "function"].includes(event.value.kind)
           ? "Collapse another value before expanding this one."
@@ -274,7 +485,7 @@ export class Inspection {
       ]);
     };
     releaseRemoved(before);
-    root.view.rows = root.tree.rows();
+    root.view.rows = this.rows(root);
     if (branch) {
       root.view.loading = true;
       root.view.issue = "Loading…";
@@ -323,7 +534,7 @@ export class Inspection {
       if (event?.kind === "properties" || event?.kind === "property-preview") {
         root.view.issue = "";
         root.tree.receive(branch.key, event.properties, event.offset, event.next, event.total);
-        root.view.rows = root.tree.rows();
+        root.view.rows = this.rows(root);
       } else if (event?.kind === "rejected") {
         root.view.issue = event.message;
       } else {

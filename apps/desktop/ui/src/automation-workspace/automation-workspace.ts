@@ -1466,7 +1466,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   }
   userAgentOverrides!: UserAgentOverrides;
   @observable headerOverrideCount = 0;
-  scriptEditor!: ScriptEditor;
+  scriptAuthoring!: ScriptEditor;
   @attr view = "traffic";
   @attr theme = "system";
   @observable automationSection = "responses";

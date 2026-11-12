@@ -92,6 +92,7 @@ fn property_previews_enforce_the_requested_range_and_do_not_accept_value_handles
         })
         .unwrap();
     let property = crate::debugger::DebugProperty {
+        writable: false,
         name: "item".into(),
         value: crate::debugger::DebugValue {
             kind: "object".into(),

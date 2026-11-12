@@ -398,7 +398,8 @@
             @click="{navigateHistory(1)}"
           >
             →</button
-          ><span class="source-label" title="{{debuggerSourceLabel}}">{{debuggerSourceLabel}}</span
+          ><span class="source-label" title="{{debuggerSourceLabel}}">{{debuggerSourceLabel}}</span>
+          <if condition="debuggerCanEditScript"><button type="button" class="secondary" title="Open the current script draft; runtime source stays unchanged" @click="{editScript()}">Edit script</button></if
           ><select
             aria-label="Source representation"
             ?disabled="{{!debuggerCanSwitch}}"
@@ -456,6 +457,9 @@
         class="variables"
         aria-label="Call stack and variables"
         @inspect-toggle="{inspectionToggled(e)}"
+        @inspect-edit="{inspectionEdited(e)}"
+        @inspect-watch="{inspectionWatch(e)}"
+        @inspect-edit-draft="{inspectionDraft(e)}"
       >
         <button
           type="button"
@@ -491,6 +495,10 @@
             >
           </ol>
           <if condition="debuggerStackTruncated"><p>Call stack shortened.</p></if>
+        </details>
+        <details open>
+          <summary>Scopes</summary>
+          <for each="value in debuggerScopeValues"><debug-value key="{{value.key}}" :value="{{value}}" :draft="{{debuggerValueEdit}}"></debug-value></for>
         </details>
         <details ?open="{{debuggerWatchOpen}}" class="watches" @toggle="{watchDisclosure(e)}">
           <summary>Watch</summary>
@@ -531,7 +539,7 @@
                   ></textarea>
                   <span class="watch-edit-hint">Enter saves · Shift+Enter adds a line</span>
                   <button type="submit" ?disabled="{{!debuggerWatchDraft || debuggerWatchSaving}}">
-                    Save
+                    Save expression
                   </button>
                   <button
                     type="button"
@@ -545,7 +553,7 @@
               </if>
               <if condition="debuggerWatchEditing != watch.id">
                 <if condition="watch.value"
-                  ><debug-value :value="{{watch.value}}"></debug-value
+                  ><debug-value :value="{{watch.value}}" :draft="{{debuggerValueEdit}}"></debug-value
                 ></if>
                 <if condition="!watch.value"
                   ><span>{{watch.expression}}: {{watch.output}}</span></if
@@ -558,7 +566,7 @@
                   ?disabled="{{debuggerWatchSaving}}"
                   @click="{editWatch(watch.id)}"
                 >
-                  Edit
+                  Edit expression
                 </button>
                 <button
                   type="button"
@@ -574,12 +582,6 @@
           ><if condition="!debuggerWatches.length"
             ><p>Expressions refresh when paused or stepping. Side effects are blocked.</p></if
           >
-        </details>
-        <details open>
-          <summary>Scopes</summary>
-          <for each="value in debuggerScopeValues"
-            ><debug-value :value="{{value}}"></debug-value
-          ></for>
         </details>
       </aside>
     </div>

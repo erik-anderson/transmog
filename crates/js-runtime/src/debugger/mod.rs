@@ -24,8 +24,10 @@ use v8::inspector::{
     V8InspectorClientImpl, V8InspectorClientTrustLevel, V8InspectorSession,
 };
 mod completion;
+mod editing;
 mod execution;
 mod input;
+mod scopes;
 #[cfg(test)]
 mod tests;
 mod values;
@@ -93,6 +95,7 @@ struct Client {
     commands: Receiver<DebugCommand>,
     sink: Sink,
     session: RefCell<Option<Rc<V8InspectorSession>>>,
+    inspector: Weak<ContextInspector>,
     context: v8::Global<v8::Context>,
     raw_isolate: v8::UnsafeRawIsolatePtr,
     isolate: v8::IsolateHandle,
@@ -232,6 +235,7 @@ impl Debugger {
             commands: transport.commands,
             sink: transport.sink,
             session: RefCell::new(None),
+            inspector: Rc::downgrade(&runtime.inspector),
             context,
             // SAFETY: no ownership is transferred. The connection is dropped before Runtime's isolate.
             raw_isolate: unsafe { runtime.isolate.as_raw_isolate_ptr() },
@@ -756,6 +760,21 @@ impl Client {
                     self.reject(request, "Property is no longer available");
                 }
             }
+            DebugAction::SetValue {
+                pause,
+                frame,
+                handle,
+                index,
+                expression,
+            } => {
+                if !self.current_pause(pause) {
+                    self.reject(request, "Pause has expired or resumed");
+                } else if let Some(scope) = scope {
+                    self.set_value(scope, request, (frame, handle, index), &expression);
+                } else {
+                    self.reject(request, "Value editing requires a paused engine");
+                }
+            }
         }
     }
     fn current_pause(&self, pause: u64) -> bool {
@@ -924,50 +943,6 @@ impl Client {
                 pause,
                 value,
                 thrown,
-            },
-        );
-    }
-    fn scopes(&self, scope: &mut v8::PinScope<'_, '_>, request: u64, pause: u64, frame: u32) {
-        let chain = self
-            .frames
-            .borrow()
-            .get(frame as usize)
-            .and_then(|frame| frame["scopeChain"].as_array())
-            .map(|chain| {
-                chain
-                    .iter()
-                    .take(MAX_SCOPE_CHAIN)
-                    .cloned()
-                    .collect::<Vec<_>>()
-            });
-        let Some(chain) = chain else {
-            self.reject(request, "Scopes are unavailable in this frame");
-            return;
-        };
-        let Some(session) = self.session.borrow().clone() else {
-            return;
-        };
-        let scopes = chain
-            .iter()
-            .take(MAX_SCOPE_CHAIN)
-            .map(|entry| {
-                let handle = entry["object"]["objectId"]
-                    .as_str()
-                    .filter(|id| id.len() <= 2048)
-                    .and_then(|id| self.values.borrow_mut().scope(scope, &session, id));
-                DebugScope {
-                    kind: short(entry["type"].as_str().unwrap_or("unavailable"), 64),
-                    name: short(entry["name"].as_str().unwrap_or(""), 256),
-                    handle,
-                }
-            })
-            .collect();
-        self.emit(
-            request,
-            DebugEventKind::Scopes {
-                pause,
-                frame,
-                scopes,
             },
         );
     }

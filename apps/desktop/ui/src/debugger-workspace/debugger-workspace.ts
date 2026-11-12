@@ -29,6 +29,10 @@ import {
   Inspection,
   ConsoleHistory,
   type InspectionScope,
+  type InspectionState,
+  type ValueEditDraft,
+  type ValueEditRequest,
+  type ValueWatchRequest,
   type ValueView,
   type ValueLease,
   type ConsoleHistoryState,
@@ -78,6 +82,8 @@ interface View {
   watches?: string[];
 }
 interface SavedView {
+  inspection?: { owner: string; states: Array<[string, InspectionState]>; scroll: number };
+  valueEdit?: ValueEditDraft | null;
   consoleContext?: string;
   consoleDrafts?: Array<[string, { input: string; history: ConsoleHistoryState }]>;
   consoleHistory?: ConsoleHistoryState;
@@ -228,6 +234,7 @@ export class DebuggerWorkspace extends WebUIElement {
   @observable debuggerSourceLabel = "Select a source";
   @observable debuggerSourceLoading = false;
   @observable debuggerCanOpenScripts = false;
+  @observable debuggerCanEditScript = false;
   @observable debuggerStatus = "Attaching debugger…";
   @observable debuggerPaused = false;
   @observable debuggerClosed = true;
@@ -420,6 +427,7 @@ export class DebuggerWorkspace extends WebUIElement {
         this.model?.dispose();
         this.model = null;
         this.debuggerSourceLabel = "Select a source";
+        this.debuggerCanEditScript = false;
         this.debuggerCanSwitch = false;
         this.updateNavigation();
       }
@@ -597,6 +605,11 @@ export class DebuggerWorkspace extends WebUIElement {
   private watchSerial = 0;
   private watchGeneration = 0;
   private inspectionGeneration = 0;
+  private inspectionOwner = "";
+  private valueEditOperation: Promise<void> | null = null;
+  @observable debuggerValueEdit: ValueEditDraft | null = null;
+  private inspectionMemory = new Map<string, Map<string, InspectionState>>();
+  private inspectionScroll = new Map<string, number>();
   private completionGeneration = 0;
   private completionStart = 0;
   private completionEnd = 0;
@@ -665,6 +678,24 @@ export class DebuggerWorkspace extends WebUIElement {
   async openScripts(): Promise<void> {
     try {
       await invoke("debugger_open_scripts");
+    } catch (error) {
+      this.debuggerError = describeError(error);
+    }
+  }
+  async editScript(): Promise<void> {
+    if (!this.debuggerCanEditScript || !this.editor || !this.model) {
+      return;
+    }
+    const position = this.editor.getPosition();
+    try {
+      await invoke("debugger_open_scripts", {
+        reveal: {
+          source: this.model.getValue(),
+          language: this.selected!.language,
+          line: position?.lineNumber ?? 1,
+          column: position?.column ?? 1,
+        },
+      });
     } catch (error) {
       this.debuggerError = describeError(error);
     }
@@ -823,7 +854,7 @@ export class DebuggerWorkspace extends WebUIElement {
   }
   private inspectionChanged(): void {
     this.debuggerScopeValues = this.debuggerScopeValues.map((value) => ({
-      ...this.inspection.get(value.key)!,
+      ...(this.inspection.get(value.key) ?? value),
     }));
     this.debuggerWatches = this.debuggerWatches.map((watch) =>
       watch.value ? { ...watch, value: { ...this.inspection.get(watch.value.key)! } } : watch,
@@ -838,6 +869,71 @@ export class DebuggerWorkspace extends WebUIElement {
   }
   async inspectionToggled(event: CustomEvent<{ key: string; row?: PropertyRow }>): Promise<void> {
     await this.toggleValue(event.detail.key, event.detail.row);
+  }
+  async inspectionEdited(event: CustomEvent<ValueEditRequest>): Promise<void> {
+    if (this.valueEditOperation) {
+      event.detail.reply("Wait for the current value edit to finish.");
+      return;
+    }
+    const operation = this.applyValueEdit(event.detail);
+    this.valueEditOperation = operation;
+    try {
+      await operation;
+    } finally {
+      if (this.valueEditOperation === operation) {
+        this.valueEditOperation = null;
+      }
+    }
+  }
+  private async applyValueEdit({ key, row, expression, reply }: ValueEditRequest): Promise<void> {
+    try {
+      const outcome = await this.inspection.edit(key, row, expression);
+      reply(outcome.issue);
+      if (outcome.refresh) {
+        await this.refreshInspection();
+      }
+    } catch (error) {
+      reply(describeError(error));
+    }
+  }
+  async inspectionWatch(event: CustomEvent<ValueWatchRequest>): Promise<void> {
+    const { key, row } = event.detail;
+    const root = this.inspection.get(key);
+    if (!root?.editable || root.expired) {
+      return;
+    }
+    const parts = row.path.map((part, index) =>
+      /^[A-Za-z_$][\w$]*$/u.test(part)
+        ? (index || !key.startsWith("scope-") ? "." : "") + part
+        : "[" + JSON.stringify(part) + "]",
+    );
+    await this.addWatchExpression(
+      (key.startsWith("scope-") ? "" : "(" + root.label + ")") + parts.join(""),
+    );
+  }
+  inspectionDraft(event: CustomEvent<ValueEditDraft | null>): void {
+    this.debuggerValueEdit = event.detail;
+    this.rememberView();
+  }
+  private inspectionStateKey(value: ValueView): string {
+    return value.key.startsWith("watch-") ? `watch:${value.label}` : `${value.key}:${value.label}`;
+  }
+  private currentInspectionOwner(): string {
+    const scope = this.inspectionScope();
+    const frame = this.debuggerFrames.find((frame) => frame.index === scope.frame);
+    return JSON.stringify([
+      scope.session,
+      scope.frame,
+      frame?.function,
+      frame?.original?.source ?? frame?.location?.source,
+    ]);
+  }
+  private async refreshInspection(): Promise<void> {
+    if (!this.debuggerPaused) {
+      return;
+    }
+    this.resetInspection();
+    await Promise.all([this.requestScopes(), this.refreshWatches()]);
   }
   async toggleValue(key: string, row?: PropertyRow): Promise<void> {
     await this.inspection.toggle(key, row);
@@ -856,12 +952,42 @@ export class DebuggerWorkspace extends WebUIElement {
     });
   }
   private resetInspection(): void {
+    if (this.inspectionOwner) {
+      const saved =
+        this.inspectionMemory.get(this.inspectionOwner) ?? new Map<string, InspectionState>();
+      for (const value of [
+        ...this.debuggerScopeValues,
+        ...this.debuggerWatches.flatMap((watch) => (watch.value ? [watch.value] : [])),
+      ]) {
+        const state = !value.expired && this.inspection.capture(value.key);
+        if (state) {
+          saved.set(this.inspectionStateKey(value), state);
+        }
+      }
+      this.inspectionMemory.set(this.inspectionOwner, saved);
+      const pane = this.shadowRoot?.querySelector<HTMLElement>(".variables");
+      if (pane) {
+        this.inspectionScroll.set(this.inspectionOwner, pane.scrollTop);
+      }
+      let memorySize = [...this.inspectionMemory.values()].reduce(
+        (bytes, states) => bytes + JSON.stringify([...states]).length,
+        0,
+      );
+      while (this.inspectionMemory.size > 16 || memorySize > 2 * 1024 * 1024) {
+        const oldest = this.inspectionMemory.keys().next().value!;
+        memorySize -= JSON.stringify([...this.inspectionMemory.get(oldest)!]).length;
+        this.inspectionMemory.delete(oldest);
+        this.inspectionScroll.delete(oldest);
+      }
+    }
     this.inspectionGeneration++;
     this.closeCompletions();
     for (const scope of this.debuggerScopeValues) {
       this.inspection.remove(scope.key);
     }
-    this.debuggerScopeValues = [];
+    this.debuggerScopeValues = this.debuggerPaused
+      ? this.debuggerScopeValues.map((value) => ({ ...value, expired: true, editable: false }))
+      : [];
     this.debuggerWatches = this.debuggerWatches.map((watch) => {
       this.inspection.remove(`watch-${watch.id}`);
       return {
@@ -1116,6 +1242,11 @@ export class DebuggerWorkspace extends WebUIElement {
     const scope = this.inspectionScope();
     await Promise.all(
       this.debuggerWatches.map(async (watch) => {
+        const state =
+          this.inspection.capture(`watch-${watch.id}`) ??
+          this.inspectionMemory
+            .get(this.currentInspectionOwner())
+            ?.get(`watch:${watch.expression}`);
         const event = await this.inspection.request(
           { kind: "inspect", expression: watch.expression, pause: scope.pause, frame: scope.frame },
           scope,
@@ -1154,6 +1285,9 @@ export class DebuggerWorkspace extends WebUIElement {
               }
             : current,
         );
+        if (value && state) {
+          await this.inspection.restore(value.key, state);
+        }
       }),
     );
   }
@@ -1552,6 +1686,11 @@ export class DebuggerWorkspace extends WebUIElement {
           this.debuggerWatches.find((watch) => watch.expression === saved.watchEdit?.expression)
             ?.id ?? 0;
         this.debuggerWatchDraft = saved.watchEdit?.draft ?? "";
+        if (saved.inspection) {
+          this.inspectionMemory.set(saved.inspection.owner, new Map(saved.inspection.states));
+          this.inspectionScroll.set(saved.inspection.owner, saved.inspection.scroll);
+        }
+        this.debuggerValueEdit = saved.valueEdit ?? null;
         this.serial = Math.max(
           0,
           ...saved.console.map((row) => row.id),
@@ -1658,6 +1797,7 @@ export class DebuggerWorkspace extends WebUIElement {
       return;
     }
     this.busy = true;
+    let refreshInspection = false;
     const generation = this.generation;
     const consoleRevision = this.consoleRevision;
     const pointRevision = this.pointEditRevision;
@@ -1918,6 +2058,10 @@ export class DebuggerWorkspace extends WebUIElement {
             }
             const owner = this.debuggerConsole.find((row) => row.id === id);
             if (owner) {
+              refreshInspection ||=
+                target.session === this.debuggerTarget &&
+                this.debuggerPaused &&
+                event.pause === this.pause;
               const resultId = ++this.serial;
               this.debuggerConsole = [
                 ...this.debuggerConsole.map((row) =>
@@ -1988,6 +2132,9 @@ export class DebuggerWorkspace extends WebUIElement {
       });
       this.inspection.expire();
       this.inspectionChanged();
+      if (refreshInspection) {
+        void this.refreshInspection();
+      }
       for (const id of this.views.keys()) {
         if (
           !targets.some((target) => target.session === id) &&
@@ -2155,6 +2302,7 @@ export class DebuggerWorkspace extends WebUIElement {
       this.editor.setModel(this.model);
       previous?.dispose();
       this.selected = file;
+      this.debuggerCanEditScript = this.debuggerCanOpenScripts && file.group === "User scripts";
       const key = sourceKey(file);
       if (record && this.history[this.historyIndex] !== key) {
         this.history = [...this.history.slice(0, this.historyIndex + 1), key].slice(-64);
@@ -2265,6 +2413,12 @@ export class DebuggerWorkspace extends WebUIElement {
   private async requestScopes(): Promise<void> {
     const context = this.inspectionScope();
     const generation = this.inspectionGeneration;
+    const owner = this.currentInspectionOwner();
+    if (this.debuggerValueEdit && this.debuggerValueEdit.epoch !== JSON.stringify(context)) {
+      this.debuggerValueEdit = null;
+    }
+    const pane = this.shadowRoot?.querySelector<HTMLElement>(".variables");
+    const scroll = pane?.scrollTop;
     const event = await this.inspection.request(
       { kind: "scopes", pause: context.pause, frame: context.frame ?? 0 },
       context,
@@ -2285,6 +2439,7 @@ export class DebuggerWorkspace extends WebUIElement {
       ]);
       return;
     }
+    this.inspectionOwner = owner;
     this.debuggerScopeValues = event.scopes.map((scope, index) =>
       this.inspection.set(
         `scope-${index}`,
@@ -2299,10 +2454,21 @@ export class DebuggerWorkspace extends WebUIElement {
       ),
     );
     const local =
-      this.debuggerScopeValues.find((scope) => scope.label === "local") ??
+      this.debuggerScopeValues.find((scope) => /^local(?: ·|$)/u.test(scope.label)) ??
       this.debuggerScopeValues[0];
-    if (local?.value.handle) {
-      void this.inspection.toggle(local.key);
+    for (const value of this.debuggerScopeValues) {
+      const saved = this.inspectionMemory.get(owner)?.get(this.inspectionStateKey(value));
+      if (saved) {
+        await this.inspection.restore(value.key, saved);
+      } else if (value === local && value.value.handle) {
+        await this.inspection.toggle(value.key);
+      }
+      if (generation !== this.inspectionGeneration) {
+        return;
+      }
+    }
+    if (pane && pane.scrollTop === scroll) {
+      pane.scrollTop = this.inspectionScroll.get(owner) ?? scroll ?? 0;
     }
   }
   async selectFrame(index: number): Promise<void> {
@@ -3255,7 +3421,27 @@ export class DebuggerWorkspace extends WebUIElement {
         this.editor?.saveViewState() ?? null,
       );
     }
+    const states: Array<[string, InspectionState]> = [];
+    const owner = this.currentInspectionOwner();
+    let budget = 128 * 1024;
+    for (const value of [
+      ...this.debuggerScopeValues,
+      ...this.debuggerWatches.flatMap((watch) => (watch.value ? [watch.value] : [])),
+    ]) {
+      const state =
+        this.inspection.capture(value.key) ??
+        this.inspectionMemory.get(owner)?.get(this.inspectionStateKey(value));
+      if (state && (budget -= JSON.stringify(state).length) >= 0) {
+        states.push([this.inspectionStateKey(value), state]);
+      }
+    }
     return {
+      inspection: {
+        owner,
+        states,
+        scroll: this.shadowRoot?.querySelector<HTMLElement>(".variables")?.scrollTop ?? 0,
+      },
+      valueEdit: this.debuggerValueEdit,
       consoleContext: this.debuggerConsoleContext,
       consoleDrafts: [...this.consoleDrafts],
       valueLeases: this.inspection.leases(),
@@ -3329,9 +3515,23 @@ export class DebuggerWorkspace extends WebUIElement {
     if (placement !== "closed" && this.debuggerTransition) {
       return;
     }
-    this.debuggerTransition = placement === "closed" ? "Closing debugger…" : "Moving debugger…";
+    this.debuggerTransition =
+      placement === "closed"
+        ? "Closing debugger…"
+        : this.valueEditOperation
+          ? "Applying value before moving debugger…"
+          : "Moving debugger…";
     this.$flushUpdates();
     try {
+      if (placement !== "closed" && this.valueEditOperation) {
+        // Continue polling until the edit is confirmed; only then transfer its draft/result.
+        await this.valueEditOperation;
+        if (!this.isConnected) {
+          return;
+        }
+        this.debuggerTransition = "Moving debugger…";
+        this.$flushUpdates();
+      }
       await this.pointEdits;
       await this.watchEdit;
       if (this.scratchOperation) {
@@ -3358,6 +3558,17 @@ export class DebuggerWorkspace extends WebUIElement {
     }
   }
   keyboard(event: KeyboardEvent): void {
+    if (event.composedPath().some((node) => node instanceof HTMLDialogElement && node.open)) {
+      return;
+    }
+    if (
+      ["Enter", "Escape"].includes(event.key) &&
+      event
+        .composedPath()
+        .some((node) => node instanceof HTMLFormElement && node.classList.contains("value-edit"))
+    ) {
+      return;
+    }
     if (event.key === "Escape" && !event.isComposing && !event.defaultPrevented) {
       const menu = this.shadowRoot?.querySelector<HTMLElement>(
         ".placement:popover-open, .console-levels:popover-open",

@@ -145,8 +145,13 @@ export class AppShell extends WebUIElement {
         return;
       }
       this.debuggerRequestListener = requests;
-      const scripts = await listen("debugger-open-scripts", () => {
-        void this.openDebuggerScripts();
+      const scripts = await listen<{
+        source: string;
+        language: string;
+        line: number;
+        column: number;
+      } | null>("debugger-open-scripts", (event) => {
+        void this.openDebuggerScripts(event.payload);
       });
       if (!this.isConnected) {
         scripts();
@@ -162,9 +167,18 @@ export class AppShell extends WebUIElement {
     }
   }
   comparison!: ComparisonWorkspace;
-  private async openDebuggerScripts(): Promise<void> {
+  private async openDebuggerScripts(
+    reveal?: { source: string; language: string; line: number; column: number } | null,
+  ): Promise<void> {
     if (await this.activateView("automation")) {
       await this.automation.showAutomationSection("scripts");
+      if (
+        reveal &&
+        this.activeView === "automation" &&
+        this.automation.automationSection === "scripts"
+      ) {
+        await this.automation.scriptAuthoring.revealDebuggerSource(reveal);
+      }
     }
   }
   onComparison(event: CustomEvent<ComparisonOpen>): void {
@@ -440,7 +454,8 @@ export class AppShell extends WebUIElement {
         this.automation?.headerRulesEditor?.hrDirty ? "Header changes" : "",
         this.automation?.responseTextEditor?.hrDirty ? "Response text replacements" : "",
         this.automation?.userAgentOverrides?.uaDirty ? "UA headers" : "",
-        this.automation?.scriptEditor?.editorLoaded && this.automation.scriptEditor.scriptDirty
+        this.automation?.scriptAuthoring?.editorLoaded &&
+        this.automation.scriptAuthoring.scriptDirty
           ? "Scripts"
           : "",
       ].filter(Boolean);

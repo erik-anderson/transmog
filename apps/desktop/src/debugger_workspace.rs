@@ -924,7 +924,18 @@ pub(super) async fn reset_scratch_console(
     .map_err(|e| e.to_string())?
 }
 #[tauri::command]
-pub(super) fn debugger_open_scripts(window: tauri::WebviewWindow) -> Result<(), String> {
+pub(super) fn debugger_open_scripts(
+    window: tauri::WebviewWindow,
+    reveal: Option<ScriptEditorReveal>,
+) -> Result<(), String> {
+    if reveal.as_ref().is_some_and(|reveal| {
+        reveal.source.len() > 1024 * 1024
+            || reveal.line == 0
+            || reveal.column == 0
+            || !matches!(reveal.language.as_str(), "typescript" | "javascript")
+    }) {
+        return Err("Script source location is unavailable".into());
+    }
     controlled(&window, false)?;
     let windows = window.state::<DebuggerWindows>();
     let entries = windows.0.lock().unwrap();
@@ -945,8 +956,17 @@ pub(super) fn debugger_open_scripts(window: tauri::WebviewWindow) -> Result<(), 
         .map_err(|e| e.to_string())?;
     window
         .app_handle()
-        .emit_to(parent.label(), "debugger-open-scripts", ())
+        .emit_to(parent.label(), "debugger-open-scripts", reveal)
         .map_err(|e| e.to_string())
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(super) struct ScriptEditorReveal {
+    source: String,
+    language: String,
+    line: u32,
+    column: u32,
 }
 
 #[tauri::command]

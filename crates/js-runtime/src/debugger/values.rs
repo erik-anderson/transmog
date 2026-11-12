@@ -12,6 +12,15 @@ pub(super) struct Values {
     next: u32,
     handles: BTreeMap<u32, v8::Global<v8::Value>>,
     keys: BTreeMap<u32, v8::Global<v8::Array>>,
+    bindings: BTreeMap<u32, (u32, usize)>,
+}
+pub(super) enum EditTarget {
+    Binding {
+        frame: u32,
+        number: usize,
+        name: String,
+    },
+    Property,
 }
 struct PropertyPage {
     properties: Vec<DebugProperty>,
@@ -33,12 +42,14 @@ impl Values {
     pub(super) fn clear(&mut self) {
         self.handles.clear();
         self.keys.clear();
+        self.bindings.clear();
         // Never reuse a released handle within one connection, even after resume.
     }
     pub(super) fn release(&mut self, handles: &[u32]) {
         for handle in handles {
             self.handles.remove(handle);
             self.keys.remove(handle);
+            self.bindings.remove(handle);
         }
     }
     fn retain(
@@ -59,13 +70,79 @@ impl Values {
         scope: &mut v8::PinScope<'_, '_>,
         session: &V8InspectorSession,
         id: &str,
+        binding: (u32, usize, &str),
     ) -> Option<u32> {
         let (value, _, _) = session
             .unwrap_object(scope, StringView::from(id.as_bytes()))
             .ok()?;
         // Each read owns its handles. An old surface may release its values
         // while its docked/detached replacement is reading the same frame.
-        self.retain(scope, value)
+        let handle = self.retain(scope, value)?;
+        if !matches!(binding.2, "global" | "with") {
+            self.bindings.insert(handle, (binding.0, binding.1));
+        }
+        Some(handle)
+    }
+    pub(super) fn edit_target(
+        &self,
+        scope: &mut v8::PinScope<'_, '_>,
+        handle: u32,
+        index: u32,
+    ) -> Option<EditTarget> {
+        v8::tc_scope!(let scope,scope);
+        v8::disallow_javascript_execution_scope!(let scope,scope,v8::OnFailure::ThrowOnFailure);
+        let (_, key) = self.edit_property(scope, handle, index)?;
+        if let Some(&(frame, number)) = self.bindings.get(&handle) {
+            let name = v8::Local::<v8::String>::try_from(key)
+                .ok()?
+                .to_rust_string_lossy(scope);
+            if name.len() > MAX_VALUE_BYTES {
+                return None;
+            }
+            Some(EditTarget::Binding {
+                frame,
+                number,
+                name,
+            })
+        } else {
+            Some(EditTarget::Property)
+        }
+    }
+    fn edit_property<'s>(
+        &self,
+        scope: &mut v8::PinScope<'s, '_>,
+        handle: u32,
+        index: u32,
+    ) -> Option<(v8::Local<'s, v8::Object>, v8::Local<'s, v8::Name>)> {
+        let value = v8::Local::new(scope, self.handles.get(&handle)?);
+        if value.is_proxy() {
+            return None;
+        }
+        let object = v8::Local::<v8::Object>::try_from(value).ok()?;
+        let keys = v8::Local::new(scope, self.keys.get(&handle)?);
+        let key = keys.get_index(scope, index)?;
+        let key = v8::Local::<v8::Name>::try_from(key).ok()?;
+        let descriptor = object.get_own_property_descriptor(scope, key)?;
+        if !data_writable(scope, descriptor) {
+            return None;
+        }
+        Some((object, key))
+    }
+    pub(super) fn replace_property(
+        &self,
+        scope: &mut v8::PinScope<'_, '_>,
+        handle: u32,
+        index: u32,
+        value: v8::Local<v8::Value>,
+    ) -> bool {
+        v8::tc_scope!(let scope,scope);
+        v8::disallow_javascript_execution_scope!(let scope,scope,v8::OnFailure::ThrowOnFailure);
+        let Some((object, key)) = self.edit_property(scope, handle, index) else {
+            return false;
+        };
+        // A value-only descriptor preserves enumerable/configurable/writable attributes.
+        object.define_property(scope, key, &v8::PropertyDescriptor::new_from_value(value))
+            == Some(true)
     }
     pub(super) fn properties(
         &mut self,
@@ -172,6 +249,7 @@ impl Values {
             let descriptor = v8::Local::<v8::Name>::try_from(key)
                 .ok()
                 .and_then(|key| object.get_own_property_descriptor(scope, key));
+            let writable = descriptor.is_some_and(|descriptor| data_writable(scope, descriptor));
             let value = descriptor.and_then(|descriptor| data_value(scope, descriptor));
             // End this page before unavailable object previews. The controller can
             // release its previous page and continue at this exact property.
@@ -188,7 +266,11 @@ impl Values {
             } else {
                 unavailable("Accessor or unavailable property; not evaluated")
             };
-            let property = DebugProperty { name, value };
+            let property = DebugProperty {
+                name,
+                value,
+                writable,
+            };
             let length = serde_json::to_vec(&property).ok()?.len() + 1;
             if bytes + length > MAX_DEBUG_REPLY_BYTES - 4096 {
                 // A speculative preview must not consume a handle when its row is omitted.
@@ -238,7 +320,11 @@ impl Values {
         } else if value.is_number() {
             output.kind = "number".into();
             let number = value.number_value(scope).unwrap_or_default();
-            output.display = if number == 0.0 && number.is_sign_negative() {
+            output.display = if number == f64::INFINITY {
+                "Infinity".into()
+            } else if number == f64::NEG_INFINITY {
+                "-Infinity".into()
+            } else if number == 0.0 && number.is_sign_negative() {
                 "-0".into()
             } else {
                 number.to_string()
@@ -265,15 +351,18 @@ impl Values {
             }
             .into();
             output.display = if value.is_function() {
-                "[Function]"
-            } else if value.is_array() {
-                "[Array]"
+                "[Function]".into()
+            } else if let Ok(array) = v8::Local::<v8::Array>::try_from(value) {
+                format!("Array({})", array.length())
+            } else if let Ok(map) = v8::Local::<v8::Map>::try_from(value) {
+                format!("Map({})", map.size())
+            } else if let Ok(set) = v8::Local::<v8::Set>::try_from(value) {
+                format!("Set({})", set.size())
             } else if value.is_array_buffer_view() {
-                "[Typed view]"
+                "[Typed view]".into()
             } else {
-                "[Object]"
-            }
-            .into();
+                "[Object]".into()
+            };
             if retain {
                 output.handle = self.retain(scope, value);
             }
@@ -283,6 +372,23 @@ impl Values {
         }
         output
     }
+}
+fn data_writable<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    descriptor: v8::Local<'s, v8::Value>,
+) -> bool {
+    let Ok(descriptor) = v8::Local::<v8::Object>::try_from(descriptor) else {
+        return false;
+    };
+    if data_value(scope, descriptor.into()).is_none() {
+        return false;
+    }
+    let Some(key) = v8::String::new(scope, "writable") else {
+        return false;
+    };
+    descriptor
+        .get(scope, key.into())
+        .is_some_and(|value| value.is_true())
 }
 fn unavailable(display: &str) -> DebugValue {
     DebugValue {

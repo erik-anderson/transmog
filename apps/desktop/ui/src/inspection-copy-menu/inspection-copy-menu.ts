@@ -12,6 +12,7 @@ import { requestFormatConverter, selectedConverterText } from "../converter-sele
 import { MeasuredMenu, menuAnchor, navigateMenu } from "../context-menu.js";
 
 export class InspectionCopyMenu extends WebUIElement {
+  @observable copyMenuLabel = "Copy inspection value";
   @observable copyActions: Array<{ id: string; label: string; disabled: boolean }> = [];
   @observable copyMenuX = "8px";
   @observable copyMenuY = "8px";
@@ -40,6 +41,7 @@ export class InspectionCopyMenu extends WebUIElement {
     }
     this.close(false);
     this.request = request;
+    this.copyMenuLabel = request.label ?? "Copy inspection value";
     this.hideFeedback();
     this.copyColorScheme = getComputedStyle(request.source).colorScheme;
     this.copyActions = request.actions.map((action) => ({

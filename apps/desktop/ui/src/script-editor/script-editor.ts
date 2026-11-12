@@ -734,6 +734,31 @@ export class ScriptEditor extends WorkspaceElement {
     this.sourceEditor?.layout();
     this.sourceEditor?.focus();
   }
+  async revealDebuggerSource(reveal: {
+    source: string;
+    language: string;
+    line: number;
+    column: number;
+  }): Promise<void> {
+    await this.ensureEditor();
+    if (!this.sourceEditor || !this.isConnected || !this.active) {
+      return;
+    }
+    if (
+      this.sourceEditor.getModel()?.getLanguageId() === reveal.language &&
+      this.sourceEditor.getValue() === reveal.source
+    ) {
+      const position = { lineNumber: reveal.line, column: reveal.column };
+      this.sourceEditor.setPosition(position);
+      this.sourceEditor.revealPositionInCenter(position);
+      this.scriptText = "Editing the current draft. Save and run a sandbox test to debug changes.";
+    } else {
+      this.scriptText =
+        "Opened the current draft. It differs from the debugger source snapshot; the running build is unchanged.";
+    }
+    this.statusKind = "";
+    this.focusEditor();
+  }
   themeChanged(): void {
     this.monaco?.editor.setTheme(this.monacoTheme());
   }

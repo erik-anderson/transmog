@@ -1,6 +1,7 @@
 use super::*;
 use std::sync::mpsc::{self, SyncSender};
 use transmog_script_diagnostics::debugger::{DebugProperty, DebugValue, SourceBreakpoint};
+mod editing;
 mod execution;
 
 const SESSION: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -1367,6 +1368,7 @@ fn wire_contract_rejects_unscoped_evaluation_and_implicit_property_execution() {
             handle: 1,
             offset: 0,
             properties: vec![DebugProperty {
+                writable: false,
                 name: "fixture".into(),
                 value: DebugValue {
                     kind: "string".into(),

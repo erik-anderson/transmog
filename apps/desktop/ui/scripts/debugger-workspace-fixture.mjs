@@ -192,7 +192,7 @@ export function installDebuggerWorkspaceFixture() {
       return;
     }
     if (command === "debugger_open_scripts") {
-      state.emitNative("debugger-open-scripts", null);
+      state.emitNative("debugger-open-scripts", args.reveal ?? null);
       return;
     }
     if (command === "debugger_seen") return debug.seen;
@@ -425,6 +425,40 @@ export function installDebuggerWorkspaceFixture() {
         return request;
       }
       debug.actions.push(structuredClone(action));
+      if (action.kind === "set-value") {
+        const respond = (event) => {
+          if (debug.holdValueReply) {
+            debug.holdValueReply = false;
+            debug.finishValueReply = () => {
+              delete debug.finishValueReply;
+              emit(event, request);
+            };
+          } else emit(event, request);
+        };
+        if (debug.holdValueEdit) {
+          debug.holdValueEdit = false;
+          await new Promise((resolve) => {
+            debug.finishValueEdit = resolve;
+          });
+          delete debug.finishValueEdit;
+        }
+        if (debug.rejectValueEdit || action.expression === "invalid(") {
+          respond({ kind: "rejected", message: "Invalid value expression" });
+        } else {
+          const property = debug.propertyInventory?.[action.handle]?.[action.index];
+          if (property) {
+            property.value = {
+              kind: "number",
+              display: action.expression,
+              handle: null,
+              truncated: false,
+            };
+            if (property.name === "value") debug.value = action.expression;
+          } else debug.value = action.expression;
+          respond({ kind: "acknowledged" });
+        }
+        return request;
+      }
       if (action.kind === "evaluate" && debug.holdWorkerEvaluation) {
         debug.holdWorkerEvaluation = false;
         await new Promise((resolve) => {
@@ -471,6 +505,13 @@ export function installDebuggerWorkspaceFixture() {
           request,
         );
       }
+      if (action.kind === "evaluate" && /^value = \d+$/u.test(action.expression)) {
+        debug.value = action.expression.split(" = ")[1];
+        const property = debug.propertyInventory?.[1]?.find(
+          (property) => property.name === "value",
+        );
+        if (property) property.value.display = debug.value;
+      }
       if (action.kind === "evaluate" || action.kind === "inspect")
         emit(
           {
@@ -484,7 +525,7 @@ export function installDebuggerWorkspaceFixture() {
                   : action.expression === "value"
                     ? action.frame === 1
                       ? "21"
-                      : "42"
+                      : String(debug.value ?? 42)
                     : "7",
               handle: action.expression === "sample" ? 2 : null,
               truncated: false,
@@ -499,7 +540,7 @@ export function installDebuggerWorkspaceFixture() {
             kind: "scopes",
             pause: action.pause,
             frame: action.frame,
-            scopes: [
+            scopes: debug.scopeInventory ?? [
               { kind: "local", name: "", handle: action.frame === 1 ? 4 : 1 },
               { kind: "closure", name: "outer", handle: 3 },
               { kind: "global", name: "", handle: 5 },
@@ -546,7 +587,12 @@ export function installDebuggerWorkspaceFixture() {
                     name: "value",
                     value: {
                       kind: "number",
-                      display: action.handle === 4 ? "21" : "42",
+                      display:
+                        action.handle === 4
+                          ? "21"
+                          : action.handle === 1
+                            ? String(debug.value ?? 42)
+                            : "42",
                       handle: null,
                       truncated: false,
                     },
@@ -570,6 +616,10 @@ export function installDebuggerWorkspaceFixture() {
         } else {
           const preview = action.kind === "preview-properties";
           const properties = all
+            .map((property) => ({
+              ...property,
+              writable: property.writable ?? property.value.kind !== "unavailable",
+            }))
             .slice(action.offset, action.offset + (action.limit ?? 100))
             .map((property) =>
               preview ? { ...property, value: { ...property.value, handle: null } } : property,

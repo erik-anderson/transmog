@@ -917,6 +917,32 @@ Right-click selected source to add it to Watch or evaluate it in Console
 reopened during the app session. **Copy stack trace** copies the paused frames
 with their source locations.
 
+Double-click a local or writable data-property value, press **F2** on its row, or
+choose **Edit value** from its context menu to replace that exact runtime value.
+Enter applies a JavaScript value expression; Shift+Enter adds a line and Escape
+cancels the draft. Replacement expressions reject side effects. Failed edits keep
+their draft and show the error beside it. Read-only properties and accessors remain
+inert. **Edit expression** changes a Watch expression, independently of runtime edits.
+Moving between docked and separate windows retains an uncommitted value edit while
+its exact pause is still available. Resuming or selecting a different frame expires
+that editor; it never applies a draft to a replacement binding.
+Edits to Symbol-keyed properties or properties with shortened names must be reopened
+after a refresh because their displayed names cannot reliably identify the same key.
+
+Locals and watches refresh after Console commands and value edits. Stepping and
+switching frames retain expanded property paths and reading position while acquiring
+fresh values; changed values are marked. Arrow keys navigate the value tree and
+expand or collapse objects. Its context menu offers **View value** for selectable
+multiline text, **Add to Watch**, and **Copy property path** where a complete,
+unambiguous JavaScript path is available. Runtime-shortened previews are identified
+in the value viewer.
+
+Debugger source is the executing snapshot. **Edit script** opens the current script
+draft without replacing it or changing the running build. Matching source reveals
+the corresponding location; a differing draft is identified. Save and run a sandbox
+test to debug script changes. The docked workspace targets windows around 1024×768
+and larger; use **Dock → Open separate window** or resize its panes for more space.
+
 Transmog suspends dependent callback, body-read and upstream-attempt budgets
 while a worker is debugger-blocked. Cancellation and shutdown remain effective;
 remote clients and servers still control their own timeouts. Workspace pauses

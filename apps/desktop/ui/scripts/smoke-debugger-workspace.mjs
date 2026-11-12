@@ -27,7 +27,7 @@ export async function checkNativeDebuggerWorkspace({
   await wait(() => editor.evaluate((element) => element.scriptReady), "editor");
   await editor.evaluate((element) => {
     element.sourceEditor.setValue(
-      "import {pass} from 'transmog:api';\nlet count=0;\nexport function onRequestHead(event:any){\n const local=7;console.log('workspace callback');\n if(event.request.path==='/workspace')debugger;\n count++;Reflect.set(globalThis, 'workspaceCount',count);return pass();\n}",
+      "import {pass} from 'transmog:api';\nlet count=0;\nexport function onRequestHead(event:any){\n let local=7;console.log('workspace callback');\n if(event.request.path==='/workspace')debugger;\n count++;Reflect.set(globalThis, 'workspaceCount',count);return pass();\n}",
     );
     element.scriptForm.elements.namedItem("scriptHost").value = "127.0.0.1";
     element.scriptForm.elements.namedItem("scriptPath").value = "";
@@ -270,6 +270,25 @@ export async function checkNativeDebuggerWorkspace({
   await inspector.getByRole("textbox", { name: "Watch expression" }).fill("local");
   await inspector.getByRole("button", { name: "Add watch", exact: true }).click();
   await inspector.locator(".watch").getByText("7", { exact: true }).waitFor();
+  const locals = inspector
+    .locator("debug-value")
+    .filter({ has: detached.getByRole("tree", { name: /^local(?: ·|$)/u }) });
+  const localRow = locals
+    .locator("tr")
+    .filter({ has: detached.locator("th").getByText("local", { exact: true }) });
+  await localRow.press("F2");
+  const replacement = locals.getByRole("textbox", { name: "New value for local", exact: true });
+  await replacement.fill("8");
+  await replacement.press("Enter");
+  await localRow.getByText("8", { exact: true }).waitFor();
+  await inspector.locator(".watch").getByText("8", { exact: true }).waitFor();
+  await surface
+    .getByRole("textbox", { name: "Immediate expression", exact: true })
+    .fill("local = 7");
+  await surface.getByRole("button", { name: "Run", exact: true }).click();
+  await localRow.getByText("7", { exact: true }).waitFor();
+  await inspector.locator(".watch").getByText("7", { exact: true }).waitFor();
+  await detached.screenshot({ path: resolve(output, "debugger-values-native.png") });
   await inspector.locator(".call-stack button").first().press("Shift+F10");
   await detached.getByRole("menuitem", { name: "Copy stack trace", exact: true }).press("Escape");
   await wait(

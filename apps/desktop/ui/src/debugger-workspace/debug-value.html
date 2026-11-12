@@ -1,42 +1,44 @@
 <template shadowrootmode="open">
   <if condition="value">
-    <div class="heading" tabindex="0" @contextmenu="{menu(e)}" @keydown="{menu(e)}">
-      <if condition="value.value.handle"
-        ><button
-          type="button"
-          ?disabled="{{value.expired}}"
-          aria-expanded="{{value.expanded}}"
-          @click="{toggle()}"
-        >
-          <if condition="value.expanded"><span aria-hidden="true">▾ </span></if
-          ><if condition="!value.expanded"><span aria-hidden="true">▸ </span></if>{{value.label}}
-        </button></if
-      >
-      <if condition="!value.value.handle"><span>{{value.label}}:</span></if>
-      <span>{{value.value.display}}</span><if condition="value.expired"><small>Expired</small></if
-      ><if condition="value.value.truncated"><small>Shortened</small></if>
+    <div role="tree" aria-label="{{value.label}}" ?data-expired="{{value.expired}}">
+      <div class="heading" role="treeitem" aria-level="1" aria-expanded="{{rootExpanded}}" tabindex="{{rootTabIndex}}" @focus="{focused()}" @contextmenu="{menu(e)}" @keydown="{key(e)}">
+        <if condition="value.value.handle"><button type="button" tabindex="-1" ?disabled="{{value.expired}}" aria-expanded="{{value.expanded}}" @click="{toggle()}"><if condition="value.expanded"><span aria-hidden="true">▾ </span></if><if condition="!value.expanded"><span aria-hidden="true">▸ </span></if>{{value.label}}</button></if>
+        <if condition="!value.value.handle"><span>{{value.label}}:</span></if>
+        <span class="value-preview" data-kind="{{value.value.kind}}" @dblclick="{showValue()}">{{value.preview}}</span>
+        <if condition="value.expired"><small>Expired</small></if><if condition="value.value.truncated"><small>Shortened</small></if>
+      </div>
+      <if condition="value.expanded">
+        <table role="presentation" aria-busy="{{value.loading}}"><tbody role="presentation">
+          <for each="property in rows"><tr key="{{property.key}}" role="treeitem" data-row-key="{{property.key}}" data-depth="{{property.depth}}" ?data-changed="{{property.changed}}" ?data-editing="{{property.editing}}" aria-level="{{property.level}}" aria-expanded="{{property.ariaExpanded}}" tabindex="{{property.tabIndex}}" @focus="{focused(property)}" @contextmenu="{menu(e,property)}" @keydown="{key(e,property)}">
+            <th role="presentation" title="{{property.name}}">
+              <if condition="property.expandable"><button type="button" tabindex="-1" aria-disabled="{{value.loading}}" aria-expanded="{{property.expanded}}" @click="{toggle(property)}"><if condition="property.expanded"><span aria-hidden="true">▾ </span></if><if condition="!property.expanded"><span aria-hidden="true">▸ </span></if><span class="property-label">{{property.label}}</span></button></if>
+              <if condition="property.offset"><button type="button" tabindex="-1" data-more data-row-key="{{property.key}}" aria-disabled="{{value.loading}}" @click="{toggle(property)}">{{property.label}}</button></if>
+              <if condition="!property.expandable && property.offset == undefined"><span>{{property.label}}</span></if>
+              <if condition="property.propertyIndex != undefined"><span aria-hidden="true">:</span></if>
+            </th>
+            <td role="presentation">
+              <if condition="!property.editing"><span class="property-preview" data-kind="{{property.value.kind}}" title="{{property.value.display}}" @dblclick="{beginEdit(property)}">{{property.preview}}<if condition="property.value.truncated"> …</if></span></if>
+              <if condition="property.editing"><form class="value-edit" @submit="{saveEdit(e,property)}">
+                <textarea aria-label="New value for {{property.name}}" rows="2" maxlength="8192" value="{{editDraft}}" ?disabled="{{editBusy}}" @input="{editInput(e)}" @keydown="{editKeydown(e,property)}"></textarea>
+                <small class="current-value" title="{{property.preview}}">Current: {{property.preview}}</small>
+                <div class="edit-actions"><button type="submit" ?disabled="{{editBusy || !editDraft || value.expired}}">Apply value</button><button type="button" ?disabled="{{editBusy}}" @click="{cancelEdit(property)}">Cancel</button></div>
+                <small>{{editHint}} Enter applies; Escape cancels.</small>
+                <if condition="editIssue"><p class="edit-error" role="alert">{{editIssue}}</p></if>
+              </form></if>
+            </td>
+            <td class="row-actions" role="presentation"><if condition="value.editable && property.writable && !property.editing"><button type="button" tabindex="-1" title="Edit value (F2)" aria-label="Edit value of {{property.name}}" ?disabled="{{value.expired || value.loading}}" @click="{beginEdit(property)}">✎</button></if></td>
+          </tr></for>
+        </tbody></table>
+        <if condition="value.issue"><p role="status">{{value.issue}}</p></if>
+        <if condition="!value.rows.length && !value.issue"><p>No properties</p></if>
+      </if>
     </div>
-    <if condition="value.expanded"
-      ><table aria-busy="{{value.loading}}">
-        <tbody>
-          <for each="property in value.rows"
-            ><tr key="{{property.key}}" tabindex="0" @contextmenu="{menu(e,property)}" @keydown="{menu(e,property)}">
-              <th data-depth="{{property.depth}}" title="{{property.name}}">
-                <if condition="property.expandable">
-                  <button type="button" aria-disabled="{{value.loading}}" aria-expanded="{{property.expanded}}" @click="{toggle(property)}">
-                    <if condition="property.expanded"><span aria-hidden="true">▾ </span></if><if condition="!property.expanded"><span aria-hidden="true">▸ </span></if><span class="property-label">{{property.label}}</span>
-                  </button>
-                </if>
-                <if condition="property.offset"><button type="button" data-more data-row-key="{{property.key}}" aria-disabled="{{value.loading}}" @click="{toggle(property)}">{{property.label}}</button></if>
-                <if condition="!property.expandable && property.offset == undefined"><span>{{property.label}}</span></if>
-              </th>
-              <td><span class="property-preview" data-kind="{{property.value.kind}}" title="{{property.value.display}}">{{property.preview}}<if condition="property.value.truncated"> …</if></span></td>
-            </tr></for
-          >
-        </tbody>
-      </table>
-      <if condition="value.issue"><p role="status">{{value.issue}}</p></if
-      ><if condition="!value.rows.length && !value.issue"><p>No properties</p></if></if
-    >
   </if>
+  <dialog w-ref="{detailDialog}" aria-label="Inspect value" @close="{detailClosed()}">
+    <header><strong>{{detailName}}</strong><button type="button" @click="{closeDetail()}">Close</button></header>
+    <p>{{detailKind}}</p>
+    <if condition="detailShortened"><p>This preview was shortened by the runtime. Only the available text is shown.</p></if>
+    <if condition="detailReadOnly"><p>This property is read-only. Accessors are not evaluated.</p></if>
+    <textarea class="full-value" aria-label="Value text" readonly value="{{detailText}}"></textarea>
+  </dialog>
 </template>

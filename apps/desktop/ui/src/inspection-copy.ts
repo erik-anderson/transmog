@@ -13,6 +13,7 @@ export interface CopyAction {
   readConversion?: (current: () => boolean) => ConverterText | Promise<ConverterText>;
 }
 export interface CopyRequest {
+  label?: string;
   source: HTMLElement;
   event: MouseEvent | KeyboardEvent;
   actions: CopyAction[];

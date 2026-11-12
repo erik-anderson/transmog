@@ -1,6 +1,8 @@
 import type { DebugProperty, DebugValue } from "./models.js";
 
 export interface PropertyRow extends DebugProperty {
+  path: string[];
+  changed?: boolean;
   label: string;
   preview: string;
   key: string;
@@ -37,6 +39,21 @@ function inline(text: string): string {
     .replaceAll("\t", "\\t")
     .replaceAll("\u2028", "\\u2028")
     .replaceAll("\u2029", "\\u2029");
+}
+export function valuePreview(value: DebugValue): string {
+  return inline(
+    value.kind === "string"
+      ? JSON.stringify(value.display)
+      : value.kind === "bigint" && !value.display.endsWith("n")
+        ? value.display + "n"
+        : value.display,
+  );
+}
+/** Display-only Symbol names and shortened names cannot identify a replacement property. */
+export function isCompletePropertyPath(path: string[]): boolean {
+  return path.every(
+    (part) => part !== "[Symbol key]" && new TextEncoder().encode(part).length < 2044,
+  );
 }
 /** Property reads append to a tree. Large collections use bounded, expandable ranges. */
 export class PropertyTree {
@@ -189,7 +206,7 @@ export class PropertyTree {
   }
   rows(): PropertyRow[] {
     const rows: Omit<PropertyRow, "label" | "preview">[] = [];
-    const visit = (key: string): void => {
+    const visit = (key: string, names: string[] = []): void => {
       const branch = this.branches.get(key);
       if (!branch) {
         return;
@@ -206,6 +223,7 @@ export class PropertyTree {
           const expanded = this.expanded.has(path);
           rows.push({
             ...base,
+            path: [...names, `range:${start}:${end}`],
             name: `Properties ${start + 1}–${end}`,
             key: path,
             value: { kind: "", display: "", handle: null, truncated: false },
@@ -215,7 +233,7 @@ export class PropertyTree {
             rangeEnd: end,
           });
           if (expanded) {
-            visit(path);
+            visit(path, names);
           }
         }
       } else {
@@ -226,6 +244,7 @@ export class PropertyTree {
           rows.push({
             ...base,
             ...property,
+            path: [...names, property.name],
             key: path,
             propertyIndex,
             expanded,
@@ -235,12 +254,13 @@ export class PropertyTree {
                 ["object", "array", "function"].includes(property.value.kind)),
           });
           if (expanded) {
-            visit(path);
+            visit(path, [...names, property.name]);
           }
         }
         if (branch.next !== null) {
           rows.push({
             ...base,
+            path: [...names, "more"],
             name: "Show more properties",
             key: `${key}:more`,
             value: { kind: "", display: "", handle: null, truncated: false },
@@ -259,9 +279,7 @@ export class PropertyTree {
           ? JSON.stringify(row.name)
           : row.name,
       ),
-      preview: inline(
-        row.value.kind === "string" ? JSON.stringify(row.value.display) : row.value.display,
-      ),
+      preview: valuePreview(row.value),
     }));
   }
 }

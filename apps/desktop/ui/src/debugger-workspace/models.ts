@@ -34,6 +34,7 @@ export interface DebugValue {
 export interface DebugProperty {
   name: string;
   value: DebugValue;
+  writable?: boolean;
 }
 export interface SourceBreakpoint {
   logExpression?: string | undefined;
@@ -73,6 +74,14 @@ export type DebugAction =
       refresh: boolean;
     }
   | { kind: "property"; pause: number; handle: number; index: number }
+  | {
+      kind: "set-value";
+      pause: number;
+      frame: number;
+      handle: number;
+      index: number;
+      expression: string;
+    }
   | { kind: "release"; pause: number; handles: number[] }
   | { kind: "exceptions"; policy: "none" | "uncaught" | "all" }
   | { kind: "breakpoints"; values: SourceBreakpoint[] }

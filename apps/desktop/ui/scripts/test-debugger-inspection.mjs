@@ -474,3 +474,140 @@ test("collapsing a pending branch frees both its parent page and late results", 
   registry.dispose();
   await tick();
 });
+
+function automaticInspection(inventory) {
+  let serial = 0;
+  const sent = [];
+  const registry = new Inspection(
+    async (action) => {
+      const request = ++serial;
+      sent.push(action);
+      setTimeout(() => {
+        if (action.kind === "release")
+          return registry.receive("s", request, { kind: "acknowledged" });
+        if (action.kind === "property")
+          return registry.receive("s", request, {
+            kind: "evaluated",
+            pause: action.pause,
+            value: inventory[action.handle][action.index].value,
+            thrown: false,
+          });
+        const all = inventory[action.handle] ?? [];
+        const properties = all
+          .slice(action.offset, action.offset + action.limit)
+          .map((property) => ({ ...property, value: { ...property.value, handle: null } }));
+        registry.receive("s", request, {
+          kind: "property-preview",
+          pause: action.pause,
+          handle: action.handle,
+          offset: action.offset,
+          total: all.length,
+          next:
+            action.offset + properties.length < all.length
+              ? action.offset + properties.length
+              : null,
+          properties,
+        });
+      }, 0);
+      return request;
+    },
+    () => true,
+    () => {},
+  );
+  return { registry, sent };
+}
+
+test("restoring a new pause follows property names after reordering and highlights changed leaves", async () => {
+  const inventory = {
+    1: [{ name: "child", value: value(2) }],
+    2: [
+      { name: "answer", value: { kind: "number", display: "1", handle: null, truncated: false } },
+    ],
+  };
+  const { registry, sent } = automaticInspection(inventory);
+  registry.set("scope-0", "local", value(1), { session: "s", pause: 1, frame: 0 });
+  await registry.toggle("scope-0");
+  await registry.toggle("scope-0", registry.get("scope-0").rows[0]);
+  const state = registry.capture("scope-0");
+  inventory[3] = [
+    { name: "inserted", value: { kind: "string", display: "42", handle: null, truncated: false } },
+    { name: "child", value: value(4) },
+  ];
+  inventory[4] = [
+    { name: "answer", value: { kind: "number", display: "2", handle: null, truncated: false } },
+  ];
+  registry.set("scope-0", "local", value(3), { session: "s", pause: 2, frame: 0 });
+  await registry.restore("scope-0", state);
+  assert.equal(registry.get("scope-0").rows.find((row) => row.name === "answer").changed, true);
+  assert.ok(
+    sent.some((action) => action.kind === "property" && action.handle === 3 && action.index === 1),
+  );
+  assert.equal(registry.get("scope-0").rows[0].preview, '"42"');
+  registry.dispose();
+  await tick();
+});
+
+test("restoring an expanded property beyond the first page loads its original range", async () => {
+  const inventory = {
+    1: Array.from({ length: 150 }, (_, i) => ({
+      name: "item" + i,
+      value: value(i === 149 ? 2 : null),
+    })),
+    2: [
+      { name: "answer", value: { kind: "number", display: "7", handle: null, truncated: false } },
+    ],
+  };
+  const { registry } = automaticInspection(inventory);
+  registry.set("result", "Result", value(1), { session: "s", pause: 1, frame: 0 });
+  await registry.toggle("result");
+  await registry.toggle("result", registry.get("result").rows.at(-1));
+  await registry.toggle(
+    "result",
+    registry.get("result").rows.find((row) => row.name === "item149"),
+  );
+  const state = registry.capture("result");
+  registry.set("result", "Result", value(1), { session: "s", pause: 2, frame: 0 });
+  await registry.restore("result", state);
+  assert.equal(registry.get("result").rows.find((row) => row.name === "item149").expanded, true);
+  assert.equal(registry.get("result").rows.find((row) => row.name === "answer").value.display, "7");
+  registry.dispose();
+  await tick();
+});
+
+test("ambiguous displayed names are not restored onto a different native property", async () => {
+  const inventory = {
+    1: [
+      { name: "[Symbol key]", value: value(2) },
+      { name: "[Symbol key]", value: value(3) },
+    ],
+    2: [],
+    3: [],
+  };
+  const { registry } = automaticInspection(inventory);
+  registry.set("result", "Result", value(1), { session: "s", pause: 1, frame: 0 });
+  await registry.toggle("result");
+  await registry.toggle("result", registry.get("result").rows[1]);
+  const state = registry.capture("result");
+  assert.deepEqual(state.paths, []);
+  registry.dispose();
+  await tick();
+});
+
+test("even unique Symbol and shortened names cannot identify properties after refresh", async () => {
+  for (const name of ["[Symbol key]", "x".repeat(2048)]) {
+    const inventory = {
+      1: [{ name, value: value(2) }],
+      2: [{ name: "child", value: value(3) }],
+      3: [],
+    };
+    const { registry } = automaticInspection(inventory);
+    registry.set("result", "Result", value(1), { session: "s", pause: 1, frame: 0 });
+    await registry.toggle("result");
+    await registry.toggle("result", registry.get("result").rows[0]);
+    const state = registry.capture("result");
+    assert.deepEqual(state.paths, []);
+    assert.deepEqual(state.values, []);
+    registry.dispose();
+    await tick();
+  }
+});

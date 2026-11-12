@@ -180,6 +180,19 @@ impl DebugCommand {
                         && usize::try_from(*limit).is_ok_and(|limit| limit <= MAX_PROPERTIES)
                 }
                 DebugAction::Resume { pause, .. } => *pause > 0,
+                DebugAction::SetValue {
+                    pause,
+                    frame,
+                    handle,
+                    expression,
+                    ..
+                } => {
+                    *pause > 0
+                        && (*frame as usize) < MAX_DEBUG_FRAMES
+                        && *handle > 0
+                        && !expression.trim().is_empty()
+                        && expression.len() <= 8192
+                }
                 DebugAction::Evaluate {
                     expression,
                     pause,
@@ -321,6 +334,19 @@ pub enum DebugAction {
         /// Exact key index returned by property browsing.
         index: u32,
     },
+    /// Explicit replacement of an exact paused binding or own writable data property.
+    SetValue {
+        /// Current pause generation; idle values cannot be edited.
+        pause: u64,
+        /// Lexical frame in which to evaluate the side-effect-free replacement expression.
+        frame: u32,
+        /// Parent scope or object handle from this pause.
+        handle: u32,
+        /// Exact property index in the parent's retained key snapshot.
+        index: u32,
+        /// Bounded JavaScript value expression; incidental side effects are rejected.
+        expression: String,
+    },
     /// Release value handles early without changing execution.
     Release {
         /// Current pause generation, or zero for idle Console values.
@@ -404,6 +430,9 @@ pub struct DebugProperty {
     pub name: String,
     /// Inert value or unavailable/accessor marker.
     pub value: DebugValue,
+    /// Whether explicit replacement is supported; accessors and read-only data stay inert.
+    #[serde(default)]
+    pub writable: bool,
 }
 /// Bounded event/reply stream, separate from ordinary callback results and logs.
 #[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]

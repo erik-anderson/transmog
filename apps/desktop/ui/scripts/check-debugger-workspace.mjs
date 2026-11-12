@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import { checkDebuggerNavigation } from "./check-debugger-navigation.mjs";
 import { checkDebuggerDocking } from "./check-debugger-docking.mjs";
 import { checkDebuggerInspection } from "./check-debugger-inspection.mjs";
+import { checkDebuggerValues } from "./check-debugger-values.mjs";
 import { checkDebuggerControls } from "./check-debugger-controls.mjs";
 import { checkDebuggerAuthoring } from "./check-debugger-authoring.mjs";
 import { checkDebuggerStartup } from "./check-debugger-startup.mjs";
@@ -195,6 +196,7 @@ export async function checkDebuggerWorkspace(page, root) {
     .getByText("42", { exact: true })
     .waitFor();
   await checkDebuggerInspection(page, workspace, root);
+  await checkDebuggerValues(page, workspace, root);
   await checkDebuggerAuthoring(page, workspace, root);
   await checkDebuggerControls(page, workspace, root);
   await checkDebuggerProperties(page, workspace, root);

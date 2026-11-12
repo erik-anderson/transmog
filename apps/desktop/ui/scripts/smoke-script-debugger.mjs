@@ -277,11 +277,12 @@ try {
   await panel.getByRole("combobox", { name: "Pause on exceptions", exact: true }).focus();
   await panel.page().keyboard.press("F8");
   pause = await paused(panel, pause);
-  await panel.getByRole("cell", { name: "7", exact: true }).waitFor();
+  const locals = panel.getByRole("tree", { name: /^local(?: ·|$)/u });
+  await locals.getByText("7", { exact: true }).waitFor();
   await panel.getByRole("button", { name: "object", exact: true }).click();
-  await panel.getByRole("cell", { name: /Accessor/ }).waitFor();
+  await locals.getByText(/Accessor.*not evaluated/u).waitFor();
   await panel.getByRole("button", { name: "nested", exact: true }).click();
-  await panel.getByRole("cell", { name: "42", exact: true }).waitFor();
+  await locals.getByText("42", { exact: true }).waitFor();
   await panel.getByRole("textbox", { name: "Immediate expression" }).fill("local");
   await panel.getByRole("button", { name: "Run", exact: true }).click();
   await panel.locator(".command > pre").filter({ hasText: "7" }).waitFor();
