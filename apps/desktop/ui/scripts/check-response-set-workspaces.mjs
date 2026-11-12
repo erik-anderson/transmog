@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
+import { fillHeaderEditor } from "./header-editor-helpers.mjs";
 
 export async function checkResponseSetWorkspaces(page, root) {
   page.setDefaultTimeout(15000);
@@ -90,6 +91,55 @@ export async function checkResponseSetWorkspaces(page, root) {
     "Invalid unfinished input did not survive selection",
   );
   await editor.locator('[name="requestHeaders"]').fill("");
+  const responseHeaders = editor.locator('header-editor[name="responseHeaders"]');
+  await fillHeaderEditor(responseHeaders, "unfinished response header");
+  await sets.getByRole("button", { name: "Account response", exact: true }).click();
+  await sets.getByRole("button", { name: "Checkout response", exact: true }).click();
+  assert.equal(
+    await responseHeaders
+      .getByRole("textbox", { name: "Response headers as text", exact: true })
+      .inputValue(),
+    "unfinished response header",
+    "Changing response lost unfinished header input",
+  );
+  await fillHeaderEditor(responseHeaders, "X-Repeat: first\nx-repeat: second\nX-Empty:");
+  await responseHeaders.getByRole("button", { name: "Edit as rows", exact: true }).click();
+  assert.deepEqual(
+    await responseHeaders
+      .getByRole("combobox", { name: /^Header name / })
+      .evaluateAll((fields) => fields.map((field) => field.value)),
+    ["X-Repeat", "x-repeat", "X-Empty"],
+    "Restored headers lost duplicate order, casing, or an empty value",
+  );
+  const firstHeaderName = responseHeaders.getByRole("combobox", {
+      name: "Header name 1",
+      exact: true,
+    }),
+    firstHeaderValue = responseHeaders.getByRole("textbox", {
+      name: "Header value 1",
+      exact: true,
+    });
+  await firstHeaderName.fill("Bad:Name");
+  await sets.getByRole("button", { name: "Account response", exact: true }).click();
+  await sets.getByRole("button", { name: "Checkout response", exact: true }).click();
+  assert.equal(
+    await firstHeaderName.inputValue(),
+    "Bad:Name",
+    "Restoring an invalid name changed its field boundaries",
+  );
+  await firstHeaderName.fill("X-Repeat");
+  await firstHeaderValue.fill("first\nX-Injected: second");
+  await sets.getByRole("button", { name: "Account response", exact: true }).click();
+  await sets.getByRole("button", { name: "Checkout response", exact: true }).click();
+  assert.equal(
+    await firstHeaderValue.inputValue(),
+    "first\nX-Injected: second",
+    "Restoring an invalid value created another header",
+  );
+  assert.equal(await responseHeaders.getByRole("combobox", { name: /^Header name / }).count(), 3);
+  assert.equal(await responseHeaders.evaluate((editor) => editor.reportValidity()), false);
+  await firstHeaderValue.fill("first");
+  await fillHeaderEditor(responseHeaders, "");
   await sets
     .locator(".response-set-current")
     .getByLabel("Notes", { exact: true })

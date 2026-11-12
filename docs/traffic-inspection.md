@@ -605,11 +605,17 @@ can stop one connection while keeping its row.
 
 ## Edit and replay
 
-**Edit and replay** opens the original request in Composer. Small bodies use a
-lossless hex editor. Larger captured bodies use **Complete captured body**;
-**Replacement file** streams an explicitly chosen regular file. Captured bytes
-are leased and copied to an anonymous temporary file for streaming so large
-bodies stay outside the WebView editor. Switching modes preserves editor drafts.
+**Edit and replay** opens the original request in Composer. Edit headers in
+Name/Value rows, or choose **Edit as text** to paste a block. Duplicate headers,
+their order and empty values are retained. Errors identify the row or line to
+repair. **Undo remove** restores the last removed header.
+
+Small bodies open as readable text when the encoding permits an exact round trip;
+otherwise they use Hex. **View** converts between Text and Hex without changing
+the bytes. **Expand editor** opens the shared body editor; formatting is explicit,
+and **Apply to draft** returns the edit to Composer. Compressed bodies remain
+encoded. Larger bodies use **Complete captured body**; **Replacement file** streams
+the chosen file. Switching body sources preserves the inline draft.
 
 Missing bodies require a replacement or an explicit **Use an empty body** choice.
 Removing a source never silently turns replay into an empty request. Framing is
@@ -618,7 +624,8 @@ already encoded bytes when that header is retained.
 
 Sending requires the applicable method-risk and credential acknowledgements.
 Replay uses the verifying Rust HTTP/TLS stack with the proxy either running or
-stopped. Failure keeps the draft ready to retry. Results and bounded replay
+stopped. Failure keeps the draft ready to retry. The response identifies whether
+the current request has changed since it was sent. Results and bounded replay
 history retain the originating entry, trace and original entry identity after
 edits, with links back to source traffic while it remains available.
 

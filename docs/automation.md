@@ -503,6 +503,10 @@ HTTP port 80 and HTTPS port 443 are implicit in created rules; matching accepts
 either spelling. Nondefault ports remain explicit. Discard changes restores the captured
 draft and its source. Status, content type, headers and file replacement are
 available before the first save, with protected header bytes retained.
+Response headers use Name/Value rows, with **Edit as text** for bulk changes.
+Duplicates and order are retained; invalid drafts remain editable. The same
+control edits sample headers in rule and script tests. Header matching conditions
+and Set/Append/Remove operations keep their existing semantics.
 The primary Automation action opens Traffic to choose responses, or uses the
 current reusable response. Multiple
 selected rows open a review with eligibility,

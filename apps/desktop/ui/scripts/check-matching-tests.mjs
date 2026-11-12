@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
+import { fillHeaderEditor } from "./header-editor-helpers.mjs";
 
 export async function checkMatchingSelectionRace(page, otherRuleId) {
   const previous = await page.evaluate(() => {
@@ -101,7 +102,10 @@ export async function checkMatchingTests(page, root) {
       }
     await tester.locator(".match-test-headers > summary").click();
     for (const value of ["alpha", "beta"]) {
-      await tester.locator(".match-test-headers textarea").fill("X-Variant: " + value);
+      await fillHeaderEditor(
+        tester.locator(".match-test-headers header-editor"),
+        "X-Variant: " + value,
+      );
       await check("https://api.example.test/users/44", true);
       await tester.getByRole("button", { name: "Add test case", exact: true }).click();
       await page.waitForFunction(

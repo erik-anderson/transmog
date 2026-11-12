@@ -9,6 +9,8 @@ import {
 } from "../script-diagnostics/models.js";
 import initialState from "../initial-state.json";
 import "../editor-surface/editor-surface.js";
+import "../header-editor/header-editor.js";
+import type { HeaderEditor, HeaderChangeDetail } from "../header-editor/header-editor.js";
 import { attr, observable } from "@microsoft/webui-framework";
 import { invoke } from "@tauri-apps/api/core";
 import { WorkspaceElement } from "../workspace-element.js";
@@ -21,7 +23,7 @@ import type {
   ScriptRuntimeStatus,
   SelectedResponse,
 } from "../models.js";
-import { describeError, optionalText, parseHeaderLines } from "../utilities.js";
+import { describeError, optionalText } from "../utilities.js";
 import {
   activeDraft,
   authoringDraft,
@@ -217,9 +219,9 @@ export class ScriptEditor extends WorkspaceElement {
   scriptTestHeaderEdits!: HTMLInputElement;
   scriptTestUrl!: HTMLInputElement;
   scriptTestMethod!: HTMLInputElement;
-  scriptTestHeaders!: HTMLTextAreaElement;
+  scriptTestHeaders!: HeaderEditor;
   scriptTestBody!: HTMLTextAreaElement;
-  scriptTestResponseHeaders!: HTMLTextAreaElement;
+  scriptTestResponseHeaders!: HeaderEditor;
   scriptTestStatus!: HTMLInputElement;
   scriptTestLocal!: HTMLInputElement;
   scriptTestFailure!: HTMLSelectElement;
@@ -413,6 +415,9 @@ export class ScriptEditor extends WorkspaceElement {
   changeTestMode(event: Event): void {
     this.testMode = (event.target as HTMLSelectElement).value;
     this.markTestChanged();
+  }
+  testHeadersChanged(event: CustomEvent<HeaderChangeDetail>): void {
+    this.markTestChanged(event);
   }
   changeTestHandler(): void {
     this.testStream = this.scriptTestHandler.value === "onResponseChunk";
@@ -703,10 +708,12 @@ export class ScriptEditor extends WorkspaceElement {
     }
     this.scriptTestUrl.value = request.target ?? "";
     this.scriptTestMethod.value = request.method ?? "GET";
-    this.scriptTestHeaders.value = request.headers
-      .filter((header) => !header.sensitive)
-      .map((header) => header.name + ": " + header.value)
-      .join("\n");
+    this.scriptTestHeaders.replaceValue(
+      request.headers
+        .filter((header) => !header.sensitive)
+        .map((header) => header.name + ": " + header.value)
+        .join("\n"),
+    );
     this.scriptTestBody.value = "";
     this.markTestChanged();
   }
@@ -1047,6 +1054,28 @@ export class ScriptEditor extends WorkspaceElement {
     }
     const version = this.editVersion;
     this.testOutdated = Boolean(this.testResult);
+    const readHeaders = (editor: HeaderEditor) => {
+      try {
+        return { headers: editor.getHeaders(), error: null };
+      } catch (error) {
+        return { headers: null, error };
+      }
+    };
+    const requestHeaderSnapshot = readHeaders(this.scriptTestHeaders),
+      responseHeaderSnapshot = readHeaders(this.scriptTestResponseHeaders);
+    const requireHeaders = (snapshot: ReturnType<typeof readHeaders>, editor: HeaderEditor) => {
+      if (snapshot.headers) {
+        return snapshot.headers;
+      }
+      if (testVersion === this.testVersion) {
+        const surface = editor.closest<HTMLDetailsElement>(".script-test");
+        if (surface) {
+          surface.open = true;
+        }
+        editor.reportValidity();
+      }
+      throw snapshot.error;
+    };
     const input = {
       url: this.scriptTestUrl.value,
       method: this.scriptTestMethod.value,
@@ -1068,6 +1097,7 @@ export class ScriptEditor extends WorkspaceElement {
       canEditHeaders: this.scriptTestHeaderEdits.checked,
     };
     try {
+      const requestHeaders = requireHeaders(requestHeaderSnapshot, this.scriptTestHeaders);
       const candidate = this.candidate ?? (await this.validateDraft());
       if (!candidate || !this.current(version)) {
         return;
@@ -1083,6 +1113,11 @@ export class ScriptEditor extends WorkspaceElement {
         throw new Error("Export at least one supported handler");
       }
       const hasResponse = handler.startsWith("onResponse") || handler === "onCompleted";
+      const responseHeaders = (
+        input.mode === "scenario" ? input.outcome === "response" : hasResponse
+      )
+        ? requireHeaders(responseHeaderSnapshot, this.scriptTestResponseHeaders)
+        : null;
       this.scriptText = "Running the sandbox for this input…";
       this.statusKind = "progress";
       const invocation = {
@@ -1113,7 +1148,7 @@ export class ScriptEditor extends WorkspaceElement {
           port: Number(target.port || (target.protocol === "https:" ? 443 : 80)),
           path: target.pathname,
           query: target.search ? target.search.slice(1) : null,
-          headers: parseHeaderLines(input.headers).map((header) => ({
+          headers: requestHeaders.map((header) => ({
             name: header.name,
             value: Array.from(new TextEncoder().encode(header.value)),
             sensitive: false,
@@ -1123,7 +1158,7 @@ export class ScriptEditor extends WorkspaceElement {
         response: (input.mode === "scenario" ? input.outcome === "response" : hasResponse)
           ? {
               status: input.status,
-              headers: parseHeaderLines(input.responseHeaders).map((h) => ({
+              headers: responseHeaders!.map((h) => ({
                 name: h.name,
                 value: Array.from(new TextEncoder().encode(h.value)),
                 sensitive: false,

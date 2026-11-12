@@ -5,6 +5,8 @@ import "../rule-activation/rule-activation.js";
 import { attr, observable } from "@microsoft/webui-framework";
 import { invoke } from "@tauri-apps/api/core";
 import "../match-editor/match-editor.js";
+import "../header-editor/header-editor.js";
+import type { HeaderEditor, HeaderChangeDetail } from "../header-editor/header-editor.js";
 import type { MatchEditor } from "../match-editor/match-editor.js";
 import type {
   AutomationRule,
@@ -19,7 +21,7 @@ import type {
 } from "../models.js";
 import { bodyEditSummary } from "../text-edit-report.js";
 import { WorkspaceElement } from "../workspace-element.js";
-import { describeError, parseHeaderLines, encodeHeaders } from "../utilities.js";
+import { describeError, encodeHeaders } from "../utilities.js";
 
 type Phase = "request" | "response";
 type ValueEncoding = "text" | "hex";
@@ -171,6 +173,8 @@ export class HeaderRules extends WorkspaceElement {
   hrForm!: HTMLFormElement;
   hrNameInput!: HTMLInputElement;
   hrMatcher!: MatchEditor;
+  hrSampleRequestEditor!: HeaderEditor;
+  hrSampleResponseEditor!: HeaderEditor;
   hrUnsaved!: HTMLDialogElement;
   hrNewButton!: HTMLButtonElement;
   private loaded: AutomationRule | null = null;
@@ -980,6 +984,13 @@ export class HeaderRules extends WorkspaceElement {
     this.hrBeforeText = "";
     this.hrAfterText = "";
   }
+  sampleHeaders(
+    field: "hrSampleRequest" | "hrSampleResponse",
+    event: CustomEvent<HeaderChangeDetail>,
+  ): void {
+    this[field] = event.detail.value;
+    this.invalidateTest();
+  }
   async testDraft(): Promise<void> {
     if (this.hrBusy) {
       return;
@@ -989,13 +1000,24 @@ export class HeaderRules extends WorkspaceElement {
     this.hrTestBusy = true;
     this.hrTestError = "";
     try {
+      // Flush externally loaded fixture values before reading the child editors.
+      this.$flushUpdates();
+      if (
+        !this.hrSampleRequestEditor.reportValidity() ||
+        (this.hrPhase === "response" && !this.hrSampleResponseEditor.reportValidity())
+      ) {
+        throw new Error("Check the sample headers.");
+      }
       const input = {
         rule: this.draft(),
         method: this.hrSampleMethod,
         url: this.hrSampleUrl,
-        requestHeaders: encodeHeaders(parseHeaderLines(this.hrSampleRequest)),
+        requestHeaders: encodeHeaders(this.hrSampleRequestEditor.getHeaders()),
         responseStatus: Number(this.hrSampleStatus),
-        responseHeaders: encodeHeaders(parseHeaderLines(this.hrSampleResponse)),
+        responseHeaders:
+          this.hrPhase === "response"
+            ? encodeHeaders(this.hrSampleResponseEditor.getHeaders())
+            : [],
       };
       if (this.hrText) {
         const result = await invoke<TextTransformTest>("test_response_transform", {

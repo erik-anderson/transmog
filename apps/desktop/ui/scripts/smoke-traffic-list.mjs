@@ -12,7 +12,7 @@ export async function smokeTrafficList(client, screenshot) {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     const state = await client.evaluate(
-      `(()=>{const s=document.querySelector('app-shell'),w=s?.traffic;return {shell:!!s,total:w?.totalMatched,rows:w?.sessions.length,importing:w?.importingTrace,importStatus:w?.importStatus,queryError:w?.queryError,notice:s?.noticeMessageText};})()`,
+      `(()=>{const s=document.querySelector('app-shell'),w=s?.traffic,a=w?.getRootNode().activeElement;return {shell:!!s,total:w?.totalMatched,rows:w?.sessions.length,selected:w?.selectedTrafficCount,selectionSize:w?.trafficSelection.ids.size,selectedSession:w?.selectedSessionId,selectedDetail:w?.selectedDetail?.id,focusedRow:w?.trafficSelection.focused,selectionRevision:w?.trafficSelectionRevision,inspectionGeneration:w?.inspectionGeneration,removing:w?.removingTraffic,queryPending:!!w?.queryPending,undoCount:w?.trafficUndo.length,redoCount:w?.trafficRedo.length,diagnostic:w?.diagnostic,active:{tag:a?.localName,id:a?.id},undoProbe:globalThis.__nativeTrafficUndoProbe,importing:w?.importingTrace,importStatus:w?.importStatus,queryError:w?.queryError,notice:s?.noticeMessageText};})()`,
     );
     throw new Error("Traffic probe did not settle: " + expression + " · " + JSON.stringify(state));
   };
@@ -291,10 +291,21 @@ export async function smokeTrafficList(client, screenshot) {
   );
   await key("Delete", "Delete", 46);
   await wait(`${t}.totalMatched===14999 && !${t}.removingTraffic`);
-  await key("z", "KeyZ", 90, 2);
-  await wait(
-    `${t}.totalMatched===20000 && ${t}.selectedTrafficCount===5001 && !${t}.removingTraffic`,
+  // Record newer focus or navigation that can legitimately supersede selection
+  // restoration. Keep the original native keyboard assertion unchanged.
+  await client.evaluate(
+    `(()=>{const w=${t},root=w.getRootNode(),active=root.activeElement;globalThis.__nativeTrafficUndoProbe={selectionRevision:w.trafficSelectionRevision,inspectionGeneration:w.inspectionGeneration,selected:w.selectedTrafficCount,selectedSession:w.selectedSessionId,selectedDetail:w.selectedDetail?.id,focusedRow:w.trafficSelection.focused,active:{tag:active?.localName,id:active?.id},focusEvents:[]};const record=event=>{const target=event.composedPath()[0],probe=globalThis.__nativeTrafficUndoProbe;if(probe&&probe.focusEvents.length<50)probe.focusEvents.push({tag:target?.localName,id:target?.id,selectionRevision:w.trafficSelectionRevision,inspectionGeneration:w.inspectionGeneration,selected:w.selectedTrafficCount,removing:w.removingTraffic});};root.addEventListener('focusin',record,true);globalThis.__nativeTrafficUndoCleanup=()=>root.removeEventListener('focusin',record,true);})()`,
   );
+  try {
+    await key("z", "KeyZ", 90, 2);
+    await wait(
+      `${t}.totalMatched===20000 && ${t}.selectedTrafficCount===5001 && !${t}.removingTraffic`,
+    );
+  } finally {
+    await client.evaluate(
+      `(()=>{globalThis.__nativeTrafficUndoCleanup?.();delete globalThis.__nativeTrafficUndoCleanup;delete globalThis.__nativeTrafficUndoProbe;})()`,
+    );
+  }
   assert.equal(
     await client.evaluate(`${t}.selectedDetail?.id===${t}.trafficSelection.focused`),
     true,

@@ -38,6 +38,9 @@ import { checkBodyDecoding, checkXssiJson } from "./check-body-decoding.mjs";
 import { checkResponseSetPreview } from "./check-response-set-preview.mjs";
 import { checkTextEdits } from "./check-text-edits.mjs";
 import { checkHeaderRules } from "./check-header-rules.mjs";
+import { fillHeaderEditor } from "./header-editor-helpers.mjs";
+import { checkHeaderEditor } from "./check-header-editor.mjs";
+import { checkComposerAuthoring } from "./check-composer-authoring.mjs";
 import { checkIncidents } from "./check-incidents.mjs";
 import { checkResponseBodyEditor } from "./check-response-body-editor.mjs";
 import { checkBinaryResponse } from "./check-binary-response.mjs";
@@ -4729,6 +4732,14 @@ const cancelRule = async () => {
 const runBrowserCheck = createBrowserCheckRunner();
 
 try {
+  if (process.argv.includes("--composer-authoring-only")) {
+    await checkHeaderEditor(page, root);
+    await checkComposerAuthoring(page, root);
+    assert.deepEqual(errors, []);
+    await browser.close();
+    process.stdout.write("Header and Composer authoring checks passed.\n");
+    process.exit(0);
+  }
   if (process.argv.includes("--mcp-only")) {
     await checkMcp(page, root);
     assert.deepEqual(errors, []);
@@ -6219,7 +6230,7 @@ try {
     "http://example.test/second",
   );
   assert.equal(
-    await page.locator('#composer textarea[name="headers"]').inputValue(),
+    await page.locator("#composer header-editor").evaluate((editor) => editor.value),
     "Accept: */*",
   );
   assert.equal(
@@ -6264,9 +6275,9 @@ try {
   assert.equal(await page.locator('#composer input[name="nonIdempotent"]').isVisible(), true);
   await page.locator('#composer input[name="method"]').fill("GET");
   assert.equal(await page.locator('#composer input[name="nonIdempotent"]').isVisible(), false);
-  await page.locator('#composer textarea[name="headers"]').fill("  Authorization: explicit");
+  await fillHeaderEditor(page.locator("#composer header-editor"), "  Authorization: explicit");
   assert.equal(await page.locator('#composer input[name="credentials"]').isVisible(), true);
-  await page.locator('#composer textarea[name="headers"]').fill("Accept: */*");
+  await fillHeaderEditor(page.locator("#composer header-editor"), "Accept: */*");
   await page.evaluate(() => (globalThis.__workspaceFixture.composerError = true));
   await page.getByRole("button", { name: "Send request", exact: true }).click();
   await page
@@ -6860,7 +6871,12 @@ try {
     false,
   );
   assert.equal(await autoField("body").getAttribute("rows"), "12");
-  assert.equal(await autoField("responseHeaders").getAttribute("rows"), "10");
+  assert.equal(
+    await autoField("responseHeaders")
+      .getByRole("button", { name: "Add header", exact: true })
+      .isVisible(),
+    true,
+  );
   assert.equal(
     await autoField("status").evaluate(
       (el) => el.closest("details").querySelector("summary").textContent,
@@ -7029,7 +7045,7 @@ try {
     rawCapturedHeaders,
     "Metadata-only captured Save changed header bytes or repeated-field order",
   );
-  await autoField("responseHeaders").fill("X-Repeat: alpha\nx-repeat: changed");
+  await fillHeaderEditor(autoField("responseHeaders"), "X-Repeat: alpha \t\nx-repeat: changed");
   await autoEditor.getByRole("button", { name: "Save rule", exact: true }).click();
   await savedProperties();
   assert.deepEqual(
@@ -7048,7 +7064,7 @@ try {
     "x-repeat",
     "Merging headers lost an authored capitalization change",
   );
-  await autoField("responseHeaders").fill("X-Repeat: changed");
+  await fillHeaderEditor(autoField("responseHeaders"), "X-Repeat: changed");
   await autoField("status").fill("200");
   await autoEditor.getByRole("button", { name: "Save rule", exact: true }).click();
   await savedProperties();
@@ -7344,9 +7360,9 @@ try {
       .locator("summary")
       .first()
       .click();
-  await autoField("responseHeaders").fill("Also not a header");
+  await fillHeaderEditor(autoField("responseHeaders"), "Also not a header");
   await autoEditor.getByRole("button", { name: "Save rule", exact: true }).click();
-  await page.locator("#auto-response-headers-error").waitFor({ state: "visible" });
+  await autoField("responseHeaders").locator(".header-editor-error").waitFor({ state: "visible" });
   if (
     !(await autoEditor
       .locator('details:has([name="responseHeaders"])')
@@ -7357,7 +7373,8 @@ try {
       .locator("summary")
       .first()
       .click();
-  await autoField("responseHeaders").fill(
+  await fillHeaderEditor(
+    autoField("responseHeaders"),
     "X-Fixture: yes\nContent-Length: 999\nContent-Encoding: gzip\nContent-Type: incorrect/type",
   );
   await autoField("body").fill("Authored response body");
@@ -10575,6 +10592,8 @@ try {
   await runBrowserCheck(checkHeaderRules, page, root);
   await runBrowserCheck(checkTextEdits, page, root);
   await runBrowserCheck(checkTrafficFollowing, page, root);
+  await runBrowserCheck(checkHeaderEditor, page, root);
+  await runBrowserCheck(checkComposerAuthoring, page, root);
   assert.deepEqual(errors, []);
   process.stdout.write(
     JSON.stringify({

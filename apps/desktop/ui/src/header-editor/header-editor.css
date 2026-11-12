@@ -1,0 +1,23 @@
+header-editor { display:block; min-width:0; }
+.header-editor-surface { display:grid; min-width:0; gap:.25rem; container-type:inline-size; }
+.header-editor-heading { display:flex; align-items:baseline; justify-content:space-between; flex-wrap:wrap; gap:.25rem .5rem; color:var(--muted); font-size:.8125rem; }
+.header-editor-heading > span { overflow-wrap:anywhere; }
+.header-editor-columns,.header-editor-row { display:grid; grid-template-columns:minmax(6rem,30%) minmax(0,1fr) 4.5rem; align-items:start; gap:.3rem; min-width:0; }
+.header-editor-columns { color:var(--muted); font-size:.75rem; }
+.header-editor-rows { display:grid; gap:.3rem; }
+.header-editor-row > input,.header-editor-row > textarea,.header-editor-raw { width:100%; min-width:0; margin:0; font:.8125rem/1.4 "Cascadia Mono",Consolas,monospace; }
+.header-editor-row > textarea { min-height:2rem; max-height:8rem; resize:vertical; white-space:pre-wrap; overflow-wrap:anywhere; }
+.header-editor-remove { justify-self:stretch; }
+.header-editor-actions { display:flex; flex-wrap:wrap; gap:.3rem; }
+.header-editor-raw { min-height:6rem; resize:vertical; white-space:pre-wrap; overflow-wrap:anywhere; }
+.header-editor-surface > .header-editor-error { margin:0; color:var(--danger); font-size:.8125rem; overflow-wrap:anywhere; }
+.header-editor-surface > .header-editor-empty { margin:0; color:var(--muted); font-size:.8125rem; }
+.header-editor-row [aria-invalid="true"],.header-editor-raw[aria-invalid="true"] { border-color:var(--danger); }
+header-editor[readonly] .header-editor-columns,header-editor[readonly] .header-editor-row { grid-template-columns:minmax(6rem,30%) minmax(0,1fr); }
+@supports (field-sizing:content) { .header-editor-row > textarea { field-sizing:content; } }
+@container (max-width:24rem) {
+  .header-editor-columns,.header-editor-row { grid-template-columns:minmax(4.5rem,34%) minmax(0,1fr) 3.8rem; gap:.2rem; }
+  .header-editor-row > input,.header-editor-row > textarea { padding:.35rem; }
+  .header-editor-remove { padding:.25rem; }
+}
+@media(forced-colors:active) { .header-editor-row [aria-invalid="true"],.header-editor-raw[aria-invalid="true"] { border-color:Mark; }.header-editor-error { color:CanvasText; } }

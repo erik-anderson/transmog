@@ -16,6 +16,9 @@ export interface BodyCommit {
   bytes?: number[];
 }
 export interface BodyEditorOptions {
+  title?: string;
+  subject?: string;
+  contentTypeLocation?: string;
   mode?: BodyMode;
   textEncoding?: string | null;
   bytes?: number[];
@@ -67,11 +70,13 @@ export function responseBodyLanguage(mediaType: string, value: string): BodyLang
 /** One lazily allocated syntax editor for the active response-body dialog. */
 export class ResponseBodyEditor extends WebUIElement {
   @attr theme = "system";
+  @observable bodyDialogTitle = "Edit response body";
   @observable bodyLanguage: BodyLanguage = "plaintext";
   @observable bodyMode: BodyMode = "text";
   @observable bodyValueLabel = "Response body text";
   @observable bodyByteStatus = "";
-  @observable bodySaveUnavailableReason = "";
+  @observable bodySaveUnavailableReason =
+    "Apply to the draft, then save the rule from its properties.";
   @observable bodyEditorReady = false;
   @observable bodyEditorLoaded = false;
   @observable bodyCanSave = false;
@@ -94,6 +99,8 @@ export class ResponseBodyEditor extends WebUIElement {
   private generation = 0;
   private opener: HTMLElement | null = null;
   private textEncoding: string | null = "utf-8";
+  private bodySubject = "Response";
+  private contentTypeLocation = "Response";
   private contentListener: Monaco.IDisposable | null = null;
   private viewBytes: number[] | null = null;
   private viewValue = "";
@@ -135,6 +142,9 @@ export class ResponseBodyEditor extends WebUIElement {
     this.opener = opener;
     this.bodyLanguage = language;
     this.bodyMode = options.mode ?? "text";
+    this.bodyDialogTitle = options.title ?? "Edit response body";
+    this.bodySubject = options.subject ?? "Response";
+    this.contentTypeLocation = options.contentTypeLocation ?? "Response";
     this.textEncoding = options.textEncoding === undefined ? "utf-8" : options.textEncoding;
     this.bodySaveLabel = options.saveLabel ?? "Save rule";
     this.bodySaveDescription =
@@ -146,8 +156,7 @@ export class ResponseBodyEditor extends WebUIElement {
     this.bodySaveUnavailableReason =
       options.saveUnavailableReason ??
       "Apply to the draft, then save the rule from its properties.";
-    this.bodyValueLabel =
-      this.bodyMode === "hex" ? "Response body hex bytes" : "Response body text";
+    this.bodyValueLabel = this.valueLabel();
     this.bodyEditorStatus = "Loading body editor…";
     this.$flushUpdates();
     this.fallbackInput.value = value;
@@ -261,7 +270,7 @@ export class ResponseBodyEditor extends WebUIElement {
       const bytes = this.currentBytes(),
         value = renderBodyBytes(bytes, mode, this.textEncoding);
       this.bodyMode = mode;
-      this.bodyValueLabel = mode === "hex" ? "Response body hex bytes" : "Response body text";
+      this.bodyValueLabel = this.valueLabel();
       this.bodyError = "";
       // Representation changes are not text edits: keeping the old text undo stack
       // would let Undo place hex digits in Text mode (and silently change bytes).
@@ -291,13 +300,16 @@ export class ResponseBodyEditor extends WebUIElement {
         ? "html"
         : this.bodyLanguage;
   }
+  private valueLabel(): string {
+    return this.bodySubject + (this.bodyMode === "hex" ? " body hex bytes" : " body text");
+  }
   private updateEditorStatus(): void {
     this.bodyEditorStatus =
       this.bodyMode === "hex"
         ? "Edit complete byte pairs (00–FF), separated by spaces or new lines."
         : this.bodyLanguage === "svg"
           ? "SVG formatting is unavailable to preserve markup."
-          : "Language affects highlighting and formatting. Content type is set in Response.";
+          : `Language affects highlighting and formatting. Content type is set in ${this.contentTypeLocation}.`;
   }
   updateByteStatus(): void {
     try {

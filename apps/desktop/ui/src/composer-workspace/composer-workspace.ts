@@ -3,8 +3,15 @@ import { attr, observable } from "@microsoft/webui-framework";
 import { invoke } from "@tauri-apps/api/core";
 import { WorkspaceElement } from "../workspace-element.js";
 import type { ComposerSource, ComposerResult, ComposerSnapshot, SessionDetail } from "../models.js";
-import { describeError, parseHeaderLines, shortUrl } from "../utilities.js";
+import { describeError, responseTextEncoding, shortUrl } from "../utilities.js";
 import type { CertificateViewer } from "../certificate-viewer/certificate-viewer.js";
+import type { HeaderEditor, HeaderChangeDetail } from "../header-editor/header-editor.js";
+import {
+  type ResponseBodyEditor,
+  responseBodyLanguage,
+  type BodyCommit,
+} from "../response-body-editor/response-body-editor.js";
+import { bytesToHex, encodeBody, equalBodyBytes, renderBodyBytes } from "../response-body-codec.js";
 
 export class ComposerWorkspace extends WorkspaceElement {
   certificateViewer!: CertificateViewer;
@@ -17,6 +24,7 @@ export class ComposerWorkspace extends WorkspaceElement {
     }
   }
   @attr view = "traffic";
+  @attr theme = "system";
   @observable composerText = initialState.composerText;
   @observable composerError = "";
   @observable composerBusy = false;
@@ -25,9 +33,13 @@ export class ComposerWorkspace extends WorkspaceElement {
   @observable composerResult: ComposerResult | null = null;
   @observable resultRequestLabel = "";
   @observable resultTone = "";
+  @observable resultMatchesDraft = false;
   @observable needsNonIdempotent = false;
   @observable needsCredentials = false;
   @observable bodyHexMode = false;
+  @observable composerBodyError = "";
+  @observable composerBodyByteStatus = "0 bytes";
+  @observable composerBodyMaxLength = 8 * 1024 * 1024;
   @observable composerBodyMissing = false;
   @observable composerBodyMode = "inline";
   @observable composerBodyFile = "";
@@ -51,13 +63,25 @@ export class ComposerWorkspace extends WorkspaceElement {
   @observable composerSourceLabel = "";
   @observable composerSourceAvailable = false;
   composerForm!: HTMLFormElement;
+  headerEditor!: HeaderEditor;
+  bodyEditor!: ResponseBodyEditor;
   replaceComposerDialog!: HTMLDialogElement;
   private draftGeneration = 0;
+  private draftIdentity = 0;
   private bodyRevision = 0;
   private editVersion = 0;
+  private paneRevision = 0;
+  private sendRevision = 0;
+  private sourceRevision = 0;
+  private bodyTextEncoding: string | null = "utf-8";
+  private bodyViewValue = "";
+  private bodyViewBytes: number[] | null = null;
+  private bodyEditorDraft: { generation: number; revision: number; editVersion: number } | null =
+    null;
   private leaveResolve: ((value: boolean) => void) | null = null;
   protected hydratedCallback(): void {
     this.updateRisk();
+    this.updateBodyStatus();
   }
   viewChanged(): void {
     if (this.view === "composer" && this.composerSourceId) {
@@ -68,24 +92,42 @@ export class ComposerWorkspace extends WorkspaceElement {
     return this.composerForm.elements.namedItem(name) as HTMLInputElement;
   }
   markComposerDirty(event: Event): void {
-    this.composerDirty = true;
-    this.editVersion++;
+    // Header editor owns its native input events and emits one complete draft change.
+    if (event.composedPath().includes(this.headerEditor)) {
+      return;
+    }
     const name = (event.target as HTMLInputElement).name;
+    if (name === "bodyView") {
+      return;
+    }
+    this.markDirty();
     if (name === "bodyMode") {
       this.composerBodyMode = this.input("bodyMode").value;
       this.bodyRevision++;
       this.updateBodyAvailability();
     }
-    if (name === "body" || name === "bodyHex") {
+    if (name === "body") {
       this.bodyRevision++;
       this.inlineBodyAvailable = true;
       this.updateBodyAvailability();
+      this.updateBodyStatus();
     }
     if (name === "method") {
       this.input("nonIdempotent").checked = false;
     }
-    if (name === "headers") {
-      this.input("credentials").checked = false;
+    this.updateRisk();
+  }
+  private markDirty(): void {
+    this.composerDirty = true;
+    this.editVersion++;
+    this.resultMatchesDraft = false;
+  }
+  headersChanged(event: CustomEvent<HeaderChangeDetail>): void {
+    event.stopPropagation();
+    this.markDirty();
+    this.input("credentials").checked = false;
+    if (event.detail.headers) {
+      this.updateBodyEncoding(event.detail.headers);
     }
     this.updateRisk();
   }
@@ -94,11 +136,11 @@ export class ComposerWorkspace extends WorkspaceElement {
       this.input("method").value.trim(),
     );
     this.needsCredentials = /^\s*(authorization|proxy-authorization|cookie)\s*:/im.test(
-      this.input("headers").value,
+      this.headerEditor.value,
     );
-    this.bodyHexMode = this.input("bodyHex").checked;
   }
   showComposerPane(pane: string): void {
+    this.paneRevision++;
     this.composerPane = pane;
   }
   useEmptyBody(): void {
@@ -106,10 +148,155 @@ export class ComposerWorkspace extends WorkspaceElement {
     this.input("bodyMode").value = "inline";
     this.inlineBodyAvailable = true;
     this.composerBodyMissing = false;
-    this.input("body").value = "";
-    this.composerDirty = true;
-    this.editVersion++;
+    this.setBodyBytes([], this.bodyHexMode);
+    this.markDirty();
     this.bodyRevision++;
+  }
+  private currentBodyBytes(): number[] {
+    const value = this.input("body").value;
+    return this.bodyViewBytes && value === this.bodyViewValue
+      ? this.bodyViewBytes
+      : encodeBody(value, this.bodyHexMode ? "hex" : "text", this.bodyTextEncoding);
+  }
+  private setBodyBytes(bytes: number[], hex = false): void {
+    let value: string;
+    try {
+      value = renderBodyBytes(bytes, hex ? "hex" : "text", this.bodyTextEncoding);
+    } catch {
+      hex = true;
+      value = bytesToHex(bytes);
+    }
+    this.bodyHexMode = hex;
+    this.composerBodyMaxLength = (hex ? 12 : 8) * 1024 * 1024;
+    this.input("bodyView").value = hex ? "hex" : "text";
+    this.input("body").value = value;
+    // Textareas normalize newlines. Keep the original bytes until the user edits.
+    this.bodyViewValue = this.input("body").value;
+    this.bodyViewBytes = bytes;
+    this.updateBodyStatus();
+  }
+  private encodingForHeaders(headers: Array<{ name: string; value: string }>): string | null {
+    const encoded = headers
+      .filter((header) => header.name.toLowerCase() === "content-encoding")
+      .flatMap((header) => header.value.split(","))
+      .some((coding) => {
+        const token = coding.trim().toLowerCase();
+        return token.length > 0 && token !== "identity";
+      });
+    return encoded
+      ? null
+      : responseTextEncoding(
+          headers.find((header) => header.name.toLowerCase() === "content-type")?.value ?? null,
+        );
+  }
+  private updateBodyEncoding(headers: Array<{ name: string; value: string }>): void {
+    const encoding = this.encodingForHeaders(headers);
+    if (encoding === this.bodyTextEncoding) {
+      return;
+    }
+    let bytes: number[] | null = null;
+    try {
+      bytes = this.currentBodyBytes();
+    } catch {
+      // An incomplete hex draft must remain editable across header changes.
+    }
+    this.bodyTextEncoding = encoding;
+    if (bytes) {
+      this.setBodyBytes(bytes, this.bodyHexMode);
+    } else {
+      this.updateBodyStatus();
+    }
+  }
+  changeBodyView(event: Event): void {
+    event.stopPropagation();
+    const hex = (event.currentTarget as HTMLSelectElement).value === "hex";
+    if (hex === this.bodyHexMode) {
+      return;
+    }
+    try {
+      const bytes = this.currentBodyBytes();
+      // A failed conversion keeps both the original representation and input.
+      renderBodyBytes(bytes, hex ? "hex" : "text", this.bodyTextEncoding);
+      this.setBodyBytes(bytes, hex);
+      this.bodyRevision++;
+    } catch (error: unknown) {
+      this.input("bodyView").value = this.bodyHexMode ? "hex" : "text";
+      this.composerBodyError = describeError(error);
+    }
+  }
+  private updateBodyStatus(): void {
+    try {
+      const count = this.currentBodyBytes().length;
+      this.composerBodyByteStatus = `${count.toLocaleString()} ${count === 1 ? "byte" : "bytes"}`;
+      this.composerBodyError = "";
+    } catch (error: unknown) {
+      this.composerBodyByteStatus = "";
+      this.composerBodyError = describeError(error);
+    }
+  }
+  expandBody(event: Event): void {
+    this.bodyEditorDraft = {
+      generation: this.draftGeneration,
+      revision: this.bodyRevision,
+      editVersion: this.editVersion,
+    };
+    let bytes: number[] | undefined;
+    try {
+      bytes = this.currentBodyBytes();
+    } catch {
+      // The expanded editor also supports repairing invalid hex drafts.
+    }
+    const value = this.input("body").value;
+    let mediaType = "";
+    try {
+      mediaType =
+        this.headerEditor
+          .getHeaders()
+          .find((header) => header.name.toLowerCase() === "content-type")?.value ?? "";
+    } catch {
+      // Header validation remains beside the header editor.
+    }
+    this.bodyEditor.open(
+      value,
+      responseBodyLanguage(mediaType, value),
+      false,
+      event.currentTarget as HTMLElement,
+      {
+        mode: this.bodyHexMode ? "hex" : "text",
+        textEncoding: this.bodyTextEncoding,
+        ...(bytes ? { bytes } : {}),
+        title: "Edit request body",
+        subject: "Request",
+        contentTypeLocation: "request headers",
+        saveUnavailableReason: "",
+      },
+    );
+  }
+  applyBodyEditor(event: CustomEvent<BodyCommit>): void {
+    event.stopPropagation();
+    const draft = this.bodyEditorDraft;
+    if (
+      !draft ||
+      draft.generation !== this.draftGeneration ||
+      draft.revision !== this.bodyRevision ||
+      draft.editVersion !== this.editVersion
+    ) {
+      this.bodyEditor.bodyError =
+        "The request draft changed while this editor was open. Close it and reopen the current body.";
+      return;
+    }
+    const bytes =
+      event.detail.bytes ??
+      encodeBody(event.detail.value, event.detail.mode, this.bodyTextEncoding);
+    this.setBodyBytes(bytes, event.detail.mode === "hex");
+    this.inlineBodyAvailable = true;
+    this.updateBodyAvailability();
+    this.markDirty();
+    this.bodyRevision++;
+    this.bodyEditor.close();
+  }
+  bodyEditorClosed(): void {
+    this.bodyEditorDraft = null;
   }
   private updateBodyAvailability(): void {
     this.composerBodyMissing =
@@ -141,14 +328,19 @@ export class ComposerWorkspace extends WorkspaceElement {
       this.composerBodyFile = path;
       this.composerBodyMode = "file";
       this.input("bodyMode").value = "file";
-      this.composerDirty = true;
-      this.editVersion++;
+      this.markDirty();
       this.bodyRevision++;
       this.updateBodyAvailability();
       this.composerText =
         "Replacement body file selected. It will stream when you send the request.";
     } catch (error: unknown) {
-      this.composerError = "Body file could not be selected: " + describeError(error);
+      if (
+        generation === this.draftGeneration &&
+        revision === this.bodyRevision &&
+        this.isConnected
+      ) {
+        this.composerError = "Body file could not be selected: " + describeError(error);
+      }
     }
   }
   historyToggled(event: Event): void {
@@ -213,9 +405,10 @@ export class ComposerWorkspace extends WorkspaceElement {
     }
   }
   async showComposerSource(): Promise<void> {
+    const id = this.composerSourceId;
     await this.checkSource();
-    if (this.composerSourceAvailable) {
-      this.$emit("source-traffic-request", this.composerSourceId);
+    if (id === this.composerSourceId && this.composerSourceAvailable) {
+      this.$emit("source-traffic-request", id);
     }
   }
   resolveComposerReplacement(replace: boolean): void {
@@ -228,23 +421,26 @@ export class ComposerWorkspace extends WorkspaceElement {
     this.resolveComposerReplacement(false);
   }
   async populateRequest(detail: SessionDetail): Promise<void> {
-    const generation = ++this.draftGeneration;
+    if (this.leaveResolve) {
+      return;
+    }
+    const sourceRevision = ++this.sourceRevision;
     if (this.composerDirty) {
-      if (this.leaveResolve) {
-        return;
-      }
       const replace = await new Promise<boolean>((resolve) => {
         this.leaveResolve = resolve;
         this.replaceComposerDialog.showModal();
       });
-      if (!replace || generation !== this.draftGeneration) {
+      if (!replace || sourceRevision !== this.sourceRevision) {
         return;
       }
     }
+    const generation = ++this.draftGeneration;
     this.composerText = "Loading the complete captured request…";
     this.composerError = "";
     const revision = ++this.bodyRevision,
       editVersion = this.editVersion;
+    const root = this.getRootNode(),
+      focusAtStart = root instanceof ShadowRoot ? root.activeElement : document.activeElement;
     try {
       const source = await invoke<ComposerSource>("composer_source", { id: detail.id });
       if (
@@ -253,13 +449,17 @@ export class ComposerWorkspace extends WorkspaceElement {
         editVersion !== this.editVersion ||
         !this.isConnected
       ) {
+        if (generation === this.draftGeneration && this.isConnected) {
+          this.composerText = "Captured request loading stopped. Your current draft is preserved.";
+        }
         return;
       }
+      this.draftIdentity++;
       this.input("method").value = source.method;
       this.input("url").value = source.url;
-      this.input("headers").value = source.headers
-        .map((header) => header.name + ": " + header.value)
-        .join("\n");
+      this.headerEditor.replaceValue(
+        source.headers.map((header) => header.name + ": " + header.value).join("\n"),
+      );
       this.capturedBodyId = detail.id;
       this.capturedBodyAvailable = source.bodyAvailable;
       this.composerBodyFile = "";
@@ -271,25 +471,38 @@ export class ComposerWorkspace extends WorkspaceElement {
       this.input("bodyMode").value = this.composerBodyMode;
       this.inlineBodyAvailable = source.bodyAvailable && !source.bodyStreamed;
       this.composerBodyMissing = !source.bodyAvailable;
+      this.bodyTextEncoding = this.encodingForHeaders(source.headers);
+      this.bodyViewBytes = null;
       this.input("body").value = source.body;
-      this.input("bodyHex").checked = true;
+      this.bodyHexMode = true;
+      this.setBodyBytes(encodeBody(source.body, "hex", this.bodyTextEncoding));
       this.input("nonIdempotent").checked = false;
       this.input("credentials").checked = false;
       this.composerSourceId = detail.id;
       this.composerSourceLabel = source.method + " " + shortUrl(source.url);
       this.composerSourceAvailable = true;
       this.composerDirty = false;
+      this.resultMatchesDraft = false;
       this.editVersion++;
       this.composerPane = "request";
       this.updateRisk();
-      this.input("url").focus();
+      if (
+        this.view === "composer" &&
+        (root instanceof ShadowRoot ? root.activeElement : document.activeElement) === focusAtStart
+      ) {
+        this.input("url").focus();
+      }
       this.composerText =
         "Captured request loaded. Review it before sending." +
         (source.notices.length ? " " + source.notices.join(" ") : "");
     } catch (error: unknown) {
-      if (generation === this.draftGeneration) {
-        this.composerError = "Captured request could not be loaded: " + describeError(error);
-        this.composerText = "Your previous draft is still available.";
+      if (generation === this.draftGeneration && this.isConnected) {
+        if (revision === this.bodyRevision && editVersion === this.editVersion) {
+          this.composerError = "Captured request could not be loaded: " + describeError(error);
+          this.composerText = "Your previous draft is still available.";
+        } else {
+          this.composerText = "Captured request loading stopped. Your current draft is preserved.";
+        }
       }
     }
   }
@@ -298,7 +511,34 @@ export class ComposerWorkspace extends WorkspaceElement {
     if (this.composerBusy || this.composerBodyMissing) {
       return;
     }
-    this.draftGeneration++;
+    if (!this.headerEditor.reportValidity()) {
+      return;
+    }
+    let body = "";
+    let bodyIsHex = true;
+    try {
+      if (this.composerBodyMode === "inline") {
+        const bytes = this.currentBodyBytes(),
+          value = this.input("body").value;
+        // Keep UTF-8 text within the existing text input budget. Other encodings,
+        // normalized captured newlines and binary content use exact compact hex.
+        bodyIsHex = this.bodyHexMode || !equalBodyBytes(encodeBody(value, "text", "utf-8"), bytes);
+        body = bodyIsHex ? bytesToHex(bytes).replace(/\s/g, "") : value;
+        if (body.length > 8 * 1024 * 1024) {
+          throw new Error(
+            "Body exceeds the inline request limit. Choose a replacement file instead.",
+          );
+        }
+      }
+    } catch (error: unknown) {
+      this.composerBodyError = describeError(error);
+      this.input("body").focus();
+      return;
+    }
+    const generation = ++this.draftGeneration,
+      sendRevision = ++this.sendRevision,
+      draftIdentity = this.draftIdentity,
+      paneRevision = this.paneRevision;
     this.composerBusy = true;
     this.composerError = "";
     this.composerText = "Sending request…";
@@ -310,7 +550,7 @@ export class ComposerWorkspace extends WorkspaceElement {
         request: {
           method: String(data.get("method") ?? ""),
           url: String(data.get("url") ?? ""),
-          headers: parseHeaderLines(String(data.get("headers") ?? "")),
+          headers: this.headerEditor.getHeaders(),
           sourceEntryId: this.composerSourceId || null,
           bodySource:
             this.composerBodyMode === "captured"
@@ -318,38 +558,66 @@ export class ComposerWorkspace extends WorkspaceElement {
               : this.composerBodyMode === "file"
                 ? { kind: "file", path: this.composerBodyFile }
                 : null,
-          body: this.composerBodyMode === "inline" ? String(data.get("body") ?? "") : "",
-          bodyIsHex: data.get("bodyHex") === "on",
+          body,
+          bodyIsHex,
           acknowledgeNonIdempotent: data.get("nonIdempotent") === "on",
           acknowledgeCredentials: data.get("credentials") === "on",
         },
       });
-      if (!this.isConnected) {
+      if (
+        !this.isConnected ||
+        draftIdentity !== this.draftIdentity ||
+        sendRevision !== this.sendRevision
+      ) {
         return;
       }
       this.composerResult = result;
       this.resultRequestLabel = label;
+      this.resultMatchesDraft = version === this.editVersion;
       this.resultTone =
         result.status >= 400 ? "failed" : result.status >= 300 ? "redirect" : "success";
-      this.composerText = "Response received: HTTP " + result.status;
-      if (version === this.editVersion) {
+      // A source acquisition can own progress without replacing the displayed
+      // draft. Retain its send's response, but leave newer feedback and pane choices.
+      if (generation === this.draftGeneration) {
+        this.composerText =
+          "Response received: HTTP " +
+          result.status +
+          (this.resultMatchesDraft ? "" : ". The request draft has newer edits.");
+      }
+      if (
+        generation === this.draftGeneration &&
+        version === this.editVersion &&
+        paneRevision === this.paneRevision &&
+        this.view === "composer"
+      ) {
         this.composerPane = "response";
       }
       if (this.historyVisible) {
         void this.refreshHistory();
       }
     } catch (error: unknown) {
-      if (this.isConnected) {
+      if (
+        this.isConnected &&
+        generation === this.draftGeneration &&
+        sendRevision === this.sendRevision
+      ) {
         this.composerError = "Send failed: " + describeError(error);
-        this.composerText = "The request draft is ready to retry.";
+        this.composerText =
+          version === this.editVersion
+            ? "The request draft is ready to retry."
+            : "The earlier request failed. Your newer draft is unchanged.";
       }
     } finally {
-      this.composerBusy = false;
+      if (sendRevision === this.sendRevision) {
+        this.composerBusy = false;
+      }
     }
   }
   disconnectedCallback(): void {
     this.historyRevision++;
     this.draftGeneration++;
+    this.sendRevision++;
+    this.sourceRevision++;
     this.leaveResolve?.(false);
     this.leaveResolve = null;
     super.disconnectedCallback();

@@ -1,6 +1,7 @@
 import { newTrafficRule } from "./check-unified-rules.mjs";
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
+import { fillHeaderEditor } from "./header-editor-helpers.mjs";
 
 export async function checkHeaderRules(page, root) {
   await page.addInitScript(() => sessionStorage.setItem("startup-update-tested", "true"));
@@ -50,9 +51,10 @@ export async function checkHeaderRules(page, root) {
     await ops.nth(1).getByLabel("Operation header value", { exact: true }).fill("absent");
     const tester = pane.locator(".header-draft-test");
     await tester.locator("summary").click();
-    await tester
-      .getByLabel(`Sample ${phase} headers`, { exact: true })
-      .fill("X-Existing: first\nx-existing: second\nX-Keep: untouched");
+    await fillHeaderEditor(
+      tester.locator(`header-editor[label="Sample ${phase} headers"]`),
+      "X-Existing: first\nx-existing: second\nX-Keep: untouched",
+    );
     await tester.getByRole("button", { name: "Test draft", exact: true }).click();
     await page.waitForFunction(
       () => !document.querySelector("app-shell").automation.headerRulesEditor.hrTestBusy,
@@ -100,11 +102,10 @@ export async function checkHeaderRules(page, root) {
   const tester = pane.locator(".header-draft-test");
   await tester.locator("summary").click();
   await tester.getByLabel("Sample URL", { exact: true }).fill("https://example.test/policy");
-  await tester
-    .getByLabel("Sample response headers", { exact: true })
-    .fill(
-      "Content-Security-Policy: default-src 'none'\nCache-Control: max-age=60\ncache-control: private\nSet-Cookie: first=1\nSet-Cookie: second=2",
-    );
+  await fillHeaderEditor(
+    tester.locator('header-editor[label="Sample response headers"]'),
+    "Content-Security-Policy: default-src 'none'\nCache-Control: max-age=60\ncache-control: private\nSet-Cookie: first=1\nSet-Cookie: second=2",
+  );
   await tester.getByRole("button", { name: "Test draft", exact: true }).click();
   await page.waitForFunction(
     () => !document.querySelector("app-shell").automation.querySelector("header-rules").hrTestBusy,

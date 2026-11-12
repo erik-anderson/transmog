@@ -18,6 +18,13 @@ import "../response-set-demos/response-set-demos.js";
 import type { ResponseSetDemos } from "../response-set-demos/response-set-demos.js";
 import "../header-rules/header-rules.js";
 import { headerRulePhase, type HeaderRules } from "../header-rules/header-rules.js";
+import "../header-editor/header-editor.js";
+import type {
+  HeaderEditor,
+  HeaderChangeDetail,
+  HeaderDraft,
+} from "../header-editor/header-editor.js";
+import { parseHeaderText } from "../header-editor/headers.js";
 import type { ResponseSetWorkspace } from "../response-set-workspace/response-set-workspace.js";
 import type {
   ResponseSetRestoreRequest,
@@ -419,7 +426,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   }
   compareResponseDraft(mode: string): void {
     this.closeResponseMenu(this.compareResponseMenu, this.compareResponseButton);
-    const data = new FormData(this.autoResponseForm),
+    const data = this.responseFormData(),
       saved = this.savedResponse,
       source = this.autoResponseSourceState;
     try {
@@ -577,6 +584,7 @@ export class AutomationWorkspace extends WorkspaceElement {
       snapshots: [...this.collectionSnapshots.entries()].map(([id, snapshot]) => ({
         id,
         fields: snapshot.fields,
+        headers: snapshot.headers,
         state: snapshot.state,
         matcher: snapshot.matcher,
       })),
@@ -601,6 +609,7 @@ export class AutomationWorkspace extends WorkspaceElement {
       id: this.editingAutoResponseId,
       editor: this.editorRevision,
       values: this.responseValues(),
+      headers: this.responseHeadersEditor.captureDraft(),
       body: this.autoResponseBody.value,
       bodyMode: this.bodyMode,
       encoding: this.bodyTextEncoding,
@@ -850,6 +859,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     string,
     {
       fields: Array<{ name: string; value: string; checked: boolean; customError: string }>;
+      headers: HeaderDraft;
       state: Record<string, unknown>;
       baseline: DraftBaseline;
       matcher: MatchDraft;
@@ -938,6 +948,7 @@ export class AutomationWorkspace extends WorkspaceElement {
       }));
     this.collectionSnapshots.set(this.collectionRuleId, {
       fields,
+      headers: this.responseHeadersEditor.captureDraft(),
       state: Object.fromEntries(
         this.collectionStateKeys.map((key) => [key, Reflect.get(this, key)]),
       ),
@@ -980,6 +991,7 @@ export class AutomationWorkspace extends WorkspaceElement {
         }
       }
     }
+    this.responseHeadersEditor.restoreDraft(snapshot.headers);
     this.matchEditor.condition = this.matcherCondition;
     this.matchEditor.$flushUpdates();
     this.matchEditor.restoreDraft(snapshot.matcher);
@@ -1126,7 +1138,7 @@ export class AutomationWorkspace extends WorkspaceElement {
       }
       this.collectionRuleId = "autoresponse-rule-" + crypto.randomUUID().replaceAll("-", "");
       this.draftDirty = true;
-      const data = new FormData(this.autoResponseForm),
+      const data = this.responseFormData(),
         rule: AutomationRule = {
           id: this.collectionRuleId,
           displayName: String(data.get("name") ?? "New response") || "New response",
@@ -1389,6 +1401,7 @@ export class AutomationWorkspace extends WorkspaceElement {
       drafts: [...this.collectionSnapshots.entries()].map(([id, snapshot]) => ({
         id,
         fields: snapshot.fields,
+        headers: snapshot.headers,
         matcher: snapshot.matcher,
       })),
     });
@@ -1626,7 +1639,8 @@ export class AutomationWorkspace extends WorkspaceElement {
   private retainAdvancedMatcher = true;
   matchEditor!: MatchEditor;
   matchTestUrl!: HTMLInputElement;
-  matchTestHeaders!: HTMLTextAreaElement;
+  matchTestHeaders!: HeaderEditor;
+  responseHeadersEditor!: HeaderEditor;
   matchTestMethod!: HTMLInputElement;
   autoResponseEnabled!: HTMLInputElement;
   private savedResponse: ResponseAssetInspection | null = null;
@@ -2075,15 +2089,21 @@ export class AutomationWorkspace extends WorkspaceElement {
   }
   private nonBodySnapshot(): string {
     const value = (name: string) =>
-      (
-        this.autoResponseForm.elements.namedItem(name) as
-          HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
-      ).value;
+      name === "responseHeaders"
+        ? this.responseHeadersEditor.value
+        : (
+            this.autoResponseForm.elements.namedItem(name) as
+              HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+          ).value;
     const selected = value("method"),
       method = (selected === "CUSTOM" ? value("customMethod") : selected).toUpperCase();
     const headers = (name: string) => {
       try {
-        return parseHeaderLines(value(name)).filter(
+        return (
+          name === "responseHeaders"
+            ? this.responseHeadersEditor.getHeaders()
+            : parseHeaderLines(value(name))
+        ).filter(
           (header) =>
             name !== "responseHeaders" ||
             !["content-length", "content-encoding", "content-type"].includes(
@@ -3105,7 +3125,7 @@ export class AutomationWorkspace extends WorkspaceElement {
         this.renderMatchCases(validation);
         return;
       }
-      const headers = parseHeaderLines(this.matchTestHeaders.value);
+      const headers = this.matchTestHeaders.getHeaders();
       const result = await invoke<MatchTestResult>("test_autoresponse_match", {
         input: {
           matcher,
@@ -3141,7 +3161,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     }
     let headers: Array<{ name: string; value: string }>;
     try {
-      headers = parseHeaderLines(this.matchTestHeaders.value);
+      headers = this.matchTestHeaders.getHeaders();
     } catch (error: unknown) {
       this.matcherTestError = describeError(error);
       return;
@@ -3373,7 +3393,7 @@ export class AutomationWorkspace extends WorkspaceElement {
       if (line === null) {
         return undefined;
       }
-      const header = parseHeaderLines(line)[0]!;
+      const header = parseHeaderText(line)[0]!;
       return take(byLine.get(header.name.toLowerCase() + ": " + header.value));
     });
     this.originalResponseHeaders.forEach(({ field, line }, index) => {
@@ -3445,6 +3465,8 @@ export class AutomationWorkspace extends WorkspaceElement {
     }
     this.responseBaseline = new DraftBaseline();
     this.autoResponseForm.reset();
+    this.responseHeadersEditor.replaceValue("");
+    this.matchTestHeaders.replaceValue("");
     this.matchTestMethod.value = "GET";
     this.matchExpectationChosen = false;
     this.matchExpected = "match";
@@ -3491,11 +3513,10 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.matcherTestRevision++;
     this.matcherTestBusy = false;
     this.autoResponseEnabled.checked = true;
-    for (const field of ["requestHeaders", "responseHeaders"]) {
-      (this.autoResponseForm.elements.namedItem(field) as HTMLTextAreaElement).setCustomValidity(
-        "",
-      );
-    }
+    (
+      this.autoResponseForm.elements.namedItem("requestHeaders") as HTMLTextAreaElement
+    ).setCustomValidity("");
+    this.responseHeadersEditor.setCustomValidity("");
     this.responseOpen = true;
     this.sourceSessionId = "";
     this.sourceLabel = "";
@@ -3571,7 +3592,13 @@ export class AutomationWorkspace extends WorkspaceElement {
     }
   }
   clearHeaderError(field: "requestHeaders" | "responseHeaders"): void {
-    (this.autoResponseForm.elements.namedItem(field) as HTMLTextAreaElement).setCustomValidity("");
+    if (field === "requestHeaders") {
+      (this.autoResponseForm.elements.namedItem(field) as HTMLTextAreaElement).setCustomValidity(
+        "",
+      );
+    } else {
+      this.responseHeadersEditor.setCustomValidity("");
+    }
     if (field === "requestHeaders") {
       this.requestHeadersError = "";
     } else {
@@ -3582,12 +3609,24 @@ export class AutomationWorkspace extends WorkspaceElement {
       this.onMatcherChange();
     }
   }
+  responseHeadersChanged(event: CustomEvent<HeaderChangeDetail>): void {
+    this.responseHeadersError = event.detail.error;
+    this.autoResponseError = "";
+    this.queueResponseDirty();
+  }
+  private responseFormData(): FormData {
+    const data = new FormData(this.autoResponseForm);
+    data.set("responseHeaders", this.responseHeadersEditor.value);
+    return data;
+  }
   private parseEditorHeaders(
     field: "requestHeaders" | "responseHeaders",
     data: FormData,
   ): ReturnType<typeof parseHeaderLines> {
     try {
-      return parseHeaderLines(String(data.get(field) ?? ""));
+      return field === "responseHeaders"
+        ? this.responseHeadersEditor.getHeaders()
+        : parseHeaderLines(String(data.get(field) ?? ""));
     } catch (error: unknown) {
       const message = describeError(error);
       if (field === "requestHeaders") {
@@ -3595,15 +3634,19 @@ export class AutomationWorkspace extends WorkspaceElement {
       } else {
         this.responseHeadersError = message;
       }
-      const input = this.autoResponseForm.elements.namedItem(field) as HTMLTextAreaElement;
       if (field === "responseHeaders") {
         this.responseOpen = true;
       } else {
         this.requestHeadersOpen = true;
       }
       this.$flushUpdates();
-      input.setCustomValidity(message);
-      input.focus();
+      if (field === "responseHeaders") {
+        this.responseHeadersEditor.reportValidity();
+      } else {
+        const input = this.autoResponseForm.elements.namedItem(field) as HTMLTextAreaElement;
+        input.setCustomValidity(message);
+        input.focus();
+      }
       throw error;
     }
   }
@@ -4112,15 +4155,17 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.matcherCondition = { kind: "exact", value: url };
     this.matchTestUrl.value = url;
     this.matchTestMethod.value = source.request.method;
-    this.matchTestHeaders.value = source.request.headers
-      .filter((header) => !header.sensitive && !header.binary)
-      .map((header) => header.name + ": " + header.value)
-      .join("\n");
+    this.matchTestHeaders.replaceValue(
+      source.request.headers
+        .filter((header) => !header.sensitive && !header.binary)
+        .map((header) => header.name + ": " + header.value)
+        .join("\n"),
+    );
     this.autoResponseStatus.value = String(source.response.status);
     this.responseReadOnly = false;
     this.autoResponseMediaType.value = source.body.mediaType ?? "";
     this.responseFieldsHidden = false;
-    (elements.namedItem("responseHeaders") as HTMLTextAreaElement).value = "";
+    this.responseHeadersEditor.replaceValue("");
     this.responseHeadersHidden = false;
     this.capturedOptionsHidden = false;
     this.autoResponseEditBody.checked = false;
@@ -4168,7 +4213,7 @@ export class AutomationWorkspace extends WorkspaceElement {
         return;
       }
       this.savedHeaderText = this.editableHeaders({ headers });
-      (elements.namedItem("responseHeaders") as HTMLTextAreaElement).value = this.savedHeaderText;
+      this.responseHeadersEditor.replaceValue(this.savedHeaderText);
       this.capturedDraft = {
         sessionId,
         detail: structuredClone(detail),
@@ -4461,7 +4506,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     if (this.existingResponse && !this.draftDirty) {
       return true;
     }
-    const data = new FormData(this.autoResponseForm);
+    const data = this.responseFormData();
     const source = this.autoResponseSourceState;
     if (source === null) {
       return false;
@@ -4721,9 +4766,7 @@ export class AutomationWorkspace extends WorkspaceElement {
       if (this.requestHeadersError) {
         (this.autoResponseForm.elements.namedItem("requestHeaders") as HTMLTextAreaElement).focus();
       } else if (this.responseHeadersError) {
-        (
-          this.autoResponseForm.elements.namedItem("responseHeaders") as HTMLTextAreaElement
-        ).focus();
+        this.responseHeadersEditor.reportValidity();
       }
     }
   }
@@ -4899,9 +4942,9 @@ export class AutomationWorkspace extends WorkspaceElement {
             `${header.name}: ${new TextDecoder().decode(new Uint8Array(Array.isArray(header.condition.value) ? header.condition.value : []))}`,
         )
         .join("\n");
-    this.matchTestHeaders.value = (
-      elements.namedItem("requestHeaders") as HTMLTextAreaElement
-    ).value;
+    this.matchTestHeaders.replaceValue(
+      (elements.namedItem("requestHeaders") as HTMLTextAreaElement).value,
+    );
     this.editorTitle = `Edit “${rule.displayName ?? "Saved response"}”`;
     this.sourceText = "Loading saved response…";
     this.responseReadOnly = true;
@@ -4970,7 +5013,7 @@ export class AutomationWorkspace extends WorkspaceElement {
       }
       this.bodyStatusText = inspection.explanation;
       this.savedHeaderText = this.editableHeaders(asset);
-      (elements.namedItem("responseHeaders") as HTMLTextAreaElement).value = this.savedHeaderText;
+      this.responseHeadersEditor.replaceValue(this.savedHeaderText);
       this.encodingOptionsHidden = inspection.contentCodings.length === 0;
       this.preserveEncodingDisabled = bytes === null;
       this.autoResponsePreserveEncoding.checked = asset.linkedBody

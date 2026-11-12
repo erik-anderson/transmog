@@ -6259,9 +6259,21 @@ export class TrafficWorkspace extends WorkspaceElement {
       return;
     }
     this.beginTrafficRemoval();
+    const active = (this.getRootNode() as ShadowRoot).activeElement;
+    if (
+      !this.timelineMode &&
+      active instanceof HTMLElement &&
+      this.trafficTable.contains(active) &&
+      active.closest("tr[data-session-id]")
+    ) {
+      // Backend notifications can recycle this row before Undo returns. Start
+      // tracking newer user focus after our own handoff to the stable table.
+      this.trafficTable.focus({ preventScroll: true });
+    }
     const selection = this.trafficSelectionRevision,
       inspection = this.inspectionGeneration;
     let focus = this.trackNavigationFocus();
+    const scrollInput = this.trackListScrollInput();
     try {
       const restored = await invoke<string[]>("remove_traffic_entries", {
         ids: action.ids,
@@ -6292,7 +6304,8 @@ export class TrafficWorkspace extends WorkspaceElement {
         !this.isConnected ||
         selection !== this.trafficSelectionRevision ||
         inspection !== this.inspectionGeneration ||
-        !focus.unchanged()
+        !focus.unchanged() ||
+        scrollInput.changed()
       ) {
         this.updateTrafficSelection();
         return;
@@ -6313,10 +6326,22 @@ export class TrafficWorkspace extends WorkspaceElement {
           current = () =>
             this.trafficSelectionRevision === revision &&
             this.selectedSessionId === id &&
-            focus.unchanged();
+            focus.unchanged() &&
+            !scrollInput.changed();
         const pending = this.inspectTraffic(id, false, current),
           generation = this.inspectionGeneration;
         await pending;
+        if (
+          this.isConnected &&
+          this.inspectionGeneration === generation &&
+          this.selectedSessionId === id &&
+          this.selectedDetail?.id !== id &&
+          !current()
+        ) {
+          // New navigation can cancel revealing a cold row. Complete the same
+          // inspected request without restoring selection, viewport, or focus.
+          await this.refreshInspection();
+        }
         if (current() && this.inspectionGeneration === generation) {
           if (this.timelineMode) {
             this.timeline.reveal(id);
@@ -6331,6 +6356,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.diagnostic = "Traffic Undo failed: " + describeError(error);
     } finally {
       focus.dispose();
+      scrollInput.dispose();
       this.removingTraffic = false;
     }
   }

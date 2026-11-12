@@ -19,6 +19,7 @@ import { smokeTraceSave } from "./smoke-trace-save.mjs";
 import { smokeConnectTunnels } from "./smoke-connect-tunnels.mjs";
 import { smokeTrafficFavorites } from "./smoke-traffic-favorites.mjs";
 import { smokeBodySource } from "./smoke-body-source.mjs";
+import { smokeComposerAuthoring } from "./smoke-composer-authoring.mjs";
 
 import { nativeFixture } from "./native-fixture.mjs";
 import { smokeWindowShortcuts } from "./smoke-window-shortcuts.mjs";
@@ -892,6 +893,24 @@ try {
     const composerBinary = Buffer.alloc(1024 * 1024 + 17);
     for (let index = 0; index < composerBinary.length; index++) composerBinary[index] = index % 256;
     const replayServer = createServer(async (request, response) => {
+      if (request.url === "/composer-authoring") {
+        const chunks = [];
+        for await (const chunk of request) chunks.push(chunk);
+        const repeated = [];
+        for (let index = 0; index < request.rawHeaders.length; index += 2) {
+          if (request.rawHeaders[index].toLowerCase() === "x-repeat")
+            repeated.push(request.rawHeaders[index + 1]);
+        }
+        response.setHeader("Content-Type", "application/json");
+        response.end(
+          JSON.stringify({
+            bytes: Array.from(Buffer.concat(chunks)),
+            repeated,
+            empty: request.headers["x-empty"],
+          }),
+        );
+        return;
+      }
       if (request.url === "/composer-image.svg") {
         request.resume();
         response.setHeader("Content-Type", "image/svg+xml");
@@ -1008,7 +1027,7 @@ try {
       );
       const composerFixtureUrl = "http://127.0.0.1:" + replayServer.address().port;
       await viewer.evaluate(
-        `(async()=>{const workspace=${composer};workspace.input('method').value='GET';workspace.input('url').value=${JSON.stringify(composerFixtureUrl + "/composer-image.svg")};workspace.input('headers').value='';workspace.input('bodyHex').checked=false;workspace.useEmptyBody();workspace.updateRisk();await workspace.executeComposer(new Event('submit',{cancelable:true}));})()`,
+        `(async()=>{const workspace=${composer};workspace.input('method').value='GET';workspace.input('url').value=${JSON.stringify(composerFixtureUrl + "/composer-image.svg")};workspace.headerEditor.value='';workspace.useEmptyBody();workspace.updateRisk();await workspace.executeComposer(new Event('submit',{cancelable:true}));})()`,
       );
       await waitFor(
         () => viewer.evaluate(`${composerResponse}.querySelector('img')?.naturalWidth===64`),
@@ -1133,6 +1152,12 @@ try {
       }
       await viewer.call("Emulation.clearDeviceMetricsOverride");
       await viewer.evaluate(`${composer}.composerPane='request'`);
+      await smokeComposerAuthoring(
+        viewer,
+        composer,
+        composerFixtureUrl + "/composer-authoring",
+        screenshot,
+      );
       await viewer.evaluate(
         `(async()=>{await ${root}.activateView('traffic');const workspace=${traffic};workspace.searchInput.value='Content-Length';workspace.searchMetadata=false;workspace.searchRequestHeaders=true;workspace.searchResponseHeaders=false;workspace.searchBodies=false;workspace.searchRequestBodies=false;workspace.selectSearchMatches=true;await workspace.runContentSearch();})()`,
       );

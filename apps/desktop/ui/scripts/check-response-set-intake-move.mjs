@@ -495,6 +495,38 @@ export async function checkResponseSetIntakeMove(page, root) {
     assert.equal(rule.id === "move-source", fails);
     results.push({ pendingFailure: fails, newerDraftSaved: true });
   }
+  // Invalid row boundaries can change without changing their bulk-text serialization.
+  // A pending Move must preserve those newer field edits after the dialog closes.
+  await setup();
+  const responseHeaders = editor.locator('header-editor[name="responseHeaders"]');
+  await responseHeaders.getByRole("button", { name: "Add header", exact: true }).click();
+  const headerName = responseHeaders.getByRole("combobox", { name: "Header name 1", exact: true }),
+    headerValue = responseHeaders.getByRole("textbox", { name: "Header value 1", exact: true });
+  await headerName.fill("X: a");
+  await headerValue.fill("b: c");
+  const serializedBefore = await responseHeaders.evaluate((element) => element.value);
+  await open("new");
+  await review();
+  await choose("discard");
+  await page.evaluate(() => (globalThis.__workspaceFixture.holdCommand = "collect_response_set"));
+  await dialog.getByRole("button", { name: "Move 1 rule", exact: true }).click();
+  await page.waitForFunction(() => !!globalThis.__workspaceFixture.finishHeldCommand);
+  await page.keyboard.press("Escape");
+  await headerName.fill("X: a: b");
+  await headerValue.fill("c");
+  assert.equal(await responseHeaders.evaluate((element) => element.value), serializedBefore);
+  await page.evaluate(() => globalThis.__workspaceFixture.finishHeldCommand());
+  await idle();
+  assert.equal((await draft()).hidden, false, "Move discarded newer invalid header row edits");
+  assert.equal((await draft()).id, null);
+  assert.equal((await draft()).dirty, true);
+  assert.equal(await headerName.inputValue(), "X: a: b");
+  assert.equal(await headerValue.inputValue(), "c");
+  assert.equal(await responseHeaders.evaluate((element) => element.reportValidity()), false);
+  await headerName.fill("X-Repaired");
+  await saveDraft();
+  results.push({ pendingMalformedHeaderRowsPreserved: true });
+
   // A detached draft keeps restrictions and actions that guided fields do not expose.
   for (const headersInitiallyOpen of [true, false]) {
     await setup(true);

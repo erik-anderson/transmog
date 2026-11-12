@@ -109,7 +109,7 @@ async function protocol(route) {
 }
 async function beginComposer(peer) {
   await evaluate(
-    `(async()=>{const shell=${shell};await shell.activateView('composer');const composer=shell.composer;composer.showComposerPane('request');const set=(name,value)=>{const input=composer.composerForm.elements.namedItem(name);input.value=value;input.dispatchEvent(new Event('input',{bubbles:true}));};set('method','GET');set('url',${JSON.stringify(`https://localhost:${peer}/`)});set('headers','');set('body','');composer.composerForm.requestSubmit();})()`,
+    `(async()=>{const shell=${shell};await shell.activateView('composer');const composer=shell.composer;composer.showComposerPane('request');const set=(name,value)=>{const input=composer.composerForm.elements.namedItem(name);input.value=value;input.dispatchEvent(new Event('input',{bubbles:true}));};set('method','GET');set('url',${JSON.stringify(`https://localhost:${peer}/`)});composer.headerEditor.value='';composer.useEmptyBody();composer.updateRisk();composer.composerForm.requestSubmit();})()`,
   );
 }
 async function composerResult(authenticated) {

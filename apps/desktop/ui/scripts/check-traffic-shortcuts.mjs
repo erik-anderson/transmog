@@ -502,21 +502,139 @@ export async function checkTrafficShortcuts(page, root) {
     );
   }
 
-  await open(250);
-  await traffic.locator("#session-shortcut-249").click();
-  await page.keyboard.press("Delete");
-  await settled(249);
-  await page.evaluate(() =>
-    document.querySelector("app-shell").traffic.revealCurrent("shortcut-0", true),
-  );
-  await traffic.locator("#session-shortcut-0").click();
-  await page.keyboard.press("Control+z");
-  await settled(250);
-  assert.equal(
-    await page.evaluate(() => document.querySelector("app-shell").traffic.selectedDetail?.id),
-    "shortcut-249",
-    "Keyboard Undo did not finish inspecting an offscreen restored entry",
-  );
+  for (const navigation of ["restore-notification", "viewport-refresh", "wheel"]) {
+    await open(250);
+    await traffic.locator("#session-shortcut-249").click();
+    await page.keyboard.press("Delete");
+    await settled(249);
+    await page.evaluate(() =>
+      document.querySelector("app-shell").traffic.revealCurrent("shortcut-0", true),
+    );
+    await traffic.locator("#session-shortcut-0").click();
+    await page.waitForFunction(
+      () => document.querySelector("app-shell").traffic.selectedDetail?.id === "shortcut-0",
+    );
+    await page.evaluate(
+      (command) => {
+        globalThis.__workspaceFixture.holdCommand = command;
+      },
+      navigation === "restore-notification" ? "remove_traffic_entries" : "query_traffic_view",
+    );
+    await page.keyboard.press("Control+z");
+    await page.waitForFunction(
+      () => typeof globalThis.__workspaceFixture.finishHeldCommand === "function",
+    );
+    if (navigation !== "wheel") {
+      // A backend notification or query refresh can recycle the focused row
+      // without newer user navigation while either stage of Undo is pending.
+      await page.evaluate(() => {
+        const t = document.querySelector("app-shell").traffic;
+        t.sessionScroller.scrollTop = 0;
+        t.renderViewport();
+      });
+    } else {
+      const scroller = traffic.locator(".table-wrap"),
+        before = await scroller.evaluate((element) => element.scrollTop);
+      await scroller.hover();
+      await page.mouse.wheel(0, -1000);
+      await page.waitForFunction(
+        (before) => document.querySelector("app-shell").traffic.sessionScroller.scrollTop < before,
+        before,
+      );
+    }
+    await page.evaluate(() => globalThis.__workspaceFixture.finishHeldCommand());
+    await settled(250);
+    const inspected = await page.evaluate(
+      () => document.querySelector("app-shell").traffic.selectedDetail?.id,
+    );
+    assert.equal(
+      inspected,
+      navigation !== "wheel" ? "shortcut-249" : "shortcut-0",
+      navigation !== "wheel"
+        ? "Virtual row recycling canceled keyboard Undo selection restoration"
+        : "Late Undo replaced newer wheel navigation",
+    );
+  }
+
+  // Navigation after selection restoration must not leave its cold inspector
+  // permanently loading, or bring an older row back into view.
+  for (const navigation of ["wheel", "focus", "selection", "escape", "select-all"]) {
+    await open(250);
+    await page.evaluate(() =>
+      document.querySelector("app-shell").traffic.revealCurrent("shortcut-0", true),
+    );
+    await traffic.locator("#session-shortcut-0").click();
+    await page.keyboard.press("Delete");
+    await settled(249);
+    await page.evaluate(() =>
+      document.querySelector("app-shell").traffic.revealCurrent("shortcut-249", true),
+    );
+    await traffic.locator("#session-shortcut-249").click();
+    await page.waitForFunction(
+      () => document.querySelector("app-shell").traffic.selectedDetail?.id === "shortcut-249",
+    );
+    await page.evaluate(() => {
+      globalThis.__workspaceFixture.holdCommand = "traffic_view_rows";
+    });
+    await page.keyboard.press("Control+z");
+    await page.waitForFunction(() => {
+      const t = document.querySelector("app-shell").traffic;
+      return (
+        typeof globalThis.__workspaceFixture.finishHeldCommand === "function" &&
+        t.selectedSessionId === "shortcut-0" &&
+        !t.selectedDetail
+      );
+    });
+    const scroller = traffic.locator(".table-wrap"),
+      beforeWheel = await scroller.evaluate((element) => element.scrollTop);
+    if (navigation === "wheel") {
+      await scroller.hover();
+      await page.mouse.wheel(0, -1000);
+      await page.waitForFunction(
+        (before) => document.querySelector("app-shell").traffic.sessionScroller.scrollTop < before,
+        beforeWheel,
+      );
+    } else if (navigation === "focus") {
+      await traffic.getByLabel("Filter or search traffic", { exact: true }).focus();
+    } else if (navigation === "escape") {
+      await page.keyboard.press("Escape");
+    } else if (navigation === "select-all") {
+      await page.keyboard.press("Control+a");
+    } else {
+      await traffic.locator("#session-shortcut-1").click();
+    }
+    await page.evaluate(() => globalThis.__workspaceFixture.finishHeldCommand());
+    await settled(250);
+    const expected = navigation === "selection" ? "shortcut-1" : "shortcut-0";
+    await page.waitForFunction(
+      (id) => document.querySelector("app-shell").traffic.selectedDetail?.id === id,
+      expected,
+    );
+    assert.equal(
+      await page.evaluate(() => document.querySelector("app-shell").traffic.selectedSessionId),
+      expected,
+      "Completing restored inspection replaced newer selection",
+    );
+    assert.equal(
+      await page.evaluate(() => document.querySelector("app-shell").traffic.selectedTrafficCount),
+      navigation === "escape" ? 0 : navigation === "select-all" ? 250 : 1,
+      "Completing restored inspection replaced newer selection membership",
+    );
+    if (navigation === "wheel") {
+      assert.ok(
+        (await scroller.evaluate((element) => element.scrollTop)) < beforeWheel,
+        "Completing restored inspection replaced newer scrolling",
+      );
+    } else if (navigation === "focus") {
+      assert.equal(
+        await traffic
+          .getByLabel("Filter or search traffic", { exact: true })
+          .evaluate((input) => input.getRootNode().activeElement === input),
+        true,
+        "Completing restored inspection stole newer focus",
+      );
+    }
+  }
 
   await open(250);
   await table.focus();

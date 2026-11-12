@@ -119,6 +119,10 @@ when changing the experience.
   is explicit and undoable; closing releases editor resources and restores focus.
   Live validation feedback appears after the editing surface so temporary errors
   cannot move the input while the user types, including in expanded editors.
+- Header authoring uses compact Name/Value rows with a bulk text alternative.
+  Preserve duplicate occurrences, order, empty values and invalid drafts; changing
+  views must not silently repair or reinterpret them. Body representation changes
+  preserve bytes, and responses distinguish the sent request from later edits.
 - Scratch utilities preserve their draft when dismissed. Detaching transfers
   work only after its destination is ready; independent utility windows retain
   their own drafts and do not depend on the originating workspace's lifetime.

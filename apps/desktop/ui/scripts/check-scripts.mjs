@@ -7,6 +7,7 @@ import {
 } from "./check-script-authoring.mjs";
 import { checkMonacoIcons } from "./check-monaco-icons.mjs";
 import { checkHandlerAuthoring } from "./check-handler-authoring.mjs";
+import { fillHeaderEditor } from "./header-editor-helpers.mjs";
 
 export async function checkScripts(page, root) {
   const scripts = page.locator("script-editor");
@@ -342,11 +343,47 @@ export function onFailed() { return pass(); }
   assert.match(await scripts.locator(".script-scope").textContent(), /PATCH/);
   // Optional sandbox automatically validates and describes its actual input and action.
   await scripts.locator(".script-test summary").first().click();
+  await scripts.evaluate(async (editor) => {
+    globalThis.__scriptInputBeforeHeaderReload = {
+      selection: editor.selection,
+      url: editor.scriptTestUrl.value,
+      method: editor.scriptTestMethod.value,
+      headers: editor.scriptTestHeaders.captureDraft(),
+      body: editor.scriptTestBody.value,
+    };
+    const detail = await window.__TAURI_INTERNALS__.invoke("session_detail", { id: "first" });
+    detail.requests.find((head) => head.boundary === "client-request").headers = [
+      { name: "X", value: "a: b", sensitive: false, binary: false },
+    ];
+    editor.selection = { sessionId: "first", detail, reusable: false };
+    editor.scriptTestHeaders.restoreDraft({
+      value: "X: a: b",
+      mode: "rows",
+      rows: [{ name: "X: a", value: "b" }],
+      customError: "",
+    });
+  });
+  await scripts.getByRole("button", { name: "Use selected Traffic request", exact: true }).click();
+  assert.deepEqual(await scripts.evaluate((editor) => editor.scriptTestHeaders.getHeaders()), [
+    { name: "X", value: "a: b" },
+  ]);
+  await scripts.evaluate((editor) => {
+    const before = globalThis.__scriptInputBeforeHeaderReload;
+    editor.selection = before.selection;
+    editor.scriptTestUrl.value = before.url;
+    editor.scriptTestMethod.value = before.method;
+    editor.scriptTestHeaders.restoreDraft(before.headers);
+    editor.scriptTestBody.value = before.body;
+    delete globalThis.__scriptInputBeforeHeaderReload;
+  });
   await scripts
     .getByLabel("Test URL", { exact: true })
     .fill("https://sandbox.example.test:8443/users/42?ready=yes");
   await scripts.getByLabel("Method", { exact: true }).fill("PATCH");
-  await scripts.getByLabel("Request headers", { exact: true }).fill("X-Test: yes");
+  await fillHeaderEditor(
+    scripts.locator('header-editor[label="Request headers"]'),
+    "X-Test: yes\nX-Whitespace:   boundary \t",
+  );
   await testInSandbox(scripts);
   await waitIdle();
   assert.match(
@@ -372,6 +409,19 @@ export function onFailed() { return pass(); }
       query: "ready=yes",
     },
   );
+  assert.equal(
+    await page.evaluate(() =>
+      new TextDecoder().decode(
+        Uint8Array.from(
+          globalThis.__workspaceFixture.scriptTestInput.request.headers.find(
+            (header) => header.name === "X-Whitespace",
+          ).value,
+        ),
+      ),
+    ),
+    "  boundary \t",
+    "Sandbox execution normalized the validated header value",
+  );
   await scripts.getByText("Test input and returned changes", { exact: true }).click();
   assert.match(await scripts.locator(".script-test-result pre").textContent(), /User-Agent/);
   const requestSource = await scripts.evaluate((editor) => editor.sourceEditor.getValue());
@@ -384,7 +434,10 @@ export function onFailed() { return { decision: { action: "continue" as const } 
   );
   await scripts.getByRole("combobox", { name: "Handler", exact: true }).selectOption("onCompleted");
   await scripts.getByLabel("Response status", { exact: true }).fill("202");
-  await scripts.getByLabel("Response headers", { exact: true }).fill("X-Fixture: completed");
+  await fillHeaderEditor(
+    scripts.locator('header-editor[label="Response headers"]'),
+    "X-Fixture: completed",
+  );
   await scripts.getByLabel("Local response", { exact: true }).check();
   await testInSandbox(scripts);
   await waitIdle();
@@ -446,9 +499,10 @@ export function onFailed() { return { decision: { action: "continue" as const } 
     await scripts.locator(".script-test-result").textContent(),
     /headers released at 36.5 ms/,
   );
-  await scripts
-    .getByLabel("Response headers", { exact: true })
-    .fill("invalid hidden response header");
+  await fillHeaderEditor(
+    scripts.locator('header-editor[label="Response headers"]'),
+    "invalid hidden response header",
+  );
   await scripts
     .getByRole("combobox", { name: "Scenario outcome", exact: true })
     .selectOption("failure");
@@ -512,7 +566,10 @@ export function onFailed() { return { decision: { action: "continue" as const } 
   }
   await page.setViewportSize({ width: 1440, height: 900 });
   await scripts.getByRole("combobox", { name: "Test mode", exact: true }).selectOption("callback");
-  await scripts.getByLabel("Response headers", { exact: true }).fill("X-Fixture: completed");
+  await fillHeaderEditor(
+    scripts.locator('header-editor[label="Response headers"]'),
+    "X-Fixture: completed",
+  );
   await scripts.evaluate((editor) =>
     editor.sourceEditor.setValue(
       'import { pass } from "transmog:api";\nimport type { ResponseChunkEvent, ResponseChunkResult } from "transmog:api";\nexport function onResponseChunk(event: ResponseChunkEvent): ResponseChunkResult { return pass(); }',

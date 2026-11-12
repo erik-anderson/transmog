@@ -244,7 +244,7 @@ try {
       const unsavedPromptWorked=workspace.draftDirty && !autoResponseEditor.hidden;
       [...unsavedDialog.querySelectorAll('button')].find(button=>button.textContent.trim()==='Keep editing').click();
       await waitFor(()=>!unsavedDialog.open,'Keep editing did not close the dialog');
-      const setField=(name,value)=>{const field=autoResponseEditor.elements.namedItem(name);field.value=value;field.dispatchEvent(new Event('input',{bubbles:true}));};
+      const setField=(name,value)=>{if(name==='responseHeaders'){workspace.responseHeadersEditor.value=value;workspace.responseHeadersEditor.dispatchEvent(new CustomEvent('header-change',{bubbles:true,composed:true,detail:{value,valid:true,headers:workspace.responseHeadersEditor.getHeaders(),error:''}}));return;}const field=autoResponseEditor.elements.namedItem(name);field.value=value;field.dispatchEvent(new Event('input',{bubbles:true}));};
       setField('name','Native numeric pattern');setField('body','native saved response');setField('responseHeaders','Content-Length: 999\\nContent-Encoding: gzip');
       const matcher=workspace.matchEditor;
       const matchMode=matcher.querySelector('select[aria-label="URL matching"]');

@@ -113,9 +113,9 @@
       <label ?hidden="{{testMode != 'scenario'}}">Scenario outcome <select w-ref="{scriptScenarioOutcome}" aria-label="Scenario outcome" @input="{changeScenarioOutcome(e)}"><option value="response">Response</option><option value="failure">Upstream failure</option></select></label>
       <label>Fixture protocol <select w-ref="{scriptScenarioProtocol}" aria-label="Fixture protocol"><option value="Http1">HTTP/1.1</option><option value="Http2">HTTP/2</option><option value="Http3">HTTP/3</option></select></label>
       <label ?hidden="{{testMode != 'scenario'}}">Scenario duration (ms) <input w-ref="{scriptScenarioDuration}" type="number" value="100" min="0" max="86400000"></label>
-      <label>Request headers <textarea w-ref="{scriptTestHeaders}" rows="3" maxlength="65536"></textarea></label>
+      <div><header-editor w-ref="{scriptTestHeaders}" label="Request headers" maxlength="65536" @header-change="{testHeadersChanged(e)}"></header-editor></div>
       <label ?hidden="{{testMode == 'scenario' && scenarioOutcome == 'failure'}}">Response status <input w-ref="{scriptTestStatus}" type="number" value="200" min="100" max="599"></label>
-      <label ?hidden="{{testMode == 'scenario' && scenarioOutcome == 'failure'}}">Response headers <textarea w-ref="{scriptTestResponseHeaders}" rows="3" maxlength="65536"></textarea></label>
+      <div ?hidden="{{testMode == 'scenario' && scenarioOutcome == 'failure'}}"><header-editor w-ref="{scriptTestResponseHeaders}" label="Response headers" maxlength="65536" @header-change="{testHeadersChanged(e)}"></header-editor></div>
       <label ?hidden="{{testMode == 'scenario' && scenarioOutcome == 'failure'}}"><input w-ref="{scriptTestLocal}" type="checkbox"> Local response</label>
       <label ?hidden="{{testMode == 'scenario' && scenarioOutcome != 'failure'}}">Failure category (onFailed) <select w-ref="{scriptTestFailure}" aria-label="Failure category (onFailed)" @input="{changeTestFailure(e)}"><for each="category in failureCategories"><option value="{{category}}" ?selected="{{category == testFailure}}">{{category}}</option></for></select></label>
       <label><if condition="testMode == 'callback'">Body</if><if condition="testMode == 'scenario'">Request body</if> <textarea w-ref="{scriptTestBody}" rows="4" maxlength="1048576">editor test body</textarea></label>

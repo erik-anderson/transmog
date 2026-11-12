@@ -4,7 +4,7 @@ import { writeFile } from "node:fs/promises";
 /** Real WebView2 top-layer positioning and keyboard/pointer behavior. */
 export async function smokeBodyEditor(call, evaluate, screenshotPath) {
   const widget =
-    "document.querySelector('app-shell').shadowRoot.querySelector('response-body-editor')";
+    "document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace response-body-editor')";
   const wait = async (expression) =>
     evaluate(
       `(async()=>{const deadline=Date.now()+15000;while(!(${expression})&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,25));if(!(${expression}))throw new Error(${JSON.stringify("Timed out: " + expression)});})()`,
@@ -83,7 +83,7 @@ export async function smokeBodyEditor(call, evaluate, screenshotPath) {
       const shell=document.querySelector('app-shell'),root=shell.shadowRoot;
       globalThis.__bodyEditorProbe={view:shell.activeView,focus:root.activeElement};
       root.querySelector('a[data-view="automation"]').click();
-      const deadline=Date.now()+15000;while(!root.querySelector('response-body-editor')?.open&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,25));
+      const deadline=Date.now()+15000;while(!root.querySelector('automation-workspace response-body-editor')?.open&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,25));
       const w=root.querySelector('automation-workspace'),editor=w.bodyEditor;
       if(editor.surface.open)throw new Error('Body editor probe requires a closed dialog');
       globalThis.__bodyEditorProbe.theme=editor.theme;
@@ -222,7 +222,7 @@ export async function smokeBodyEditor(call, evaluate, screenshotPath) {
     await call("Emulation.clearDeviceMetricsOverride");
     await call("Emulation.setEmulatedMedia", { media: "screen", features: [] });
     await evaluate(
-      `(()=>{const probe=globalThis.__bodyEditorProbe;if(!probe)return;const shell=document.querySelector('app-shell'),root=shell.shadowRoot,editor=root.querySelector('response-body-editor');if(editor){editor.editor?.trigger('probe','editor.action.fontZoomReset',{});editor.theme=probe.theme??'system';editor.close();}const workspace=root.querySelector('automation-workspace');if(probe.editorHidden!==undefined)workspace.editorHidden=probe.editorHidden;if(probe.section)workspace.showAutomationSection(probe.section);workspace.$flushUpdates();root.querySelector('a[data-view="'+probe.view+'"]').click();if(probe.focus?.isConnected&&probe.focus.getClientRects().length)probe.focus.focus();delete globalThis.__bodyEditorProbe;})()`,
+      `(()=>{const probe=globalThis.__bodyEditorProbe;if(!probe)return;const shell=document.querySelector('app-shell'),root=shell.shadowRoot,editor=root.querySelector('automation-workspace response-body-editor');if(editor){editor.editor?.trigger('probe','editor.action.fontZoomReset',{});editor.theme=probe.theme??'system';editor.close();}const workspace=root.querySelector('automation-workspace');if(probe.editorHidden!==undefined)workspace.editorHidden=probe.editorHidden;if(probe.section)workspace.showAutomationSection(probe.section);workspace.$flushUpdates();root.querySelector('a[data-view="'+probe.view+'"]').click();if(probe.focus?.isConnected&&probe.focus.getClientRects().length)probe.focus.focus();delete globalThis.__bodyEditorProbe;})()`,
     );
   }
 }

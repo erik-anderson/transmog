@@ -5,13 +5,14 @@ import { checkMonacoIcons } from "./check-monaco-icons.mjs";
 export async function checkResponseBodyEditor(page, root) {
   const form = page.locator(".auto-response-editor"),
     field = (name) => form.locator(`[name="${name}"]`);
-  const dialog = page.locator(".response-body-dialog");
+  const dialog = page.locator("automation-workspace .response-body-dialog");
   const closed = async () => {
     await dialog.waitFor({ state: "hidden" });
     await page.waitForFunction(
       () =>
-        document.querySelector("app-shell").shadowRoot.querySelector("response-body-editor")
-          .editor === null,
+        document
+          .querySelector("app-shell")
+          .shadowRoot.querySelector("automation-workspace response-body-editor").editor === null,
     );
   };
   const open = async () => {
@@ -22,7 +23,7 @@ export async function checkResponseBodyEditor(page, root) {
     page.evaluate(() =>
       document
         .querySelector("app-shell")
-        .shadowRoot.querySelector("response-body-editor")
+        .shadowRoot.querySelector("automation-workspace response-body-editor")
         .editor.focus(),
     );
   const type = async (value) => {
@@ -34,7 +35,7 @@ export async function checkResponseBodyEditor(page, root) {
     page.evaluate(() =>
       document
         .querySelector("app-shell")
-        .shadowRoot.querySelector("response-body-editor")
+        .shadowRoot.querySelector("automation-workspace response-body-editor")
         .model.getValue(),
     );
   const original = await field("body").inputValue();
@@ -53,7 +54,7 @@ export async function checkResponseBodyEditor(page, root) {
   await page.evaluate(() =>
     document
       .querySelector("app-shell")
-      .shadowRoot.querySelector("response-body-editor")
+      .shadowRoot.querySelector("automation-workspace response-body-editor")
       .bodyEditorStyles.dispatchEvent(new Event("error")),
   );
   await dialog
@@ -157,15 +158,16 @@ export async function checkResponseBodyEditor(page, root) {
     await page.evaluate((text) => {
       const w = document
         .querySelector("app-shell")
-        .shadowRoot.querySelector("response-body-editor");
+        .shadowRoot.querySelector("automation-workspace response-body-editor");
       w.editor.executeEdits("fixture-paste", [{ range: w.model.getFullModelRange(), text }]);
     }, text);
     await dialog.getByLabel("Body language", { exact: true }).selectOption(language);
     await dialog.getByRole("button", { name: "Format", exact: true }).click();
     await page.waitForFunction(
       () =>
-        !document.querySelector("app-shell").shadowRoot.querySelector("response-body-editor")
-          .bodyFormatting,
+        !document
+          .querySelector("app-shell")
+          .shadowRoot.querySelector("automation-workspace response-body-editor").bodyFormatting,
     );
     assert.notEqual(
       await value(),
@@ -179,7 +181,7 @@ export async function checkResponseBodyEditor(page, root) {
       (text) =>
         document
           .querySelector("app-shell")
-          .shadowRoot.querySelector("response-body-editor")
+          .shadowRoot.querySelector("automation-workspace response-body-editor")
           .model.getValue() === text,
       text,
       { timeout: 3000 },
@@ -245,7 +247,7 @@ export async function checkResponseBodyEditor(page, root) {
     await page.evaluate(() => {
       const w = document
         .querySelector("app-shell")
-        .shadowRoot.querySelector("response-body-editor");
+        .shadowRoot.querySelector("automation-workspace response-body-editor");
       return w.editor.getOption(w.monaco.editor.EditorOption.readOnly);
     }),
     true,
@@ -285,7 +287,7 @@ export async function checkResponseBodyEditor(page, root) {
     await page.evaluate(() => {
       const w = document
         .querySelector("app-shell")
-        .shadowRoot.querySelector("response-body-editor");
+        .shadowRoot.querySelector("automation-workspace response-body-editor");
       return w.editor === null && w.model === null;
     }),
     true,
@@ -360,7 +362,7 @@ async function checkSvgAndHexDialog(
     const measured = await page.waitForFunction(() => {
       const w = document
           .querySelector("app-shell")
-          .shadowRoot.querySelector("response-body-editor"),
+          .shadowRoot.querySelector("automation-workspace response-body-editor"),
         el = w.overflowHost.querySelector(".colorpicker-widget");
       if (!el) return false;
       const box = el.getBoundingClientRect(),
@@ -404,7 +406,9 @@ async function checkSvgAndHexDialog(
   assert.equal(await dialog.isVisible(), true, "Escape from the picker closed the body editor");
   // Move the color to the last visible line and verify Monaco can place it above.
   await page.evaluate(() => {
-    const w = document.querySelector("app-shell").shadowRoot.querySelector("response-body-editor");
+    const w = document
+      .querySelector("app-shell")
+      .shadowRoot.querySelector("automation-workspace response-body-editor");
     w.model.setValue(
       "<svg>\n" +
         Array(40).fill("<!-- shape -->").join("\n") +
@@ -427,7 +431,7 @@ async function checkSvgAndHexDialog(
     await page.evaluate(() =>
       document
         .querySelector("app-shell")
-        .shadowRoot.querySelector("response-body-editor")
+        .shadowRoot.querySelector("automation-workspace response-body-editor")
         .editor.hasTextFocus(),
     ),
     true,
@@ -487,7 +491,9 @@ async function checkSvgAndHexDialog(
   await closed();
   // The view baseline must retain bytes normalized by textarea and Monaco.
   await page.evaluate(() => {
-    const w = document.querySelector("app-shell").shadowRoot.querySelector("response-body-editor"),
+    const w = document
+        .querySelector("app-shell")
+        .shadowRoot.querySelector("automation-workspace response-body-editor"),
       opener = document
         .querySelector("app-shell")
         .shadowRoot.querySelector(".auto-response-editor button");
