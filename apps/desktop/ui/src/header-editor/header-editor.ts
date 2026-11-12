@@ -1,9 +1,12 @@
 import { attr, observable, WebUIElement } from "@microsoft/webui-framework";
 import {
+  enabledHeaderFields,
   formatHeaderText,
   HeaderValidationError,
+  mergeHeaderDraftRows,
   parseHeaderText,
-  validateHeaderFields,
+  validateHeaderDraftRows,
+  type HeaderDraftRow,
   type HeaderField,
 } from "./headers.js";
 
@@ -20,15 +23,17 @@ export interface HeaderChangeDetail {
 export interface HeaderDraft {
   value: string;
   mode: "rows" | "text";
-  rows: HeaderField[];
+  rows: HeaderDraftRow[];
   customError: string;
 }
 
-interface HeaderRow extends HeaderField {
+interface HeaderRow extends HeaderDraftRow {
   id: string;
   number: number;
   nameId: string;
   valueId: string;
+  enabledId: string;
+  enabled: boolean;
   nameInvalid: boolean;
   valueInvalid: boolean;
 }
@@ -40,6 +45,8 @@ export class HeaderEditor extends WebUIElement {
   @attr label = "Headers";
   @attr({ attribute: "readonly", mode: "boolean" }) readOnly = false;
   @attr({ mode: "boolean" }) disabled = false;
+  /** Opt in only when the owning workspace retains HeaderDraft metadata. */
+  @attr({ attribute: "allow-disable", mode: "boolean" }) allowDisable = false;
   @attr({ attribute: "maxlength" }) maxLength = "";
   @observable headerEditorRows: HeaderRow[] = [];
   @observable headerEditorMode = "rows";
@@ -79,10 +86,13 @@ export class HeaderEditor extends WebUIElement {
       const root = this.getRootNode() as Document | ShadowRoot,
         active = root.activeElement;
       const focusedRow = this.headerEditorRows.findIndex(
-        (row) => row.nameId === active?.id || row.valueId === active?.id,
+        (row) =>
+          row.nameId === active?.id || row.valueId === active?.id || row.enabledId === active?.id,
       );
       const focusedValue =
         focusedRow >= 0 && this.headerEditorRows[focusedRow]!.valueId === active?.id;
+      const focusedEnabled =
+        focusedRow >= 0 && this.headerEditorRows[focusedRow]!.enabledId === active?.id;
       this.loadDraft();
       if (focusedRow >= 0 && active) {
         this.$flushUpdates();
@@ -95,7 +105,9 @@ export class HeaderEditor extends WebUIElement {
           const row = this.headerEditorRows[Math.min(focusedRow, this.headerEditorRows.length - 1)];
           if (row) {
             root
-              .getElementById(focusedValue ? row.valueId : row.nameId)
+              .getElementById(
+                focusedEnabled ? row.enabledId : focusedValue ? row.valueId : row.nameId,
+              )
               ?.focus({ preventScroll: true });
           } else {
             (this.readOnly ? this.modeButton : this.addButton).focus({ preventScroll: true });
@@ -116,14 +128,16 @@ export class HeaderEditor extends WebUIElement {
     }
   }
 
-  private row(header: HeaderField): HeaderRow {
+  private row(header: HeaderDraftRow): HeaderRow {
     const id = `${this.editorId}-row-${++this.rowSequence}`;
     return {
       ...header,
+      enabled: header.enabled !== false,
       id,
       number: 0,
       nameId: `${id}-name`,
       valueId: `${id}-value`,
+      enabledId: `${id}-enabled`,
       nameInvalid: false,
       valueInvalid: false,
     };
@@ -134,6 +148,7 @@ export class HeaderEditor extends WebUIElement {
     this.removed = null;
     this.headerEditorCanUndo = false;
     this.customError = "";
+    this.headerEditorRows = [];
     try {
       this.headerEditorRows = parseHeaderText(this.draft).map((header) => this.row(header));
     } catch {
@@ -143,7 +158,13 @@ export class HeaderEditor extends WebUIElement {
   }
 
   private fields(): HeaderField[] {
-    return this.headerEditorRows.map(({ name, value }) => ({ name, value }));
+    return enabledHeaderFields(this.headerEditorRows);
+  }
+
+  private draftRows(): HeaderDraftRow[] {
+    return this.headerEditorRows.map(({ name, value, enabled }) =>
+      enabled ? { name, value } : { name, value, enabled: false },
+    );
   }
 
   captureDraft(): HeaderDraft {
@@ -156,7 +177,7 @@ export class HeaderEditor extends WebUIElement {
     return {
       value: this.draft,
       mode: this.headerEditorMode === "text" ? "text" : "rows",
-      rows: this.fields(),
+      rows: this.draftRows(),
       customError: this.customError,
     };
   }
@@ -191,7 +212,9 @@ export class HeaderEditor extends WebUIElement {
       );
     }
     const headers = this.headerEditorMode === "text" ? parseHeaderText(this.draft) : this.fields();
-    validateHeaderFields(headers);
+    if (this.headerEditorMode !== "text") {
+      validateHeaderDraftRows(this.headerEditorRows);
+    }
     if (this.customError) {
       throw new HeaderValidationError(this.customError, 1);
     }
@@ -291,6 +314,17 @@ export class HeaderEditor extends WebUIElement {
     }
   }
 
+  toggleHeader(id: string, event: Event): void {
+    if (!this.allowDisable || this.readOnly || this.disabled) {
+      return;
+    }
+    const enabled = (event.target as HTMLInputElement).checked;
+    this.headerEditorRows = this.headerEditorRows.map((row) =>
+      row.id === id ? { ...row, enabled } : row,
+    );
+    this.changed(formatHeaderText(this.fields()));
+  }
+
   private changed(value: string): void {
     this.draft = value;
     this.headerEditorText = value;
@@ -352,7 +386,7 @@ export class HeaderEditor extends WebUIElement {
     }
     if (this.headerEditorMode === "rows") {
       try {
-        validateHeaderFields(this.fields());
+        validateHeaderDraftRows(this.headerEditorRows);
       } catch {
         this.reportValidity();
         return;
@@ -364,7 +398,10 @@ export class HeaderEditor extends WebUIElement {
       return;
     }
     try {
-      this.headerEditorRows = parseHeaderText(this.draft).map((header) => this.row(header));
+      this.headerEditorRows = mergeHeaderDraftRows(
+        this.draftRows(),
+        parseHeaderText(this.draft),
+      ).map((header) => this.row(header));
     } catch {
       this.reportValidity();
       return;

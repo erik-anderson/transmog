@@ -474,12 +474,15 @@ impl Application {
             .iter()
             .chain(&s.right.versions)
             .any(|(id, sequence)| {
-                crate::inspector::parse_session_id(id)
-                    .ok()
-                    .and_then(|id| {
-                        self.service
-                            .catalog()
-                            .sequence(transmog_core::intercept::ExchangeId(id))
+                self.composer
+                    .response(id)
+                    .map(|retained| retained.snapshot.last_sequence)
+                    .or_else(|| {
+                        crate::inspector::parse_session_id(id).ok().and_then(|id| {
+                            self.service
+                                .catalog()
+                                .sequence(transmog_core::intercept::ExchangeId(id))
+                        })
                     })
                     .is_none_or(|current| current != *sequence)
             }))

@@ -63,10 +63,13 @@ export function nativeResponseSetContext({ main, waitFor }) {
     await wait(`${sets}.setId===${JSON.stringify(id)}&&${a}.collectionOpen`);
   };
   const captured = async (path, id, name) => {
-    await main.evaluate(
-      `(async()=>{await ${shell}.activateView('traffic');await ${traffic}.revealSession(${traffic}.sessions.find(row=>row.path===${JSON.stringify(path)}).id);})()`,
-    );
-    const source = await main.evaluate(`${traffic}.selectedSessionId`);
+    // Rendered Traffic rows cover only the current virtual viewport.
+    const page = await invoke("query_sessions", { query: { search: path, limit: 100, offset: 0 } });
+    const source = page.sessions.find((row) => row.path === path)?.id;
+    assert.ok(source, "Captured response fixture is unavailable: " + path);
+    assert.equal(await main.evaluate(`${shell}.activateView('traffic')`), true);
+    assert.equal(await main.evaluate(`${traffic}.revealSession(${JSON.stringify(source)})`), true);
+    assert.equal(await main.evaluate(`${traffic}.selectedSessionId`), source);
     await main.evaluate(`${shell}.activateView('automation')`);
     await wait(`${a}.selection?.reusable&&${a}.selection.sessionId===${JSON.stringify(source)}`);
     const before = await invoke("automation_status");

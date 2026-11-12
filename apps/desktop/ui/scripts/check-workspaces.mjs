@@ -41,6 +41,7 @@ import { checkHeaderRules } from "./check-header-rules.mjs";
 import { fillHeaderEditor } from "./header-editor-helpers.mjs";
 import { checkHeaderEditor } from "./check-header-editor.mjs";
 import { checkComposerAuthoring } from "./check-composer-authoring.mjs";
+import { checkInspectorLayout } from "./check-inspector-layout.mjs";
 import { checkIncidents } from "./check-incidents.mjs";
 import { checkResponseBodyEditor } from "./check-response-body-editor.mjs";
 import { checkBinaryResponse } from "./check-binary-response.mjs";
@@ -253,6 +254,10 @@ await page.addInitScript(
       autoResponse: null,
     });
     const detail = (id) => {
+      if (state.composerResults) {
+        const result = Object.values(state.composerResults).find((row) => row.detail.id === id);
+        if (result) return structuredClone(result.detail);
+      }
       if (state.composerResponseDetail?.id === id)
         return structuredClone(state.composerResponseDetail);
       const row = structuredClone(state.sessions.find((row) => row.id === id) ?? summary(id));
@@ -3136,9 +3141,9 @@ await page.addInitScript(
           case "read_body_range": {
             const request = args.request;
             state.lastRangeRequest = structuredClone(request);
-            const composer = state.composerResponseDetail?.id === request.sessionId;
+            const composer = !!state.composerBodies?.[request.sessionId];
             const retained = composer
-              ? state.composerBytes
+              ? state.composerBodies[request.sessionId][request.boundary]
               : (state.hexBytes ?? [0, 0x41, 0xff, 0x20]);
             state.rangeRequests ??= [];
             state.rangeRequests.push(structuredClone(request));
@@ -3164,7 +3169,9 @@ await page.addInitScript(
             const metadata = {
               lengthKnown: true,
               wireBodyBytes: null,
-              ...detail(request.sessionId).storedBodies[0],
+              ...detail(request.sessionId).storedBodies.find(
+                (body) => body.boundary === request.boundary,
+              ),
             };
             if (state.bodyOverride && !composer) Object.assign(metadata, state.bodyOverride);
             metadata.retainedBytes = Number(total);
@@ -3183,7 +3190,7 @@ await page.addInitScript(
             return frame.buffer;
           }
           case "inspect_body": {
-            const composer = state.composerResponseDetail?.id === args.request.sessionId;
+            const composer = !!state.composerBodies?.[args.request.sessionId];
             if (
               state.deferBody === args.request.sessionId &&
               ["original-text", "editable"].includes(args.request.representation)
@@ -3193,7 +3200,10 @@ await page.addInitScript(
             }
             if (state.slowBody && args.request.sessionId === "first")
               await new Promise((resolve) => setTimeout(resolve, 100));
-            const metadata = detail(args.request.sessionId).storedBodies[0];
+            const metadata =
+              detail(args.request.sessionId).storedBodies.find(
+                (body) => body.boundary === args.request.boundary,
+              ) ?? detail(args.request.sessionId).storedBodies[0];
             if (state.bodyOverride && !composer) Object.assign(metadata, state.bodyOverride);
             state.lastBodyRequest = structuredClone(args.request);
             if (
@@ -3242,7 +3252,7 @@ await page.addInitScript(
                   ? "formatted-json"
                   : args.request.representation;
             const bytes = composer
-              ? state.composerBytes
+              ? state.composerBodies[args.request.sessionId][args.request.boundary]
               : (state.hexBytes ?? [0, 0x41, 0xff, 0x20]);
             const chunks = [];
             if (representation === "bytes")
@@ -4264,19 +4274,70 @@ await page.addInitScript(
             };
           case "composer_history":
             return state.composerHistory ?? [];
+          case "composer_history_result": {
+            if (state.deferComposerHistory) {
+              state.composerHistoryPending = true;
+              await new Promise((resolve) => (state.finishComposerHistory = resolve));
+            }
+            const result = state.composerResults?.[args.id];
+            if (!result) throw new Error("Replay evidence expired");
+            return structuredClone(result);
+          }
+          case "composer_history_request": {
+            if (state.composerHistoryRequestUnavailable) throw new Error("Replay evidence expired");
+            if (state.deferComposerHistoryRequest) {
+              state.composerHistoryRequestPending = true;
+              await new Promise((resolve) => (state.finishComposerHistoryRequest = resolve));
+              state.deferComposerHistoryRequest = false;
+            }
+            const request = state.composerRequests?.[args.id];
+            if (!request) throw new Error("Replay evidence expired");
+            return {
+              request: {
+                ...structuredClone(request),
+                acknowledgeCredentials: false,
+                acknowledgeNonIdempotent: false,
+              },
+              source: state.composerResults[args.id].source,
+              bodyBytes: request.bodyIsHex
+                ? request.body.replace(/\s/g, "").length / 2
+                : new TextEncoder().encode(request.body).length,
+              notices: [],
+            };
+          }
+          case "cancel_composer":
+            state.canceledComposerOperations ??= [];
+            state.canceledComposerOperations.push(args.operationId);
+            state.finishComposer?.();
+            return null;
           case "execute_composer": {
             state.composerInput = structuredClone(args.request);
             if (state.deferComposer) {
               state.composerPending = true;
               await new Promise((resolve) => (state.finishComposer = resolve));
             } else await new Promise((resolve) => setTimeout(resolve, 80));
+            if (state.canceledComposerOperations?.includes(args.operationId))
+              throw new Error("Composer request canceled");
             if (state.composerError) throw new Error("Fixture send failed");
             state.composerResponseCount = (state.composerResponseCount ?? 0) + 1;
             const body = "<script>globalThis.unsafeComposer=true</script>",
               id = "composer-response-" + state.composerResponseCount;
             const response = detail(id);
             response.composerOrigin = state.composerResultSource ?? null;
+            response.requests[0].method = args.request.method;
             response.requests[0].target = args.request.url;
+            const requestBytes = args.request.bodyIsHex
+              ? Array.from(args.request.body.replace(/\s/g, "").match(/../g) ?? [], (hex) =>
+                  parseInt(hex, 16),
+                )
+              : Array.from(new TextEncoder().encode(args.request.body));
+            response.requests[0].headers = args.request.headers
+              .filter(
+                (header) =>
+                  !["content-length", "transfer-encoding"].includes(header.name.toLowerCase()),
+              )
+              .concat({ name: "content-length", value: String(requestBytes.length) })
+              .map((header) => ({ ...header, sensitive: false, binary: false }));
             response.responses[0].status = 201;
             response.responses[0].headers = [
               { name: "X-Duplicate", value: "first", sensitive: false, binary: false },
@@ -4289,10 +4350,24 @@ await page.addInitScript(
               retainedBytes: state.composerBytes.length,
               mediaType: state.nextComposerType ?? "text/html",
             });
+            response.storedBodies.push({
+              ...structuredClone(response.storedBodies[0]),
+              boundary: "client-request",
+              observedBytes: requestBytes.length,
+              retainedBytes: requestBytes.length,
+              mediaType:
+                args.request.headers.find((header) => header.name.toLowerCase() === "content-type")
+                  ?.value ?? "text/plain",
+            });
+            state.composerBodies ??= {};
+            state.composerBodies[id] = {
+              "client-request": requestBytes,
+              "client-response": state.composerBytes,
+            };
             state.composerResponseDetail = response;
-            return {
+            const result = {
               detail: structuredClone(response),
-              id: 1,
+              id: state.composerResponseCount,
               status: 201,
               headers: response.responses[0].headers,
               body,
@@ -4300,7 +4375,31 @@ await page.addInitScript(
               truncated: false,
               attribution: "composer",
               source: state.composerResultSource ?? null,
+              elapsedMs: 125,
+              responseBodyBytes: state.composerBytes.length,
+              sentRequest: {
+                evidence: "reconstructed",
+                requestBoundary: "client-request",
+                note: "Prepared request with applied body framing. Reconstructed from this send; transport-generated headers and protocol framing were not observed.",
+              },
             };
+            state.composerResults ??= {};
+            state.composerRequests ??= {};
+            state.composerResults[result.id] = structuredClone(result);
+            state.composerRequests[result.id] = structuredClone(args.request);
+            state.composerHistory ??= [];
+            state.composerHistory.unshift({
+              id: result.id,
+              method: args.request.method,
+              target: args.request.url,
+              status: result.status,
+              source: result.source,
+              entryId: response.id,
+              retained: true,
+              elapsedMs: result.elapsedMs,
+              responseBodyBytes: result.responseBodyBytes,
+            });
+            return result;
           }
           case "script_help":
             return scriptHelp;
@@ -4732,6 +4831,13 @@ const cancelRule = async () => {
 const runBrowserCheck = createBrowserCheckRunner();
 
 try {
+  if (process.argv.includes("--inspector-layout-only")) {
+    await checkInspectorLayout(page, root);
+    assert.deepEqual(errors, []);
+    await browser.close();
+    process.stdout.write("Inspector layout checks passed.\n");
+    process.exit(0);
+  }
   if (process.argv.includes("--composer-authoring-only")) {
     await checkHeaderEditor(page, root);
     await checkComposerAuthoring(page, root);
@@ -6344,11 +6450,11 @@ try {
   await page.setViewportSize({ width: 760, height: 520 });
   await page
     .locator(".composer-pane-tabs")
-    .getByRole("button", { name: "Response", exact: true })
+    .getByRole("button", { name: "Result", exact: true })
     .click();
   await page
     .locator(".composer-pane-tabs button[data-selected]")
-    .getByText("Response", { exact: true })
+    .getByText("Result", { exact: true })
     .waitFor({ state: "visible" });
   await page.screenshot({ path: resolve(root, "../../../target/ui-check/composer-small.png") });
   await page.setViewportSize({ width: 1280, height: 800 });
@@ -6405,18 +6511,34 @@ try {
   assert.equal(await page.evaluate(() => globalThis.__workspaceFixture.composerInput.body), "");
   await composerInspector.getByRole("button", { name: "Raw data", exact: true }).click();
   assert.match(await composerInspector.locator(".exchange-details").textContent(), /trace-fixture/);
-  await page.getByText("Replay history", { exact: true }).click();
+  const streamedReplayId = await page
+    .locator("composer-workspace")
+    .evaluate((workspace) => workspace.composerResult.id);
+  await page.getByText("History", { exact: true }).click();
+  await page.waitForFunction((id) => {
+    const workspace = document.querySelector("app-shell").composer;
+    return !workspace.composerHistoryBusy && workspace.composerHistory.some((row) => row.id === id);
+  }, streamedReplayId);
+  const streamedHistoryIndex = await page
+    .locator("composer-workspace")
+    .evaluate(
+      (workspace, id) => workspace.composerHistory.findIndex((row) => row.id === id),
+      streamedReplayId,
+    );
+  const streamedHistory = page.locator(".composer-history-row").nth(streamedHistoryIndex);
+  await streamedHistory.getByRole("button", { name: /^Actions for / }).click();
   await page
-    .locator(".composer-history")
+    .locator(".composer-actions-menu")
     .getByText("trace-fixture · 17", { exact: true })
     .waitFor();
+  await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 760, height: 520 });
   await page.screenshot({
     path: resolve(root, "../../../target/ui-check/composer-streamed-small.png"),
   });
   await page
     .locator(".composer-pane-tabs")
-    .getByRole("button", { name: "Request", exact: true })
+    .getByRole("button", { name: "Draft", exact: true })
     .click();
   await page.getByLabel("Body source", { exact: true }).selectOption("inline");
   assert.equal(
@@ -6468,7 +6590,7 @@ try {
   );
   await page
     .locator(".composer-pane-tabs")
-    .getByRole("button", { name: "Request", exact: true })
+    .getByRole("button", { name: "Draft", exact: true })
     .click();
   await page.getByLabel("Body source", { exact: true }).selectOption("inline");
   assert.equal(await page.locator('#composer textarea[name="body"]').inputValue(), "edited body");
@@ -6542,7 +6664,7 @@ try {
   await page.setViewportSize({ width: 760, height: 520 });
   await page
     .locator(".composer-pane-tabs")
-    .getByRole("button", { name: "Response", exact: true })
+    .getByRole("button", { name: "Result", exact: true })
     .click();
   await composerGrid.press("Control+End");
   await page.screenshot({ path: resolve(root, "../../../target/ui-check/composer-hex-small.png") });
@@ -10594,6 +10716,7 @@ try {
   await runBrowserCheck(checkTrafficFollowing, page, root);
   await runBrowserCheck(checkHeaderEditor, page, root);
   await runBrowserCheck(checkComposerAuthoring, page, root);
+  await runBrowserCheck(checkInspectorLayout, page, root);
   assert.deepEqual(errors, []);
   process.stdout.write(
     JSON.stringify({

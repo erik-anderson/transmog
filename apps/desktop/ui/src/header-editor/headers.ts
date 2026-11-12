@@ -3,6 +3,54 @@ export interface HeaderField {
   value: string;
 }
 
+/** Disabled rows are authored drafts, never request header fields. */
+export interface HeaderDraftRow extends HeaderField {
+  enabled?: boolean;
+}
+
+export function enabledHeaderFields(rows: readonly HeaderDraftRow[]): HeaderField[] {
+  return rows.filter((row) => row.enabled !== false).map(({ name, value }) => ({ name, value }));
+}
+
+/** Keep disabled rows at their authored positions when enabled bulk text changes. */
+export function mergeHeaderDraftRows(
+  previous: readonly HeaderDraftRow[],
+  enabled: readonly HeaderField[],
+): HeaderDraftRow[] {
+  const rows: HeaderDraftRow[] = [];
+  let next = 0;
+  for (const row of previous) {
+    if (row.enabled === false) {
+      rows.push({ ...row });
+    } else if (next < enabled.length) {
+      rows.push({ ...enabled[next++]! });
+    }
+  }
+  rows.push(...enabled.slice(next).map((row) => ({ ...row })));
+  return rows;
+}
+
+/** Validate enabled rows while retaining their visible row numbers in feedback. */
+export function validateHeaderDraftRows(rows: readonly HeaderDraftRow[]): void {
+  for (const [index, row] of rows.entries()) {
+    if (row.enabled === false) {
+      continue;
+    }
+    try {
+      validateHeaderFields([row]);
+    } catch (error) {
+      if (error instanceof HeaderValidationError) {
+        throw new HeaderValidationError(
+          error.message.replace(/^Header 1:/, `Header ${index + 1}:`),
+          index + 1,
+          error.field,
+        );
+      }
+      throw error;
+    }
+  }
+}
+
 export class HeaderValidationError extends Error {
   readonly line: number;
   readonly field: "name" | "value";

@@ -139,6 +139,64 @@ export async function checkHeaderEditor(page, root) {
     loaded: { name: "X", value: "a: b" },
   });
 
+  // Disabled rows remain editable drafts, including otherwise invalid HTTP
+  // fields. Text editing, draft restore and undo must never send or discard them.
+  await editor.evaluate((element) => {
+    element.replaceValue("X-Repeat: first\nx-repeat: second\nX-End: last");
+  });
+  const enabled = (row) =>
+    editor.getByRole("checkbox", { name: `Enable header ${row}`, exact: true });
+  assert.equal(await enabled(2).isChecked(), true);
+  await enabled(2).focus();
+  await enabled(2).press("Space");
+  assert.equal(await focused(enabled(2)), true, "Disabling a header lost keyboard focus");
+  await name(2).fill("Bad: Name");
+  await value(2).fill("before\nX-Retained: after\t");
+  const disabledRow = { name: "Bad: Name", value: "before\nX-Retained: after\t", enabled: false };
+  assert.deepEqual(await fields(), [
+    { name: "X-Repeat", value: "first" },
+    { name: "X-End", value: "last" },
+  ]);
+  assert.equal(await editor.evaluate((element) => element.reportValidity()), true);
+  await editor.getByRole("button", { name: "Edit as text", exact: true }).click();
+  assert.equal(await raw.inputValue(), "X-Repeat: first\nX-End: last");
+  await raw.fill("X-Repeat:  first \t\nx-repeat: second\nX-End: last");
+  await editor.evaluate((element) => {
+    const snapshot = element.captureDraft();
+    element.replaceValue("Other: request");
+    element.restoreDraft(snapshot);
+  });
+  await editor.getByRole("button", { name: "Edit as rows", exact: true }).click();
+  assert.equal(await name(2).inputValue(), disabledRow.name);
+  assert.equal(await value(2).inputValue(), disabledRow.value);
+  assert.equal(await enabled(2).isChecked(), false);
+  assert.deepEqual(await editor.evaluate((element) => element.captureDraft().rows), [
+    { name: "X-Repeat", value: " first \t" },
+    disabledRow,
+    { name: "x-repeat", value: "second" },
+    { name: "X-End", value: "last" },
+  ]);
+  await enabled(2).press("Space");
+  assert.equal(await editor.evaluate((element) => element.reportValidity()), false);
+  assert.equal(await focused(name(2)), true);
+  assert.match(await editor.getByRole("status").textContent(), /Header 2:/);
+  await enabled(2).uncheck();
+  await editor.getByRole("button", { name: "Remove header 2", exact: true }).click();
+  await editor.getByRole("button", { name: "Undo remove", exact: true }).click();
+  assert.equal(await focused(name(2)), true);
+  assert.equal(await enabled(2).isChecked(), false);
+  assert.equal(await value(2).inputValue(), disabledRow.value);
+
+  // An authoritative new source, including an invalid raw source, must clear
+  // disabled metadata owned by the previous request.
+  await editor.evaluate((element) => element.replaceValue("new invalid source"));
+  assert.deepEqual(await editor.evaluate((element) => element.captureDraft().rows), []);
+  await raw.fill("X-New: source");
+  await editor.getByRole("button", { name: "Edit as rows", exact: true }).click();
+  assert.deepEqual(await fields(), [{ name: "X-New", value: "source" }]);
+  assert.equal(await enabled(1).isChecked(), true);
+  assert.equal(await enabled(2).count(), 0);
+
   // The loaded read-only case still supports comparison and copying.
   await editor.evaluate((element) => {
     element.readOnly = true;
@@ -162,6 +220,7 @@ export async function checkHeaderEditor(page, root) {
     element.readOnly = false;
     element.value = text;
   }, `${seed}\nX-Long: ${longValue}`);
+  await enabled(2).uncheck();
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.screenshot({ path: resolve(root, "../../../target/ui-check/header-editor-wide.png") });
   await page.setViewportSize({ width: 800, height: 600 });

@@ -151,8 +151,8 @@ pub use client_certificates::{
     ClientCertificatePending, ClientCertificateRequestDetail, ClientCertificateStatus,
 };
 pub use composer::{
-    ComposerBodySource, ComposerHeader, ComposerOrigin, ComposerRequest, ComposerResult,
-    ComposerSnapshot, SystemReplayExecutor,
+    ComposerBodySource, ComposerHeader, ComposerHistoryRequest, ComposerOrigin, ComposerRequest,
+    ComposerResult, ComposerSentRequest, ComposerSnapshot, SystemReplayExecutor,
 };
 pub use diagnostics::{
     DiagnosticEvent, DiagnosticLevel, DiagnosticsReport, RuntimeDiagnostics, SupportBundleRequest,
@@ -2620,9 +2620,26 @@ impl Application {
         &self,
         request: ComposerRequest,
     ) -> Result<ComposerResult, AppError> {
+        self.execute_composer_operation(request, None).await
+    }
+
+    /// Sends one request using an owning-window operation identifier.
+    /// A cancellation received before admission still cancels this send.
+    ///
+    /// # Errors
+    /// Returns invalid, duplicate, canceled, or failed sends.
+    pub async fn execute_composer_operation(
+        &self,
+        request: ComposerRequest,
+        operation_id: Option<String>,
+    ) -> Result<ComposerResult, AppError> {
         // Admission precedes body/file preparation, so closing the owning
         // window also cancels a request which has not reached its executor yet.
-        let admission = self.composer.admit();
+        let admission = match operation_id {
+            Some(id) => self.composer.admit_operation(id)?,
+            None => self.composer.admit(),
+        };
+        composer::check_canceled(&admission.cancellation)?;
         if request.body_source.is_some() {
             composer::validate_stream_input(&request)?;
         }
@@ -2636,7 +2653,7 @@ impl Application {
         let file = match &request.body_source {
             Some(ComposerBodySource::Captured { entry_id }) => Some(
                 self.prepare_request_file(entry_id)?
-                    .into_replay_file()
+                    .into_replay_file_cancellable(admission.cancellation.clone())
                     .await?,
             ),
             Some(ComposerBodySource::File { path }) => {
@@ -2685,7 +2702,9 @@ impl Application {
             }
             None => None,
         };
-        self.composer
+        composer::check_canceled(&admission.cancellation)?;
+        let result = self
+            .composer
             .execute_admitted(
                 &self.service,
                 request,
@@ -2694,12 +2713,41 @@ impl Application {
                 self.product_state().privacy.redact_sensitive_headers,
                 &admission.cancellation,
             )
-            .await
+            .await;
+        if result.is_err() {
+            composer::check_canceled(&admission.cancellation)?;
+        }
+        result
+    }
+
+    /// Cancels only the identified Composer send in this owning window.
+    ///
+    /// # Errors
+    /// Returns an invalid operation identifier.
+    pub fn cancel_composer(&self, operation_id: &str) -> Result<(), AppError> {
+        self.composer.cancel(operation_id)
     }
 
     /// Returns a bounded newest-first replay history without credential values.
     pub fn composer_history(&self) -> Vec<ComposerSnapshot> {
         self.composer.history()
+    }
+
+    /// Returns immutable retained evidence for one history row.
+    ///
+    /// # Errors
+    /// Returns an expired or unavailable replay.
+    pub fn composer_history_result(&self, id: u64) -> Result<ComposerResult, AppError> {
+        self.composer.history_result(id)
+    }
+
+    /// Returns a copy of the submitted draft with acknowledgements reset.
+    /// Streamed bodies reference frozen bytes rather than their original source.
+    ///
+    /// # Errors
+    /// Returns an expired or unavailable replay.
+    pub fn composer_history_request(&self, id: u64) -> Result<ComposerHistoryRequest, AppError> {
+        self.composer.history_request(id)
     }
 
     /// Starts a create-new streaming native capture.

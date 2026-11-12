@@ -22,19 +22,22 @@ auth-inspector { container-type:inline-size; }
 .headers-table td { white-space:pre-wrap; overflow-wrap:anywhere; height:auto; vertical-align:top; }
 .headers-table tr { cursor:text; }
 .inspector-empty { padding:.7rem; color:var(--muted); font-size:.75rem; }
-.body-view { display:grid; grid-template-rows:auto auto minmax(3rem,1fr); min-height:0; overflow:hidden; }
+.body-view { display:grid; grid-template-rows:auto minmax(3rem,1fr); min-height:0; overflow:hidden; }
+/* Expanded evidence and options stay reachable through the message scroller. */
+.body-view:has(.body-options[open], .body-facts[open]) { min-height:min-content; }
 /* Keep byte rows usable; the message pane scrolls when its chrome cannot fit. */
-.body-view:has(hex-viewer) { grid-template-rows:auto auto minmax(6rem,1fr); min-height:min-content; }
+.body-view:has(hex-viewer) { grid-template-rows:auto minmax(6rem,1fr); min-height:min-content; }
 .message-content:has(hex-viewer) { scroll-padding-block:.25rem; }
-.body-view .body-toolbar { display:flex; flex-wrap:wrap; align-items:baseline; gap:.4rem; padding:.2rem .5rem; border-block:0; }
+.body-view .body-toolbar { display:flex; flex-wrap:wrap; align-items:baseline; gap:.2rem .4rem; min-width:0; padding:.2rem .5rem; border-block:0; border-bottom:1px solid var(--line); }
 .body-view .body-toolbar select { width:9rem; }
 .preview-options { position:relative; margin-left:auto; font-size:.7rem; }
 .preview-options[open] { padding:.4rem; border:1px solid var(--line); }
 .preview-options input { width:8rem; }
-.body-facts { min-width:0; padding:.2rem .5rem; border-block:1px solid var(--line); color:var(--muted); font-size:.75rem; }
-.body-facts summary { cursor:pointer; }
+.body-facts { flex:1 1 15rem; min-width:0; max-width:100%; color:var(--muted); font-size:.75rem; }
+.body-facts summary { min-height:1.7rem; padding:.2rem 0; overflow-wrap:anywhere; cursor:pointer; }
+.body-facts[open] { flex-basis:100%; }
 .body-facts summary strong { margin-right:.5rem; font-weight:600; }
-.body-facts p { margin:.3rem 0; font-size:.75rem; overflow-wrap:anywhere; }
+.body-facts p { margin:.2rem 0; padding:.4rem; border:1px solid var(--line); background:var(--panel-subtle); font-size:.75rem; overflow-wrap:anywhere; }
 .body-scroll { min-height:0; overflow:auto; background:var(--code); }
 .body-scroll:has(body-source-viewer) { display:flex; flex-direction:column; }
 .body-scroll > body-source-viewer { flex:1; }

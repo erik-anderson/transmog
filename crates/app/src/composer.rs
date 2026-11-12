@@ -57,6 +57,7 @@ pub enum ComposerBodySource {
 }
 
 const MAX_HISTORY: usize = 100;
+const MAX_RETAINED_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_BODY_INPUT_CHARS: usize = 8 * 1024 * 1024;
 
 /// One duplicate-preserving composer header.
@@ -116,6 +117,40 @@ pub struct ComposerSnapshot {
     pub attribution: &'static str,
     /// Original captured request association, if this draft came from traffic.
     pub source: Option<ComposerOrigin>,
+    /// Retained request/response inspection identity, if execution completed.
+    pub entry_id: Option<String>,
+    /// Locally measured send duration in milliseconds.
+    pub elapsed_ms: Option<u64>,
+    /// Complete encoded response entity bytes.
+    pub response_body_bytes: Option<u64>,
+    /// Whether response inspection and editing remain available.
+    pub retained: bool,
+}
+
+/// The provenance of the immutable request shown with a replay response.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComposerSentRequest {
+    /// `observed` for captured boundaries, `reconstructed` for prepared direct replay.
+    pub evidence: &'static str,
+    /// Request boundary in the shared inspector.
+    pub request_boundary: &'static str,
+    /// Concise explanation of the evidence's limits.
+    pub note: &'static str,
+}
+
+/// An editable copy of a retained submitted request, with acknowledgements reset.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ComposerHistoryRequest {
+    /// Submitted request fields and immutable retained body source.
+    pub request: ComposerRequest,
+    /// Original source association, independent of later Traffic retention.
+    pub source: Option<ComposerOrigin>,
+    /// Encoded retained request-body bytes.
+    pub body_bytes: Option<u64>,
+    /// Any privacy omissions that must be reviewed before another send.
+    pub notices: Vec<String>,
 }
 
 /// Bounded composer response.
@@ -140,6 +175,24 @@ pub struct ComposerResult {
     pub attribution: &'static str,
     /// Original captured request association, retained after edits.
     pub source: Option<ComposerOrigin>,
+    /// Locally measured send duration in milliseconds.
+    pub elapsed_ms: u64,
+    /// Complete encoded response entity bytes, before content decoding.
+    pub response_body_bytes: u64,
+    /// Provenance of the request evidence in `detail`.
+    pub sent_request: ComposerSentRequest,
+}
+
+#[derive(Default)]
+struct ActiveReplays {
+    requests: HashMap<ActiveReplayId, ExchangeCancellation>,
+    canceled: VecDeque<String>,
+}
+
+#[derive(Clone, Eq, Hash, PartialEq)]
+enum ActiveReplayId {
+    Native(u64),
+    Operation(String),
 }
 
 struct History {
@@ -149,7 +202,7 @@ struct History {
 
 #[derive(Clone)]
 pub(crate) struct ComposerManager {
-    active: Arc<Mutex<HashMap<u64, ExchangeCancellation>>>,
+    active: Arc<Mutex<ActiveReplays>>,
     executor: Option<Arc<dyn ReplayExecutor>>,
     history: Arc<Mutex<History>>,
     response: Arc<Mutex<VecDeque<Arc<crate::composer_response::ComposerResponse>>>>,
@@ -209,7 +262,7 @@ impl ComposerManager {
     }
     pub(crate) fn new(executor: Option<Arc<dyn ReplayExecutor>>) -> Self {
         Self {
-            active: Arc::new(Mutex::new(HashMap::new())),
+            active: Arc::default(),
             executor,
             response: Arc::new(Mutex::new(VecDeque::new())),
             response_pool: Arc::default(),
@@ -221,24 +274,70 @@ impl ComposerManager {
     }
     pub(crate) fn admit(&self) -> ActiveReplay {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-        let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let id = ActiveReplayId::Native(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
         let cancellation = ExchangeCancellation::new();
         self.active
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(id, cancellation.clone());
+            .requests
+            .insert(id.clone(), cancellation.clone());
         ActiveReplay {
             id,
             registry: self.active.clone(),
             cancellation,
         }
     }
+    pub(crate) fn admit_operation(&self, id: String) -> Result<ActiveReplay, AppError> {
+        validate_operation_id(&id)?;
+        let cancellation = ExchangeCancellation::new();
+        let mut active = self
+            .active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let canceled = active.canceled.contains(&id);
+        let key = ActiveReplayId::Operation(id);
+        if active.requests.contains_key(&key) {
+            return Err(AppError::new(
+                ErrorCategory::InvalidInput,
+                "This Composer send is already running",
+                false,
+            ));
+        }
+        if canceled {
+            cancellation.cancel();
+        }
+        active.requests.insert(key.clone(), cancellation.clone());
+        Ok(ActiveReplay {
+            id: key,
+            registry: self.active.clone(),
+            cancellation,
+        })
+    }
+    pub(crate) fn cancel(&self, id: &str) -> Result<(), AppError> {
+        validate_operation_id(id)?;
+        let mut active = self
+            .active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(cancellation) = active
+            .requests
+            .get(&ActiveReplayId::Operation(id.to_owned()))
+        {
+            cancellation.cancel();
+        }
+        if !active.canceled.iter().any(|item| item == id) {
+            active.canceled.push_front(id.to_owned());
+            active.canceled.truncate(MAX_HISTORY);
+        }
+        Ok(())
+    }
     pub(crate) fn cancel_all(&self) {
         let active = std::mem::take(
-            &mut *self
+            &mut self
                 .active
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .requests,
         );
         for (_, cancellation) in active {
             cancellation.cancel();
@@ -276,6 +375,8 @@ impl ComposerManager {
         redact: bool,
         cancellation: &ExchangeCancellation,
     ) -> Result<ComposerResult, AppError> {
+        check_canceled(cancellation)?;
+        let began = std::time::Instant::now();
         if input.body_source.is_some() != file.is_some() {
             return Err(AppError::new(
                 ErrorCategory::Unavailable,
@@ -354,8 +455,13 @@ impl ComposerManager {
                 }
                 error
             })?;
+        check_canceled(cancellation)?;
+        let elapsed_ms = u64::try_from(began.elapsed().as_millis()).unwrap_or(u64::MAX);
         let id = self.record(method, target, Some(response.status), source.clone());
-        let (retained, detail) = crate::composer_response::ComposerResponse::retain(
+        let mut submitted = input;
+        submitted.acknowledge_non_idempotent = false;
+        submitted.acknowledge_credentials = false;
+        let (retained, mut detail) = crate::composer_response::ComposerResponse::retain(
             prepared,
             head,
             &response,
@@ -364,8 +470,12 @@ impl ComposerManager {
             source.clone(),
             performance.snapshot(),
             request_source,
+            Some(submitted),
         )?;
-        self.retain_response(retained.clone());
+        self.complete_record(id, &detail.id, elapsed_ms, response.body.len() as u64);
+        if !self.retain_response(retained.clone()) {
+            mark_unretained(&mut detail);
+        }
         let headers = retained.snapshot.response_heads[0]
             .head
             .headers
@@ -396,17 +506,81 @@ impl ComposerManager {
             },
             attribution: "transmog.app.composer-replay",
             source,
+            elapsed_ms,
+            response_body_bytes: response.body.len() as u64,
+            sent_request: retained.sent_request(),
         })
     }
 
     pub(crate) fn history(&self) -> Vec<ComposerSnapshot> {
-        self.history
+        let mut items: Vec<_> = self
+            .history
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .items
             .iter()
             .cloned()
-            .collect()
+            .collect();
+        for item in &mut items {
+            item.retained = item
+                .entry_id
+                .as_ref()
+                .is_some_and(|id| self.response(id).is_some());
+        }
+        items
+    }
+    pub(crate) fn complete_record(&self, id: u64, entry_id: &str, elapsed_ms: u64, bytes: u64) {
+        if let Some(item) = self
+            .history
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .items
+            .iter_mut()
+            .find(|item| item.id == id)
+        {
+            item.entry_id = Some(entry_id.into());
+            item.elapsed_ms = Some(elapsed_ms);
+            item.response_body_bytes = Some(bytes);
+        }
+    }
+    pub(crate) fn history_result(&self, id: u64) -> Result<ComposerResult, AppError> {
+        let item = self
+            .history()
+            .into_iter()
+            .find(|item| item.id == id)
+            .ok_or_else(history_expired)?;
+        let retained = item
+            .entry_id
+            .as_ref()
+            .and_then(|id| self.response(id))
+            .ok_or_else(history_expired)?;
+        Ok(ComposerResult {
+            detail: retained.detail()?,
+            id,
+            status: item.status.ok_or_else(history_expired)?,
+            headers: Vec::new(),
+            body: String::new(),
+            body_is_hex: false,
+            truncated: false,
+            attribution: item.attribution,
+            source: item.source,
+            elapsed_ms: item.elapsed_ms.unwrap_or(0),
+            response_body_bytes: item.response_body_bytes.unwrap_or(0),
+            sent_request: retained.sent_request(),
+        })
+    }
+    pub(crate) fn history_request(&self, id: u64) -> Result<ComposerHistoryRequest, AppError> {
+        let item = self
+            .history()
+            .into_iter()
+            .find(|item| item.id == id)
+            .ok_or_else(history_expired)?;
+        let retained = item
+            .entry_id
+            .as_ref()
+            .and_then(|id| self.response(id))
+            .ok_or_else(history_expired)?;
+        retained.history_request()
     }
     pub(crate) fn response(
         &self,
@@ -425,7 +599,11 @@ impl ComposerManager {
     pub(crate) fn retain_response(
         &self,
         response: Arc<crate::composer_response::ComposerResponse>,
-    ) {
+    ) -> bool {
+        let bytes = response.retained_bytes();
+        if bytes > MAX_RETAINED_BYTES {
+            return false;
+        }
         let mut pool = self
             .response_pool
             .lock()
@@ -434,7 +612,7 @@ impl ComposerManager {
         pool.push_front(RetainedResponse {
             owner: Arc::downgrade(&self.response),
             id: response.snapshot.exchange_id,
-            bytes: response.retained_bytes(),
+            bytes,
         });
         let mut retained = self
             .response
@@ -443,8 +621,10 @@ impl ComposerManager {
         retained.push_front(response);
         drop(retained);
         while pool.len() > MAX_HISTORY
-            || pool.iter().map(|entry| entry.bytes).sum::<u64>() > 256 * 1024 * 1024
-                && pool.len() > 1
+            || pool
+                .iter()
+                .fold(0_u64, |total, entry| total.saturating_add(entry.bytes))
+                > MAX_RETAINED_BYTES
         {
             if let Some(entry) = pool.pop_back()
                 && let Some(owner) = entry.owner.upgrade()
@@ -455,6 +635,7 @@ impl ComposerManager {
                     .retain(|response| response.snapshot.exchange_id != entry.id);
             }
         }
+        true
     }
 
     pub(crate) fn record(
@@ -477,6 +658,10 @@ impl ComposerManager {
             status,
             source,
             attribution: "transmog.app.composer-replay",
+            entry_id: None,
+            elapsed_ms: None,
+            response_body_bytes: None,
+            retained: false,
         });
         history.items.truncate(MAX_HISTORY);
         id
@@ -484,17 +669,69 @@ impl ComposerManager {
 }
 
 pub(crate) struct ActiveReplay {
-    id: u64,
-    registry: Arc<Mutex<HashMap<u64, ExchangeCancellation>>>,
+    id: ActiveReplayId,
+    registry: Arc<Mutex<ActiveReplays>>,
     pub(crate) cancellation: ExchangeCancellation,
 }
 impl Drop for ActiveReplay {
     fn drop(&mut self) {
         self.cancellation.cancel();
-        self.registry
+        let mut registry = self
+            .registry
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .remove(&self.id);
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        registry.requests.remove(&self.id);
+        if let ActiveReplayId::Operation(id) = &self.id
+            && !registry.canceled.contains(id)
+        {
+            registry.canceled.push_front(id.clone());
+            registry.canceled.truncate(MAX_HISTORY);
+        }
+    }
+}
+
+fn validate_operation_id(id: &str) -> Result<(), AppError> {
+    if id.is_empty()
+        || id.len() > 128
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err(AppError::new(
+            ErrorCategory::InvalidInput,
+            "Choose a unique Composer send identifier",
+            false,
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn check_canceled(cancellation: &ExchangeCancellation) -> Result<(), AppError> {
+    if cancellation.is_cancelled() {
+        return Err(AppError::new(
+            ErrorCategory::Unavailable,
+            "Composer send canceled; the server may already have received the request",
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn history_expired() -> AppError {
+    AppError::new(
+        ErrorCategory::Unavailable,
+        "This replay is no longer retained. Send the current draft again to inspect a new result",
+        false,
+    )
+}
+
+pub(crate) fn mark_unretained(detail: &mut crate::SessionDetail) {
+    let reason = "This replay exceeded the 256 MiB request/response history budget. Its bodies and editable draft were not retained; earlier history is unchanged.";
+    detail.diagnostics.push(reason.into());
+    for body in &mut detail.stored_bodies {
+        body.availability = crate::BodyAvailability::QuotaOmitted;
+        body.retained_bytes = 0;
+        body.reason = Some(reason.into());
     }
 }
 
@@ -1188,6 +1425,475 @@ mod tests {
     use super::*;
 
     struct EchoExecutor;
+
+    fn draft() -> ComposerRequest {
+        ComposerRequest {
+            method: "PUT".into(),
+            url: "https://example.invalid/history".into(),
+            headers: Vec::new(),
+            body: "original".into(),
+            body_source: None,
+            source_entry_id: None,
+            body_is_hex: false,
+            acknowledge_non_idempotent: false,
+            acknowledge_credentials: false,
+        }
+    }
+
+    #[test]
+    fn public_operation_ids_cannot_collide_with_or_cancel_automatic_sends() {
+        let manager = ComposerManager::new(None);
+        let native = manager.admit();
+        let operation_id = match &native.id {
+            ActiveReplayId::Native(id) => format!("native-{id}"),
+            ActiveReplayId::Operation(_) => {
+                panic!("Automatic admission needs an internal identity")
+            }
+        };
+        let explicit = manager.admit_operation(operation_id.clone()).unwrap();
+        manager.cancel(&operation_id).unwrap();
+        assert!(explicit.cancellation.is_cancelled());
+        assert!(!native.cancellation.is_cancelled());
+        drop(native);
+        assert_eq!(manager.active.lock().unwrap().requests.len(), 1);
+        drop(explicit);
+        let automatic = manager.admit();
+        let next_id = match &automatic.id {
+            ActiveReplayId::Native(id) => format!("native-{id}"),
+            ActiveReplayId::Operation(_) => {
+                panic!("Automatic admission needs an internal identity")
+            }
+        };
+        manager.cancel(&next_id).unwrap();
+        assert!(!automatic.cancellation.is_cancelled());
+        assert!(
+            manager
+                .admit_operation(next_id)
+                .unwrap()
+                .cancellation
+                .is_cancelled()
+        );
+        drop(automatic);
+        assert_eq!(manager.active.lock().unwrap().canceled.len(), 2);
+        let later = manager.admit();
+        manager.cancel_all();
+        assert!(later.cancellation.is_cancelled());
+    }
+
+    #[test]
+    fn cancellation_before_admission_is_bounded_and_window_scoped() {
+        let owner = ComposerManager::new(None);
+        let other = owner.fork();
+        owner.cancel("early-send").unwrap();
+        assert!(
+            owner
+                .admit_operation("early-send".into())
+                .unwrap()
+                .cancellation
+                .is_cancelled()
+        );
+        let unrelated = other.admit_operation("early-send".into()).unwrap();
+        assert!(!unrelated.cancellation.is_cancelled());
+        let active = owner.admit_operation("active-send".into()).unwrap();
+        assert!(owner.admit_operation("active-send".into()).is_err());
+        owner.cancel("active-send").unwrap();
+        assert!(active.cancellation.is_cancelled());
+        assert!(!unrelated.cancellation.is_cancelled());
+        for index in 0..MAX_HISTORY * 2 {
+            owner.cancel(&format!("unused-{index}")).unwrap();
+        }
+        assert_eq!(owner.active.lock().unwrap().canceled.len(), MAX_HISTORY);
+    }
+
+    #[tokio::test]
+    async fn cancellation_stops_in_flight_execution_and_early_cancel_prevents_send() {
+        struct WaitingExecutor(Arc<tokio::sync::Notify>);
+        impl ReplayExecutor for WaitingExecutor {
+            fn execute(
+                &self,
+                _: ValidatedReplayRequest,
+                _: ExchangeCancellation,
+            ) -> BoxReplayFuture<'_> {
+                self.0.notify_one();
+                Box::pin(std::future::pending())
+            }
+            fn execute_file(
+                &self,
+                _: ValidatedReplayRequest,
+                _: std::fs::File,
+                _: u64,
+                _: ExchangeCancellation,
+            ) -> BoxReplayFuture<'_> {
+                Box::pin(std::future::pending())
+            }
+        }
+        let started = Arc::new(tokio::sync::Notify::new());
+        let app = crate::Application::new(crate::AppConfig {
+            replay_executor: Some(Arc::new(WaitingExecutor(started.clone()))),
+            ..Default::default()
+        })
+        .unwrap();
+        app.cancel_composer("early").unwrap();
+        assert!(
+            app.execute_composer_operation(draft(), Some("early".into()))
+                .await
+                .unwrap_err()
+                .message
+                .contains("canceled")
+        );
+        let sending = app.clone();
+        let work = tokio::spawn(async move {
+            sending
+                .execute_composer_operation(draft(), Some("running".into()))
+                .await
+        });
+        started.notified().await;
+        app.cancel_composer("running").unwrap();
+        let error = tokio::time::timeout(Duration::from_secs(1), work)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err();
+        assert!(error.message.contains("canceled"));
+        assert!(error.message.contains("server may already"));
+        assert_eq!(app.composer_history(), []);
+    }
+
+    #[tokio::test]
+    async fn history_preserves_submitted_draft_and_prepared_framing_with_full_bytes() {
+        let app = crate::Application::new(crate::AppConfig {
+            replay_executor: Some(Arc::new(EchoExecutor)),
+            ..Default::default()
+        })
+        .unwrap();
+        let mut preferences = app.product_state();
+        preferences.privacy.redact_sensitive_headers = false;
+        app.save_product_state(preferences).unwrap();
+        let input = ComposerRequest {
+            method: "POST".into(),
+            headers: vec![
+                ComposerHeader {
+                    name: "Content-Length".into(),
+                    value: "999".into(),
+                },
+                ComposerHeader {
+                    name: "Transfer-Encoding".into(),
+                    value: "chunked".into(),
+                },
+                ComposerHeader {
+                    name: "X-Duplicate".into(),
+                    value: "one".into(),
+                },
+                ComposerHeader {
+                    name: "X-Duplicate".into(),
+                    value: "two".into(),
+                },
+            ],
+            body: "00 ff 3c".into(),
+            body_is_hex: true,
+            acknowledge_non_idempotent: true,
+            ..draft()
+        };
+        let result = app.execute_composer(input.clone()).await.unwrap();
+        assert_eq!(result.response_body_bytes, 3);
+        assert_eq!(result.sent_request.evidence, "reconstructed");
+        let retained = app.composer.response(&result.detail.id).unwrap();
+        let prepared = &retained.snapshot.request_heads[0].head.headers;
+        assert_eq!(
+            prepared.values("content-length").next(),
+            Some(b"3".as_slice())
+        );
+        assert!(prepared.values("transfer-encoding").next().is_none());
+        let restored = app.composer_history_request(result.id).unwrap();
+        assert_eq!(restored.request.headers, input.headers);
+        assert_eq!(restored.request.body, input.body);
+        assert!(restored.request.body_is_hex);
+        assert!(!restored.request.acknowledge_non_idempotent);
+        assert!(!restored.request.acknowledge_credentials);
+        assert_eq!(restored.body_bytes, Some(3));
+        let large = ComposerRequest {
+            body: "x".repeat(200_000),
+            ..draft()
+        };
+        let later = app.execute_composer(large.clone()).await.unwrap();
+        assert!(later.truncated);
+        assert_eq!(
+            app.composer_history_request(later.id).unwrap().request.body,
+            large.body
+        );
+        assert_eq!(
+            app.composer_history_result(result.id).unwrap().detail.id,
+            result.detail.id
+        );
+        assert!(app.composer_history().iter().all(|row| row.retained));
+    }
+
+    #[tokio::test]
+    async fn history_respects_header_redaction_and_explains_missing_credentials() {
+        let app = crate::Application::new(crate::AppConfig {
+            replay_executor: Some(Arc::new(EchoExecutor)),
+            ..Default::default()
+        })
+        .unwrap();
+        let mut preferences = app.product_state();
+        preferences.privacy.redact_sensitive_headers = true;
+        app.save_product_state(preferences).unwrap();
+        let request = ComposerRequest {
+            headers: vec![
+                ComposerHeader {
+                    name: "Authorization".into(),
+                    value: "Bearer private-token".into(),
+                },
+                ComposerHeader {
+                    name: "X-Keep".into(),
+                    value: "public".into(),
+                },
+            ],
+            acknowledge_credentials: true,
+            ..draft()
+        };
+        let sent = app.execute_composer(request).await.unwrap();
+        let restored = app.composer_history_request(sent.id).unwrap();
+        assert!(!restored.request.acknowledge_credentials);
+        assert_eq!(
+            restored.request.headers,
+            [ComposerHeader {
+                name: "X-Keep".into(),
+                value: "public".into()
+            }]
+        );
+        assert!(
+            restored
+                .notices
+                .iter()
+                .any(|notice| notice.contains("redacted") && notice.contains("omitted"))
+        );
+        let serialized = serde_json::to_string(&restored).unwrap();
+        assert!(!serialized.contains("private-token"));
+        let retained = app.composer.response(&sent.detail.id).unwrap();
+        assert!(
+            retained.snapshot.request_heads[0]
+                .head
+                .headers
+                .iter()
+                .find(|header| header.name_eq("authorization"))
+                .unwrap()
+                .is_redacted()
+        );
+    }
+
+    #[tokio::test]
+    async fn freezing_incomplete_request_preserves_unavailable_replay_body() {
+        use transmog_core::observe::ExchangeBoundary;
+        let app = crate::Application::new(crate::AppConfig {
+            replay_executor: Some(Arc::new(EchoExecutor)),
+            ..Default::default()
+        })
+        .unwrap();
+        let input = draft();
+        let sent = app.execute_composer(input.clone()).await.unwrap();
+        let retained = app.composer.response(&sent.detail.id).unwrap();
+        retained.store.register_saved(
+            retained.snapshot.exchange_id,
+            ExchangeBoundary::ClientRequest,
+            &retained.snapshot.request_heads[0].head.headers,
+            None,
+            Arc::new(crate::composer_response::ResponseBytes(Bytes::from_static(
+                b"prefix",
+            ))),
+            100,
+            false,
+        );
+        let frozen = crate::replay_context::freeze_exchange(
+            retained.snapshot.clone(),
+            &retained.store,
+            None,
+            input,
+            false,
+        )
+        .unwrap();
+        let body = frozen
+            .store
+            .metadata(frozen.snapshot.exchange_id)
+            .into_iter()
+            .find(|body| body.boundary == "client-request")
+            .unwrap();
+        assert_eq!(body.retained_bytes, 6);
+        assert_eq!(body.observed_bytes, 100);
+        assert_ne!(body.availability, crate::BodyAvailability::Complete);
+        assert!(
+            crate::request_actions::prepare_snapshot_file(&frozen.snapshot, Some(&frozen.store))
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn oversized_retained_body_cannot_escape_shared_history_budget() {
+        #[derive(Debug)]
+        struct LargeSource;
+        impl crate::body_store::SavedBodySource for LargeSource {
+            fn open(&self) -> std::io::Result<Box<dyn std::io::Read + Send>> {
+                Ok(Box::new(std::io::empty()))
+            }
+            fn length(&self) -> Option<u64> {
+                Some(256 * 1024 * 1024 + 1)
+            }
+        }
+        let app = crate::Application::new(crate::AppConfig {
+            replay_executor: Some(Arc::new(EchoExecutor)),
+            ..Default::default()
+        })
+        .unwrap();
+        let sent = app.execute_composer(draft()).await.unwrap();
+        let request = build_request(&draft()).unwrap().0;
+        let (retained, mut detail) = crate::composer_response::ComposerResponse::retain(
+            crate::composer_response::ComposerResponse::prepare(&app.service).unwrap(),
+            RequestHead {
+                method: request.method,
+                target: request.target,
+                headers: request.headers,
+                source_version: HttpLegVersion::Http1,
+            },
+            &ReplayResponse {
+                source_version: HttpLegVersion::Http1,
+                status: 200,
+                headers: HeaderBlock::new(),
+                body: Bytes::new(),
+            },
+            std::time::SystemTime::now(),
+            false,
+            None,
+            transmog_core::performance::PerformanceRecorder::new(
+                std::time::SystemTime::now(),
+                std::time::Instant::now(),
+            )
+            .snapshot(),
+            Arc::new(LargeSource),
+            None,
+        )
+        .unwrap();
+        let manager = app.composer.fork();
+        assert!(!manager.retain_response(retained));
+        assert!(manager.response(&sent.detail.id).is_none());
+        assert_eq!(manager.response_pool.lock().unwrap().len(), 1);
+        assert!(app.composer_history()[0].retained);
+        mark_unretained(&mut detail);
+        assert!(detail.stored_bodies.iter().all(|body| body.availability
+            == crate::BodyAvailability::QuotaOmitted
+            && body.retained_bytes == 0));
+    }
+
+    #[tokio::test]
+    async fn streamed_history_replays_frozen_bytes_after_source_file_changes() {
+        struct FileEcho;
+        impl ReplayExecutor for FileEcho {
+            fn execute(
+                &self,
+                request: ValidatedReplayRequest,
+                cancellation: ExchangeCancellation,
+            ) -> BoxReplayFuture<'_> {
+                EchoExecutor.execute(request, cancellation)
+            }
+            fn execute_file(
+                &self,
+                _: ValidatedReplayRequest,
+                mut file: std::fs::File,
+                length: u64,
+                _: ExchangeCancellation,
+            ) -> BoxReplayFuture<'_> {
+                use std::io::Read as _;
+                let mut bytes = Vec::new();
+                file.read_to_end(&mut bytes).unwrap();
+                assert_eq!(bytes.len() as u64, length);
+                Box::pin(async move {
+                    Ok(ReplayResponse {
+                        source_version: HttpLegVersion::Http1,
+                        status: 200,
+                        headers: HeaderBlock::new(),
+                        body: Bytes::from(bytes),
+                    })
+                })
+            }
+        }
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("body.bin");
+        std::fs::write(&path, [0, 255, 3, 4]).unwrap();
+        let app = crate::Application::new(crate::AppConfig {
+            replay_executor: Some(Arc::new(FileEcho)),
+            ..Default::default()
+        })
+        .unwrap();
+        let input = ComposerRequest {
+            body: String::new(),
+            body_source: Some(ComposerBodySource::File {
+                path: path.to_string_lossy().into_owned(),
+            }),
+            ..draft()
+        };
+        let first = app.execute_composer(input).await.unwrap();
+        std::fs::write(&path, b"changed").unwrap();
+        let restored = app.composer_history_request(first.id).unwrap();
+        assert!(
+            matches!(restored.request.body_source, Some(ComposerBodySource::Captured { ref entry_id }) if entry_id == &first.detail.id)
+        );
+        let second = app.execute_composer(restored.request).await.unwrap();
+        assert_eq!(second.body, "00 ff 03 04");
+        std::fs::remove_file(path).unwrap();
+        let restored = app.composer_history_request(first.id).unwrap();
+        assert_eq!(
+            app.execute_composer(restored.request).await.unwrap().body,
+            second.body
+        );
+        let subject = |id| crate::comparison::ComparisonSubject::Exchange {
+            id,
+            request_boundary: "client-request".into(),
+            response_boundary: "client-response".into(),
+        };
+        let compared = app
+            .compare_evidence(
+                crate::comparison::ComparisonRequest {
+                    operation_id: "retained-replay-comparison".into(),
+                    left: subject(first.detail.id.clone()),
+                    right: subject(second.detail.id.clone()),
+                    options: crate::comparison::ComparisonOptions::default(),
+                },
+                [None, None],
+            )
+            .await
+            .unwrap();
+        assert!(
+            compared
+                .rows
+                .iter()
+                .any(|row| row.field == "Exact body representation"
+                    && row.state == crate::comparison::ComparisonState::Equal)
+        );
+        assert!(!app.comparison_stale(&compared.id).unwrap());
+    }
+
+    #[tokio::test]
+    async fn shared_retention_eviction_disables_history_without_using_later_source() {
+        let service =
+            ApplicationSessionService::new(transmog_session::ServiceConfig::default()).unwrap();
+        let owner = ComposerManager::new(Some(Arc::new(EchoExecutor)));
+        let first = owner
+            .execute(&service, draft(), None, None, false)
+            .await
+            .unwrap();
+        let other = owner.fork();
+        for _ in 0..MAX_HISTORY {
+            other
+                .execute(&service, draft(), None, None, false)
+                .await
+                .unwrap();
+        }
+        assert_eq!(other.history().len(), MAX_HISTORY);
+        assert!(!owner.history()[0].retained);
+        assert!(owner.history_request(first.id).is_err());
+        assert!(owner.history_result(first.id).is_err());
+        assert!(owner.response(&first.detail.id).is_none());
+        assert_eq!(owner.response_pool.lock().unwrap().len(), MAX_HISTORY);
+    }
 
     impl ReplayExecutor for EchoExecutor {
         fn execute_file(

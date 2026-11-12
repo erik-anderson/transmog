@@ -25,6 +25,15 @@ impl Drop for ConnectionTask {
 
 impl Application {
     pub(crate) fn replay_origin(&self, id: &str) -> crate::ComposerOrigin {
+        if let Some(origin) = self
+            .composer
+            .history()
+            .iter()
+            .filter_map(|item| item.source.as_ref())
+            .find(|origin| origin.entry_id == id)
+        {
+            return origin.clone();
+        }
         let trace = self.traces.entry(id);
         crate::ComposerOrigin {
             trace_name: trace
@@ -166,6 +175,7 @@ impl Application {
         if !live_rules {
             return self.execute_composer(request).await;
         }
+        let began = std::time::Instant::now();
         self.validate_agent_request(&request, true)?;
         let engine = self.live_parent.as_deref().unwrap_or(self);
         let address = engine.agent_proxy_address()?;
@@ -187,7 +197,7 @@ impl Application {
             .clone();
         let expected = validated.target.clone();
         let expected_method = request.method.clone();
-        let (status, local) =
+        let (status, local, response_body_bytes) =
             send_through_proxy(address, &request, validated, body, certificate).await?;
         let mut updates = engine.subscribe_session_updates()?;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
@@ -224,20 +234,53 @@ impl Application {
             .as_ref()
             .map(|id| self.replay_origin(id));
         let retained_source = source.clone();
+        let submitted = request.clone();
+        let redact = self.product_state().privacy.redact_sensitive_headers;
         let store = engine
             .body_store
             .clone()
             .ok_or_else(|| failed("Body retention is required for live-rules replay context"))?;
         let retained = tokio::task::spawn_blocking(move || {
-            crate::replay_context::freeze_exchange(snapshot, &store, retained_source)
+            crate::replay_context::freeze_exchange(
+                snapshot,
+                &store,
+                retained_source,
+                submitted,
+                redact,
+            )
         })
         .await
         .map_err(|_| failed("The replay context worker failed"))??;
-        let detail = retained.detail()?;
+        let elapsed_ms = u64::try_from(began.elapsed().as_millis()).unwrap_or(u64::MAX);
+        self.complete_live_replay(
+            request,
+            retained,
+            source,
+            status,
+            elapsed_ms,
+            response_body_bytes,
+        )
+    }
+
+    fn complete_live_replay(
+        &self,
+        request: ComposerRequest,
+        retained: std::sync::Arc<crate::composer_response::ComposerResponse>,
+        source: Option<crate::ComposerOrigin>,
+        status: u16,
+        elapsed_ms: u64,
+        response_body_bytes: u64,
+    ) -> Result<ComposerResult, AppError> {
+        let mut detail = retained.detail()?;
+        let sent_request = retained.sent_request();
         let id = self
             .composer
             .record(request.method, request.url, Some(status), source.clone());
-        self.composer.retain_response(retained);
+        self.composer
+            .complete_record(id, &detail.id, elapsed_ms, response_body_bytes);
+        if !self.composer.retain_response(retained) {
+            composer::mark_unretained(&mut detail);
+        }
         Ok(ComposerResult {
             detail,
             id,
@@ -248,6 +291,9 @@ impl Application {
             truncated: false,
             attribution: "transmog.app.live-rules-replay",
             source,
+            elapsed_ms,
+            response_body_bytes,
+            sent_request,
         })
     }
 }
@@ -258,7 +304,7 @@ async fn send_through_proxy(
     validated: transmog_session::ReplayRequest,
     body: Bytes,
     certificate: Option<boring::x509::X509>,
-) -> Result<(u16, SocketAddr), AppError> {
+) -> Result<(u16, SocketAddr, u64), AppError> {
     let socket = tokio::net::TcpStream::connect(address)
         .await
         .map_err(|_| failed("The running proxy could not be reached"))?;
@@ -332,7 +378,7 @@ async fn send_through_proxy(
         .map_err(|_| failed("Live-rules replay timed out"))?
         .map_err(|_| failed("Live-rules replay failed after connection admission"))?;
     let status = response.status().as_u16();
-    tokio::time::timeout(
+    let body = tokio::time::timeout(
         Duration::from_secs(30),
         Limited::new(
             response.into_body(),
@@ -343,7 +389,7 @@ async fn send_through_proxy(
     .await
     .map_err(|_| failed("Live-rules response timed out"))?
     .map_err(|_| failed("The live-rules response exceeded its budget or was interrupted"))?;
-    Ok((status, local))
+    Ok((status, local, body.to_bytes().len() as u64))
 }
 
 trait ReplayIo: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}

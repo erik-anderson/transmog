@@ -48,15 +48,15 @@ use transmog_app::{
     AutomationCandidate, AutomationRuleSet, AutomationStatus, BodyInspection,
     BodyInspectionRequest, BodyStoreConfig, BreakpointDecision, BreakpointSettings,
     BreakpointStatus, CaCreateRequest, CaIdentity, CaptureReadModel, CaptureStartRequest,
-    CaptureSummaryView, ComposerRequest, ComposerResult, ComposerSnapshot, ComposerSource,
-    DiagnosticLevel, DiagnosticsReport, ExportFormat, ExportRequest, ExportResult, ImportRequest,
-    ImportResponseAsset, ProductState, ProxyRoute, ProxyStartRequest, RequestCommand,
-    RequestCommandFormat, ResponseAsset, ResponseAssetEdit, ResponseAssetInspection,
-    ResponseFileResult, RuntimeDiagnostics, ScriptCandidate, ScriptDraft, ScriptInvocation,
-    ScriptResult, ScriptStatus, SessionDetail, SessionHint, SessionPage, SessionQueryInput,
-    SessionResponseAsset, SessionSummary, SupportBundleRequest, SupportBundleResult,
-    SystemReplayExecutor, TraceSaveOptions, TraceSaveResult, TrafficTimelineRow, TrafficView,
-    WindowState, WorkspacePreferences,
+    CaptureSummaryView, ComposerHistoryRequest, ComposerRequest, ComposerResult, ComposerSnapshot,
+    ComposerSource, DiagnosticLevel, DiagnosticsReport, ExportFormat, ExportRequest, ExportResult,
+    ImportRequest, ImportResponseAsset, ProductState, ProxyRoute, ProxyStartRequest,
+    RequestCommand, RequestCommandFormat, ResponseAsset, ResponseAssetEdit,
+    ResponseAssetInspection, ResponseFileResult, RuntimeDiagnostics, ScriptCandidate, ScriptDraft,
+    ScriptInvocation, ScriptResult, ScriptStatus, SessionDetail, SessionHint, SessionPage,
+    SessionQueryInput, SessionResponseAsset, SessionSummary, SupportBundleRequest,
+    SupportBundleResult, SystemReplayExecutor, TraceSaveOptions, TraceSaveResult,
+    TrafficTimelineRow, TrafficView, WindowState, WorkspacePreferences,
 };
 use transmog_app_webui::{AppRenderer, ShellView, UiError, UiResponse};
 use transmog_host_windows::{
@@ -2248,11 +2248,47 @@ async fn disable_breakpoints(state: State<'_, DesktopState>) -> Result<Breakpoin
 #[tauri::command]
 async fn execute_composer(
     request: ComposerRequest,
+    operation_id: Option<String>,
     window: tauri::WebviewWindow,
     state: State<'_, DesktopState>,
 ) -> Result<ComposerResult, AppError> {
     let application = state.window_application(&window)?;
-    application.execute_composer(request).await
+    application
+        .execute_composer_operation(request, operation_id)
+        .await
+}
+
+#[tauri::command]
+fn cancel_composer(
+    operation_id: String,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<(), AppError> {
+    state
+        .window_application(&window)?
+        .cancel_composer(&operation_id)
+}
+
+#[tauri::command]
+fn composer_history_request(
+    id: u64,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<ComposerHistoryRequest, AppError> {
+    state
+        .window_application(&window)?
+        .composer_history_request(id)
+}
+
+#[tauri::command]
+fn composer_history_result(
+    id: u64,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<ComposerResult, AppError> {
+    state
+        .window_application(&window)?
+        .composer_history_result(id)
 }
 
 #[tauri::command]
@@ -2889,6 +2925,9 @@ pub fn run() {
                 decide_breakpoint,
                 disable_breakpoints,
                 execute_composer,
+                cancel_composer,
+                composer_history_request,
+                composer_history_result,
                 composer_history,
                 start_capture,
                 stop_capture,

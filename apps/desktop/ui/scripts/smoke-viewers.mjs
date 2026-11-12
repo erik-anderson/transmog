@@ -892,8 +892,10 @@ try {
     );
     const composerBinary = Buffer.alloc(1024 * 1024 + 17);
     for (let index = 0; index < composerBinary.length; index++) composerBinary[index] = index % 256;
+    let acknowledgeDelayedReplay;
+    const delayedReplayReceived = new Promise((resolve) => (acknowledgeDelayedReplay = resolve));
     const replayServer = createServer(async (request, response) => {
-      if (request.url === "/composer-authoring") {
+      if (request.url?.split("?")[0] === "/composer-authoring") {
         const chunks = [];
         for await (const chunk of request) chunks.push(chunk);
         const repeated = [];
@@ -901,14 +903,24 @@ try {
           if (request.rawHeaders[index].toLowerCase() === "x-repeat")
             repeated.push(request.rawHeaders[index + 1]);
         }
-        response.setHeader("Content-Type", "application/json");
-        response.end(
-          JSON.stringify({
-            bytes: Array.from(Buffer.concat(chunks)),
-            repeated,
-            empty: request.headers["x-empty"],
-          }),
-        );
+        const finish = () => {
+          response.setHeader("Content-Type", "application/json");
+          response.end(
+            JSON.stringify({
+              bytes: Array.from(Buffer.concat(chunks)),
+              repeated,
+              empty: request.headers["x-empty"],
+              disabled: request.headers["x-disabled"] ?? null,
+              url: request.url,
+            }),
+          );
+        };
+        if (new URL(request.url, "http://127.0.0.1").searchParams.has("delay")) {
+          acknowledgeDelayedReplay();
+          const timer = setTimeout(finish, 2000);
+          timer.unref();
+          response.once("close", () => clearTimeout(timer));
+        } else finish();
         return;
       }
       if (request.url === "/composer-image.svg") {
@@ -1157,6 +1169,7 @@ try {
         composer,
         composerFixtureUrl + "/composer-authoring",
         screenshot,
+        delayedReplayReceived,
       );
       await viewer.evaluate(
         `(async()=>{await ${root}.activateView('traffic');const workspace=${traffic};workspace.searchInput.value='Content-Length';workspace.searchMetadata=false;workspace.searchRequestHeaders=true;workspace.searchResponseHeaders=false;workspace.searchBodies=false;workspace.searchRequestBodies=false;workspace.selectSearchMatches=true;await workspace.runContentSearch();})()`,

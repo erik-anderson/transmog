@@ -74,6 +74,9 @@ when changing the experience.
 
 - Remove repeated labels, excess spacing and unnecessary containers before
   reducing text size or control targets. Reuse styles and align text baselines.
+- Keep pinned action rows outside scrolling fields so inputs never pass beneath
+  them. Reuse surrounding context instead of repeating inspector headings, and
+  show technical guidance beside the cases that need it.
 - Keep actions outside list scrollers. Preserve comparison in wide panes and
   provide list/detail or request/response switching in narrow ones. Scroll within
   workspaces so content cannot push navigation beyond the viewport. Temporary
@@ -121,8 +124,12 @@ when changing the experience.
   cannot move the input while the user types, including in expanded editors.
 - Header authoring uses compact Name/Value rows with a bulk text alternative.
   Preserve duplicate occurrences, order, empty values and invalid drafts; changing
-  views must not silently repair or reinterpret them. Body representation changes
-  preserve bytes, and responses distinguish the sent request from later edits.
+  views must not silently repair or reinterpret them. Temporary exclusions retain
+  their editable values across views. Query editors preserve untouched URL spelling
+  and encoding; opening a structured view must not normalize the source.
+  Body representation changes preserve bytes, and responses distinguish their
+  retained request from later edits. Reopening history uses that attempt's evidence,
+  never a changed source or file. Label prepared data separately from observed data.
 - Scratch utilities preserve their draft when dismissed. Detaching transfers
   work only after its destination is ready; independent utility windows retain
   their own drafts and do not depend on the originating workspace's lifetime.

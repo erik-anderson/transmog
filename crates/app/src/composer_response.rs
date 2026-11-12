@@ -22,6 +22,8 @@ pub(crate) struct ComposerResponse {
     pub snapshot: SessionSnapshot,
     pub store: BodyStore,
     origin: Option<crate::ComposerOrigin>,
+    submitted: Option<crate::ComposerRequest>,
+    direct: bool,
 }
 
 pub(crate) struct PreparedComposerResponse {
@@ -87,6 +89,7 @@ impl ComposerResponse {
         origin: Option<crate::ComposerOrigin>,
         mut performance: transmog_core::performance::PerformanceEvidence,
         request_body: Arc<dyn SavedBodySource>,
+        submitted: Option<crate::ComposerRequest>,
     ) -> Result<(Arc<Self>, SessionDetail), AppError> {
         let PreparedComposerResponse { exchange_id, store } = prepared;
         let mut head = ResponseHead {
@@ -117,22 +120,9 @@ impl ComposerResponse {
             request.headers.redact_sensitive();
             head.headers.redact_sensitive();
         }
+        let submitted = prepare_submitted(submitted, exchange_id, redact);
         request.source_version = response.source_version;
-        let metadata = Arc::new(ExchangeMetadata {
-            exchange_id,
-            downstream_connection_id: ConnectionId(0),
-            downstream_stream_id: StreamId(0),
-            client_addr: "127.0.0.1:0".parse().expect("loopback address"),
-            listener_addr: "127.0.0.1:0".parse().expect("loopback address"),
-            client_identity: ClientIdentity::LocalProcess {
-                pid: std::process::id(),
-                name: Some("Transmog Composer".into()),
-            },
-            ingress_version: response.source_version,
-            original_target: OriginalTarget::new(request.target.clone()),
-            started_at,
-            websocket_requested: false,
-        });
+        let metadata = replay_metadata(exchange_id, &request, started_at);
         let snapshot = SessionSnapshot {
             request_number: 0,
             performance: {
@@ -182,6 +172,8 @@ impl ComposerResponse {
             snapshot,
             store,
             origin,
+            submitted,
+            direct: true,
         });
         let detail = retained.detail()?;
         Ok((retained, detail))
@@ -204,19 +196,136 @@ impl ComposerResponse {
             .metadata(self.snapshot.exchange_id)
             .iter()
             .map(|body| body.retained_bytes)
-            .sum()
+            .sum::<u64>()
+            .saturating_add(self.submitted.as_ref().map_or(0, |request| {
+                (request.body.len() + request.url.len() + request.method.len()) as u64
+                    + request
+                        .headers
+                        .iter()
+                        .map(|header| (header.name.len() + header.value.len()) as u64)
+                        .sum::<u64>()
+            }))
+    }
+    pub(crate) fn sent_request(&self) -> crate::ComposerSentRequest {
+        if self.direct {
+            crate::ComposerSentRequest {
+                evidence: "reconstructed",
+                request_boundary: "client-request",
+                note: "Prepared request with applied body framing. Reconstructed from this send; transport-generated headers and protocol framing were not observed.",
+            }
+        } else if self
+            .snapshot
+            .request_heads
+            .iter()
+            .any(|head| head.boundary == ExchangeBoundary::UpstreamRequest)
+        {
+            crate::ComposerSentRequest {
+                evidence: "observed",
+                request_boundary: "upstream-request",
+                note: "Observed upstream request retained from this send, including applied live-rule changes.",
+            }
+        } else {
+            crate::ComposerSentRequest {
+                evidence: "observed",
+                request_boundary: "client-request",
+                note: "Observed client request retained from this send. No upstream request was observed.",
+            }
+        }
+    }
+    pub(crate) fn history_request(&self) -> Result<crate::ComposerHistoryRequest, AppError> {
+        let request = self.submitted.clone().ok_or_else(|| {
+            AppError::new(
+                ErrorCategory::Unavailable,
+                "This replay has no retained editable submitted request",
+                false,
+            )
+        })?;
+        let body_bytes = self
+            .store
+            .metadata(self.snapshot.exchange_id)
+            .iter()
+            .find(|body| body.boundary == "client-request")
+            .map(|body| body.retained_bytes);
+        let notices = if self.snapshot.request_heads.iter().any(|head| {
+            head.head
+                .headers
+                .iter()
+                .any(transmog_core::HeaderField::is_redacted)
+        }) {
+            vec!["Sensitive header values were redacted and omitted from this draft. Supply them again before sending if needed.".into()]
+        } else {
+            Vec::new()
+        };
+        Ok(crate::ComposerHistoryRequest {
+            request,
+            source: self.origin.clone(),
+            body_bytes,
+            notices,
+        })
     }
     pub(crate) fn from_snapshot(
         snapshot: SessionSnapshot,
         store: BodyStore,
         origin: Option<crate::ComposerOrigin>,
+        submitted: crate::ComposerRequest,
     ) -> Arc<Self> {
         Arc::new(Self {
             snapshot,
             store,
             origin,
+            submitted: Some(submitted),
+            direct: false,
         })
     }
+}
+
+fn prepare_submitted(
+    mut submitted: Option<crate::ComposerRequest>,
+    exchange_id: ExchangeId,
+    redact: bool,
+) -> Option<crate::ComposerRequest> {
+    if let Some(input) = &mut submitted {
+        if redact {
+            input.headers.retain(|field| {
+                ![
+                    "authorization",
+                    "proxy-authorization",
+                    "cookie",
+                    "set-cookie",
+                ]
+                .iter()
+                .any(|name| field.name.eq_ignore_ascii_case(name))
+            });
+        }
+        if input.body_source.is_some() {
+            input.body_source = Some(crate::ComposerBodySource::Captured {
+                entry_id: format!("{:032x}", exchange_id.0),
+            });
+        }
+    }
+    submitted
+}
+
+fn replay_metadata(
+    exchange_id: ExchangeId,
+    request: &RequestHead,
+    started_at: SystemTime,
+) -> Arc<ExchangeMetadata> {
+    Arc::new(ExchangeMetadata {
+        exchange_id,
+        downstream_connection_id: ConnectionId(0),
+        downstream_stream_id: StreamId(0),
+        client_addr: "127.0.0.1:0".parse().expect("loopback address"),
+        listener_addr: "127.0.0.1:0".parse().expect("loopback address"),
+        client_identity: ClientIdentity::LocalProcess {
+            pid: std::process::id(),
+            name: Some("Transmog Composer".into()),
+        },
+        ingress_version: request.source_version,
+        original_target: OriginalTarget::new(request.target.clone()),
+        started_at,
+        websocket_requested: false,
+    })
 }
 
 fn response_id(
@@ -290,6 +399,92 @@ mod tests {
             offset: offset.to_string(),
             max_bytes: Some(length),
         }
+    }
+
+    #[test]
+    fn observed_replay_request_evidence_selects_a_retained_boundary_after_local_response() {
+        let app = Application::new(AppConfig::default()).unwrap();
+        let submitted = input();
+        let (request, _) = crate::composer::build_request(&submitted).unwrap();
+        let (response, _) = ComposerResponse::retain(
+            ComposerResponse::prepare(&app.service).unwrap(),
+            RequestHead {
+                method: request.method,
+                target: request.target,
+                headers: request.headers,
+                source_version: HttpLegVersion::Http1,
+            },
+            &ReplayResponse {
+                source_version: HttpLegVersion::Http1,
+                status: 403,
+                headers: HeaderBlock::new(),
+                body: Bytes::from_static(b"Handled locally"),
+            },
+            SystemTime::now(),
+            false,
+            None,
+            transmog_core::performance::PerformanceRecorder::new(
+                SystemTime::now(),
+                std::time::Instant::now(),
+            )
+            .snapshot(),
+            Arc::new(ResponseBytes(Bytes::new())),
+            Some(submitted.clone()),
+        )
+        .unwrap();
+        let mut snapshot = response.snapshot.clone();
+        snapshot.request_number = 1;
+        let local = crate::replay_context::freeze_exchange(
+            snapshot.clone(),
+            &response.store,
+            None,
+            submitted.clone(),
+            false,
+        )
+        .unwrap();
+        let evidence = local.sent_request();
+        assert_eq!(evidence.evidence, "observed");
+        assert_eq!(evidence.request_boundary, "client-request");
+        assert!(evidence.note.contains("No upstream request was observed"));
+        let detail = local.detail().unwrap();
+        let inspected = detail
+            .requests
+            .iter()
+            .find(|head| head.boundary == evidence.request_boundary)
+            .expect("Local responses retain their observed client request for inspection");
+        assert_eq!(inspected.method.as_deref(), Some("GET"));
+        assert_eq!(inspected.target.as_deref(), Some(submitted.url.as_str()));
+
+        let mut upstream = snapshot.request_heads[0].head.clone();
+        upstream.target.path = "/rewritten".into();
+        snapshot.request_heads.push(ObservedRequestHead {
+            boundary: ExchangeBoundary::UpstreamRequest,
+            head: upstream,
+        });
+        let forwarded = crate::replay_context::freeze_exchange(
+            snapshot,
+            &response.store,
+            None,
+            submitted,
+            false,
+        )
+        .unwrap();
+        let evidence = forwarded.sent_request();
+        assert_eq!(evidence.evidence, "observed");
+        assert_eq!(evidence.request_boundary, "upstream-request");
+        assert!(!evidence.note.contains("No upstream request was observed"));
+        let detail = forwarded.detail().unwrap();
+        assert!(
+            detail
+                .requests
+                .iter()
+                .find(|head| head.boundary == evidence.request_boundary)
+                .unwrap()
+                .target
+                .as_deref()
+                .unwrap()
+                .contains("/rewritten")
+        );
     }
 
     #[tokio::test]

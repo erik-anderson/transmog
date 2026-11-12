@@ -1,11 +1,12 @@
 <template>
-<div class="header-editor-surface" role="group" aria-label="{{label}}" @input="{stopNative(e)}" @change="{stopNative(e)}">
+<div class="header-editor-surface" role="group" aria-label="{{label}}" ?data-disable-rows="{{allowDisable}}" @input="{stopNative(e)}" @change="{stopNative(e)}">
   <div class="header-editor-heading"><span>{{label}}</span><button w-ref="{modeButton}" type="button" class="secondary compact-button" @click="{toggleMode()}" ?disabled="{{disabled}}"><if condition="headerEditorMode == 'rows'">Edit as text</if><if condition="headerEditorMode == 'text'">Edit as rows</if></button></div>
   <if condition="headerEditorMode == 'rows'">
-    <div class="header-editor-columns" aria-hidden="true"><span>Name</span><span>Value</span><span></span></div>
+    <div class="header-editor-columns" aria-hidden="true"><if condition="allowDisable"><span></span></if><span>Name</span><span>Value</span><span></span></div>
     <div class="header-editor-rows">
       <for each="row in headerEditorRows">
-        <div key="{{row.id}}" class="header-editor-row">
+        <div key="{{row.id}}" class="header-editor-row" ?data-disabled-row="{{!row.enabled}}">
+          <if condition="allowDisable"><input id="{{row.enabledId}}" class="header-editor-enabled" type="checkbox" aria-label="Enable header {{row.number}}" ?checked="{{row.enabled}}" ?disabled="{{readOnly || disabled}}" @change="{toggleHeader(row.id,e)}"></if>
           <input id="{{row.nameId}}" aria-label="Header name {{row.number}}" value="{{row.name}}" list="{{headerEditorSuggestionsId}}" spellcheck="false" autocapitalize="off" autocomplete="off" ?readonly="{{readOnly}}" ?disabled="{{disabled}}" aria-invalid="{{row.nameInvalid}}" aria-describedby="{{headerEditorErrorId}}" @input="{editRow(row.id,'name',e)}">
           <textarea id="{{row.valueId}}" aria-label="Header value {{row.number}}" value="{{row.value}}" rows="1" wrap="soft" spellcheck="false" autocapitalize="off" ?readonly="{{readOnly}}" ?disabled="{{disabled}}" aria-invalid="{{row.valueInvalid}}" aria-describedby="{{headerEditorErrorId}}" @input="{editRow(row.id,'value',e)}" @keydown="{preventValueNewline(e)}"></textarea>
           <button type="button" class="secondary compact-button header-editor-remove" aria-label="Remove header {{row.number}}" @click="{removeHeader(row.id)}" ?hidden="{{readOnly}}" ?disabled="{{disabled}}">Remove</button>
@@ -16,6 +17,7 @@
     <div class="header-editor-actions" ?hidden="{{readOnly}}"><button w-ref="{addButton}" type="button" class="secondary compact-button" @click="{addHeader()}" ?disabled="{{disabled}}">Add header</button><button type="button" class="secondary compact-button" @click="{undoRemove()}" ?hidden="{{!headerEditorCanUndo}}" ?disabled="{{disabled}}">Undo remove</button></div>
   </if>
   <if condition="headerEditorMode == 'text'"><textarea w-ref="{rawInput}" class="header-editor-raw" aria-label="{{label}} as text" value="{{headerEditorText}}" maxlength="{{maxLength}}" rows="4" wrap="soft" spellcheck="false" autocapitalize="off" ?readonly="{{readOnly}}" ?disabled="{{disabled}}" aria-invalid="{{headerEditorInvalid}}" aria-describedby="{{headerEditorErrorId}}" @input="{editText(e)}"></textarea></if>
+  <if condition="allowDisable && headerEditorMode == 'text'"><p class="header-editor-hint">Text edits enabled headers. Disabled headers are kept in Rows.</p></if>
   <p id="{{headerEditorErrorId}}" class="header-editor-error field-error" role="status" ?hidden="{{!headerEditorError}}">{{headerEditorError}}</p>
   <datalist id="{{headerEditorSuggestionsId}}"><option value="Accept"></option><option value="Accept-Encoding"></option><option value="Accept-Language"></option><option value="Authorization"></option><option value="Cache-Control"></option><option value="Content-Encoding"></option><option value="Content-Length"></option><option value="Content-Type"></option><option value="Cookie"></option><option value="ETag"></option><option value="Host"></option><option value="If-None-Match"></option><option value="Location"></option><option value="Origin"></option><option value="Referer"></option><option value="Set-Cookie"></option><option value="User-Agent"></option><option value="Vary"></option><option value="WWW-Authenticate"></option><option value="X-Forwarded-For"></option></datalist>
 </div>

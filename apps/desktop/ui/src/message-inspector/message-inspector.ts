@@ -243,6 +243,7 @@ export class MessageInspector extends WebUIElement {
     });
   }
   @attr side = "response";
+  @attr({ attribute: "hide-heading", mode: "boolean" }) hideHeading = false;
   @attr split = "35";
   @attr pane = "message";
   @observable headerViewer = "raw";

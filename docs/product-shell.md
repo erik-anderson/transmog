@@ -163,6 +163,8 @@ In Traffic, **Ctrl+F** focuses and selects the filter/search text without changi
 the current mode. **Ctrl+Shift+F** selects Search contents and focuses that field.
 **Ctrl+Shift+Enter** expands the selected inspector or restores the Traffic list.
 **Ctrl+S** opens Save copy, or the progress dialog for a save already in flight.
+In Composer, **Ctrl+Enter** sends the current request after validation and the
+applicable acknowledgements.
 Dialogs and editor-specific shortcuts retain priority. Unassigned modifier combinations and
 held-key repeats do not start additional window or file operations.
 

@@ -142,15 +142,33 @@ impl RequestFile {
     ///
     /// # Errors
     /// Returns a body read, quota, incomplete-file, or worker failure.
-    pub async fn into_replay_file(mut self) -> Result<(std::fs::File, u64), AppError> {
+    pub async fn into_replay_file(self) -> Result<(std::fs::File, u64), AppError> {
+        self.into_replay_file_cancellable(transmog_core::intercept::ExchangeCancellation::new())
+            .await
+    }
+
+    pub(crate) async fn into_replay_file_cancellable(
+        mut self,
+        cancellation: transmog_core::intercept::ExchangeCancellation,
+    ) -> Result<(std::fs::File, u64), AppError> {
         tokio::task::spawn_blocking(move || {
             let mut file = tempfile::tempfile()
                 .map_err(|_| unavailable("Replay body temporary file could not be created"))?;
-            let copied = std::io::copy(
-                &mut self.reader.by_ref().take(self.bytes.saturating_add(1)),
-                &mut file,
-            )
-            .map_err(|_| unavailable("Captured replay body could not be read"))?;
+            let mut copied = 0_u64;
+            let mut buffer = vec![0; 65536];
+            let mut reader = self.reader.by_ref().take(self.bytes.saturating_add(1));
+            loop {
+                crate::composer::check_canceled(&cancellation)?;
+                let count = reader
+                    .read(&mut buffer)
+                    .map_err(|_| unavailable("Captured replay body could not be read"))?;
+                if count == 0 {
+                    break;
+                }
+                file.write_all(&buffer[..count])
+                    .map_err(|_| unavailable("Captured replay body could not be retained"))?;
+                copied += count as u64;
+            }
             if copied > self.bytes || self.length_known && copied != self.bytes {
                 return Err(unavailable("Captured replay body is incomplete"));
             }

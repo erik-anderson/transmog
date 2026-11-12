@@ -1,0 +1,26 @@
+<template>
+<details class="query-editor-disclosure" @input="{stopNative(e)}" @change="{stopNative(e)}">
+  <summary>Query parameters <span class="query-editor-count">({{queryEditorRows.length}})</span></summary>
+  <div class="query-editor-surface">
+    <div class="query-editor-columns" aria-hidden="true"><span>Name</span><span>Value</span><span></span></div>
+    <div class="query-editor-rows">
+      <for each="row in queryEditorRows">
+        <div key="{{row.id}}" class="query-editor-row">
+          <input id="{{row.nameId}}" aria-label="Query parameter name {{row.number}}" value="{{row.name}}" spellcheck="false" autocapitalize="off" autocomplete="off" ?disabled="{{disabled}}" @input="{editRow(row.id,'name',e)}">
+          <div class="query-editor-value">
+            <textarea id="{{row.valueId}}" aria-label="Query parameter value {{row.number}}" value="{{row.value}}" rows="1" wrap="soft" spellcheck="false" autocapitalize="off" ?disabled="{{disabled}}" @input="{editRow(row.id,'value',e)}" @keydown="{preventValueNewline(e)}"></textarea>
+            <if condition="!row.value">
+              <div class="query-editor-empty-value">
+                <label class="query-editor-equals-label"><input id="{{row.equalsId}}" class="query-editor-equals" type="checkbox" aria-label="Include equals sign for query parameter {{row.number}}" aria-describedby="{{row.equalsHintId}}" ?checked="{{row.hasEquals}}" ?disabled="{{disabled}}" @change="{toggleEquals(row.id,e)}">Include =</label>
+                <span id="{{row.equalsHintId}}" class="query-editor-hint"><code>flag</code> is name only; <code>flag=</code> is an empty value.</span>
+              </div>
+            </if>
+          </div>
+          <button type="button" class="secondary compact-button query-editor-remove" aria-label="Remove query parameter {{row.number}}" ?disabled="{{disabled}}" @click="{removeParameter(row.id)}">Remove</button>
+        </div>
+      </for>
+    </div>
+    <div class="query-editor-actions"><button w-ref="{addButton}" type="button" class="secondary compact-button" ?disabled="{{disabled}}" @click="{addParameter()}">Add parameter</button><button type="button" class="secondary compact-button" ?hidden="{{!queryEditorCanUndo}}" ?disabled="{{disabled}}" @click="{undoRemove()}">Undo remove</button></div>
+  </div>
+</details>
+</template>

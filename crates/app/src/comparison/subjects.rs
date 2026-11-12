@@ -64,7 +64,12 @@ pub(super) async fn acquire(
                     .flush()
                     .map_err(|_| error("Body evidence is temporarily unavailable"))?;
             }
-            let Some(snapshot) = app.service.catalog().get(numeric) else {
+            let replay = app.composer.response(id);
+            let Some(snapshot) = replay
+                .as_ref()
+                .map(|retained| retained.snapshot.clone())
+                .or_else(|| app.service.catalog().get(numeric))
+            else {
                 evidence.side.label = format!("Request {id}");
                 evidence
                     .side
@@ -123,6 +128,11 @@ pub(super) async fn acquire(
                 format!("{request_boundary} / {response_boundary}")
             };
             evidence.side.source = "Live traffic".into();
+            if let Some(replay) = &replay {
+                evidence.side.label = "Composer replay".into();
+                evidence.side.source = "Composer".into();
+                evidence.side.notes.push(replay.sent_request().note.into());
+            }
             let trace = app.traces.entry(id);
             if let Some(entry) = &trace {
                 evidence.side.source = app
@@ -219,17 +229,26 @@ pub(super) async fn acquire(
                         .find(|body| body.boundary == boundary)
                         .map(|body| body.trailers.clone().unwrap_or_default());
                     message.body = body(
-                        app,
+                        replay
+                            .as_ref()
+                            .map(|retained| &retained.store)
+                            .or(app.body_store.as_ref()),
                         numeric,
                         boundary,
                         &path.join(if request { "request" } else { "response" }),
                         op,
                     )?;
-                    if let Some(meta) = app.body_store.as_ref().and_then(|store| {
-                        store.metadata(numeric).into_iter().find(|meta| {
-                            crate::inspector::parse_boundary(meta.boundary).ok() == Some(boundary)
+                    if let Some(meta) = replay
+                        .as_ref()
+                        .map(|retained| &retained.store)
+                        .or(app.body_store.as_ref())
+                        .and_then(|store| {
+                            store.metadata(numeric).into_iter().find(|meta| {
+                                crate::inspector::parse_boundary(meta.boundary).ok()
+                                    == Some(boundary)
+                            })
                         })
-                    }) {
+                    {
                         let source_decoded = !request && matches!(family, Some("har" | "netlog"));
                         let adjusted = family.is_some()
                             && (header_codings(&message.headers) != meta.content_codings
@@ -509,13 +528,13 @@ pub(super) async fn acquire(
 }
 
 fn body(
-    app: &Application,
+    store: Option<&crate::BodyStore>,
     id: ExchangeId,
     boundary: ExchangeBoundary,
     path: &Path,
     op: &Operation,
 ) -> Result<Body, AppError> {
-    let Some(store) = &app.body_store else {
+    let Some(store) = store else {
         return Ok(Body::missing("Body retention is not configured"));
     };
     let Some(meta) = store
@@ -749,4 +768,74 @@ fn capture_time(value: std::time::SystemTime) -> String {
                 .ok()
         })
         .unwrap_or_else(|| "Unavailable".into())
+}
+
+#[cfg(test)]
+mod replay_tests {
+    use super::*;
+
+    #[test]
+    fn acquired_replay_body_remains_available_after_registry_eviction() {
+        let app = Application::new(crate::AppConfig::default()).unwrap();
+        let response = || {
+            let request = transmog_core::RequestHead {
+                method: "GET".into(),
+                target: transmog_core::Target {
+                    scheme: "https".into(),
+                    authority: "example.test".into(),
+                    host: "example.test".into(),
+                    port: 443,
+                    path: "/".into(),
+                    query: None,
+                },
+                headers: HeaderBlock::new(),
+                source_version: transmog_core::HttpLegVersion::Http1,
+            };
+            crate::composer_response::ComposerResponse::retain(
+                crate::composer_response::ComposerResponse::prepare(&app.service).unwrap(),
+                request,
+                &transmog_session::ReplayResponse {
+                    source_version: transmog_core::HttpLegVersion::Http1,
+                    status: 200,
+                    headers: HeaderBlock::new(),
+                    body: bytes::Bytes::from_static(b"immutable body"),
+                },
+                std::time::SystemTime::now(),
+                false,
+                None,
+                transmog_core::performance::PerformanceRecorder::new(
+                    std::time::SystemTime::now(),
+                    std::time::Instant::now(),
+                )
+                .snapshot(),
+                std::sync::Arc::new(crate::composer_response::ResponseBytes(bytes::Bytes::new())),
+                None,
+            )
+            .unwrap()
+            .0
+        };
+        let held = response();
+        let id = held.snapshot.exchange_id;
+        app.composer.retain_response(held.clone());
+        for _ in 0..100 {
+            app.composer.retain_response(response());
+        }
+        assert!(app.composer.response(&format!("{:032x}", id.0)).is_none());
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("response");
+        let operation = app.comparisons.begin("pinned-replay-body").unwrap();
+        let acquired = body(
+            Some(&held.store),
+            id,
+            ExchangeBoundary::ClientResponse,
+            &path,
+            &operation,
+        )
+        .unwrap();
+        assert!(acquired.complete);
+        assert_eq!(
+            std::fs::read(acquired.path.unwrap()).unwrap(),
+            b"immutable body"
+        );
+    }
 }

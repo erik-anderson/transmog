@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import { checkQueryEditor } from "./check-query-editor.mjs";
+import { checkComposerIterations } from "./check-composer-iterations.mjs";
 import { resolve } from "node:path";
 import { fillHeaderEditor } from "./header-editor-helpers.mjs";
 
 export async function checkComposerAuthoring(page, root) {
+  await checkQueryEditor(page, root);
   await page.goto("https://workspace.test/");
   await page.locator('app-shell a[data-view="composer"]').click();
   const workspace = page.locator("composer-workspace"),
@@ -115,6 +118,13 @@ export async function checkComposerAuthoring(page, root) {
     { name: "X-Duplicate", value: "" },
   ]);
   await workspace.getByText("Response for current draft", { exact: true }).waitFor();
+  await rawHeaders.fill("Broken header");
+  assert.equal(
+    await workspace.locator(".composer-feedback").isVisible(),
+    false,
+    "A previous successful send remained below an invalid newer draft",
+  );
+  await rawHeaders.fill("X-Duplicate: one\nX-Duplicate:");
 
   // Captured newlines survive textarea normalization and representation changes.
   const captured = "first\r\nsecond 😀\r\n";
@@ -245,6 +255,11 @@ export async function checkComposerAuthoring(page, root) {
     .waitFor();
   assert.equal(await body.inputValue(), "draft edited while sending");
   assert.equal(await workspace.evaluate((w) => w.composerPane), "request");
+  assert.equal(
+    await workspace.locator(".composer-feedback").isVisible(),
+    false,
+    "An earlier response left a success message below a newer draft",
+  );
 
   // Keeping a dirty draft must also keep its already pending send observable.
   await load({ url: "https://example.test/kept-draft" });
@@ -378,6 +393,37 @@ export async function checkComposerAuthoring(page, root) {
       mode: form.elements.namedItem("bodyView").value,
       headers: form.querySelector("header-editor").captureDraft(),
     }));
+
+  // Acquiring a source still replaces the draft, but a newer compact pane
+  // choice retains its focus and stays visible when the source arrives.
+  await page.setViewportSize({ width: 800, height: 600 });
+  await load({ url: "https://example.test/previous-pane-source" });
+  await deferSource(false);
+  const responsePaneButton = workspace
+    .locator(".composer-pane-tabs")
+    .getByRole("button", { name: "Result", exact: true });
+  await responsePaneButton.click();
+  await finishSource();
+  assert.equal(
+    await form.locator('[name="url"]').inputValue(),
+    "https://example.test/obsolete-source",
+  );
+  assert.equal(await workspace.evaluate((w) => w.composerPane), "response");
+  assert.equal(
+    await responsePaneButton.evaluate((button) => button.getRootNode().activeElement === button),
+    true,
+  );
+  // An ordinary source load still reveals the request when it retains ownership.
+  await load({ url: "https://example.test/owned-pane-source" });
+  assert.equal(await workspace.evaluate((w) => w.composerPane), "request");
+  assert.equal(
+    await form
+      .locator('[name="url"]')
+      .evaluate((input) => input.getRootNode().activeElement === input),
+    true,
+  );
+  await page.setViewportSize({ width: 1280, height: 800 });
+
   for (const change of ["body", "headers", "method", "view"]) {
     for (const fail of [false, true]) {
       await load({ body: hex("previous draft"), url: "https://example.test/preserved-draft" });
@@ -532,9 +578,11 @@ export async function checkComposerAuthoring(page, root) {
 
   await page.setViewportSize({ width: 1440, height: 900 });
   await load({
+    method: "POST",
     body: hex('{"ready":true}'),
     headers: [
       { name: "Content-Type", value: "application/json" },
+      { name: "Accept", value: "application/json" },
       { name: "X-Long-Header", value: "a long value ".repeat(15) },
     ],
   });
@@ -542,25 +590,69 @@ export async function checkComposerAuthoring(page, root) {
   if (await finalRowsButton.isVisible()) {
     await finalRowsButton.click();
   }
+  assert.equal(await form.locator(".composer-headers > .field-help").isVisible(), false);
+  const fields = form.locator(".composer-request-fields");
+  const checkDraftGeometry = async () => {
+    const bounds = await form.evaluate((form) => {
+      const fields = form.querySelector(".composer-request-fields"),
+        footer = form.querySelector(".composer-send"),
+        fieldRect = fields.getBoundingClientRect(),
+        footerRect = footer.getBoundingClientRect();
+      return {
+        overflow: fields.scrollWidth > fields.clientWidth + 1,
+        fieldsBottom: fieldRect.bottom,
+        footerTop: footerRect.top,
+        footerBottom: footerRect.bottom,
+        viewport: innerHeight,
+      };
+    });
+    assert.equal(bounds.overflow, false, "Draft fields overflow horizontally");
+    assert.ok(bounds.fieldsBottom <= bounds.footerTop + 1, "Send overlaps request fields");
+    assert.ok(bounds.footerBottom <= bounds.viewport, "Send leaves the visible window");
+    for (const control of [bodyView, body, form.locator('[name="nonIdempotent"]')]) {
+      await control.scrollIntoViewIfNeeded();
+      assert.equal(
+        await control.evaluate((input) => {
+          const scroll = input.closest(".composer-request-fields").getBoundingClientRect(),
+            rect = input.getBoundingClientRect(),
+            top = Math.max(scroll.top, rect.top),
+            bottom = Math.min(scroll.bottom, rect.bottom),
+            pointY = (top + bottom) / 2,
+            pointX = (rect.left + rect.right) / 2,
+            hit = input.getRootNode().elementFromPoint(pointX, pointY);
+          return (
+            bottom - top >= Math.min(10, rect.height) && (hit === input || input.contains(hit))
+          );
+        }),
+        true,
+        "A request body control remains obscured after scrolling into view",
+      );
+    }
+    await fields.evaluate((fields) => {
+      fields.scrollTop = 0;
+    });
+  };
+  await checkDraftGeometry();
   await page.screenshot({
     path: resolve(root, "../../../target/ui-check/composer-authoring-wide.png"),
   });
   await page.setViewportSize({ width: 960, height: 720 });
+  await checkDraftGeometry();
   await page.screenshot({
     path: resolve(root, "../../../target/ui-check/composer-authoring-compact.png"),
   });
   await page.setViewportSize({ width: 800, height: 600 });
   await workspace
     .locator(".composer-pane-tabs")
-    .getByRole("button", { name: "Response", exact: true })
+    .getByRole("button", { name: "Result", exact: true })
     .click();
   assert.equal(await form.isVisible(), false);
   await workspace
     .locator(".composer-pane-tabs")
-    .getByRole("button", { name: "Request", exact: true })
+    .getByRole("button", { name: "Draft", exact: true })
     .click();
   assert.equal(await body.isVisible(), true);
-  assert.equal(await form.evaluate((el) => el.scrollWidth <= el.clientWidth + 1), true);
+  await checkDraftGeometry();
   await page.screenshot({
     path: resolve(root, "../../../target/ui-check/composer-authoring-small.png"),
   });
@@ -580,7 +672,7 @@ export async function checkComposerAuthoring(page, root) {
     await page.screenshot({
       path: resolve(root, "../../../target/ui-check/composer-authoring-zoom.png"),
     });
-    await form.evaluate((el) => {
+    await fields.evaluate((el) => {
       el.scrollTop = el.scrollHeight;
     });
     await page.screenshot({
@@ -597,4 +689,5 @@ export async function checkComposerAuthoring(page, root) {
     globalThis.__workspaceFixture.deferComposer = false;
     globalThis.__workspaceFixture.composerError = false;
   });
+  await checkComposerIterations(page, root);
 }

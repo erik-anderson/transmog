@@ -308,6 +308,27 @@ export interface ComposerSnapshot {
   target: string;
   status: number | null;
   source?: ComposerOrigin | null;
+  entryId: string | null;
+  elapsedMs: number | null;
+  responseBodyBytes: number | null;
+  retained: boolean;
+}
+export interface ComposerRequest {
+  method: string;
+  url: string;
+  headers: Array<{ name: string; value: string }>;
+  sourceEntryId: string | null;
+  bodySource: { kind: "captured"; entryId: string } | { kind: "file"; path: string } | null;
+  body: string;
+  bodyIsHex: boolean;
+  acknowledgeNonIdempotent: boolean;
+  acknowledgeCredentials: boolean;
+}
+export interface ComposerHistoryRequest {
+  request: ComposerRequest;
+  source: ComposerOrigin | null;
+  bodyBytes: number | null;
+  notices: string[];
 }
 export interface ComposerOrigin {
   entryId: string;
@@ -325,6 +346,13 @@ export interface ComposerResult {
   bodyIsHex: boolean;
   truncated: boolean;
   attribution: string;
+  elapsedMs: number;
+  responseBodyBytes: number;
+  sentRequest: {
+    evidence: "reconstructed" | "observed";
+    requestBoundary: string;
+    note: string;
+  };
 }
 export interface CaptureReadModel {
   state: "idle" | "active" | "sealed" | "failed" | "shutdown";

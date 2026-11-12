@@ -43,7 +43,7 @@ Captured markup remains inert. Plain text stays usable while the editor loads;
 reading or selecting that fallback postpones the upgrade until focus and selection
 leave it. Choosing **Find** or **Show in source** proceeds despite an earlier
 fallback selection. Hidden editors release their models and restore reading
-position when shown again. These viewers are shared by Traffic and Composer responses.
+position when shown again. These viewers are shared by Traffic and Composer.
 In compact panes, long explanation blocks have their own scroll area. Tab to
 them and use the arrow keys or End to read the rest; **Copy explanation** copies
 their complete wording.
@@ -336,7 +336,7 @@ with their readers. Save as leases original bytes; preview formatting never
 replaces the source.
 
 Composer preserves later draft edits during sends and keeps the last complete
-response until replaced or closed. It uses the same response inspector as
+response until replaced or closed. It uses the same message inspector as
 Traffic. A terminal failure without a response displays Failed rather than
 Pending. Body completeness is independent of a later exchange failure.
 
@@ -608,7 +608,14 @@ can stop one connection while keeping its row.
 **Edit and replay** opens the original request in Composer. Edit headers in
 Name/Value rows, or choose **Edit as text** to paste a block. Duplicate headers,
 their order and empty values are retained. Errors identify the row or line to
-repair. **Undo remove** restores the last removed header.
+repair. Uncheck a header to exclude it without deleting its value. Text mode
+edits enabled headers and preserves disabled rows for when you return to rows.
+**Undo remove** restores the last removed header.
+
+**Query parameters** below the URL edits its names and values in compact rows.
+The URL remains directly editable. Opening the rows does not change its encoding,
+parameter order, duplicates or the distinction between `flag` and `flag=`.
+For an empty value, **Include =** distinguishes `flag=` from the name-only `flag`.
 
 Small bodies open as readable text when the encoding permits an exact round trip;
 otherwise they use Hex. **View** converts between Text and Hex without changing
@@ -622,12 +629,28 @@ Removing a source never silently turns replay into an empty request. Framing is
 recomputed while Content-Encoding is preserved; replacement files therefore need
 already encoded bytes when that header is retained.
 
-Sending requires the applicable method-risk and credential acknowledgements.
+**Send request** or **Ctrl+Enter** sends after the applicable method-risk and
+credential acknowledgements. **Cancel** stops an in-progress send; it cannot undo
+work already performed by the server.
+The send controls remain visible while the draft scrolls. Compact windows use
+**Draft** and **Result** tabs; wide windows show both together.
+**Source** shows the original request association and its link back to Traffic.
 Replay uses the verifying Rust HTTP/TLS stack with the proxy either running or
 stopped. Failure keeps the draft ready to retry. The response identifies whether
-the current request has changed since it was sent. Results and bounded replay
-history retain the originating entry, trace and original entry identity after
-edits, with links back to source traffic while it remains available.
+the current request has changed since it was sent, alongside elapsed time and
+response-body size. Its request view inspects the retained request for that send,
+independently of later draft edits. Prepared requests are labeled separately from
+observed requests. For observed replays without upstream evidence, the view
+shows what the local proxy received.
+
+Select a row in **History** to view its result without replacing the draft.
+**Actions** offers **Edit again** and **Compare with source**. Editing again restores
+the retained request and requires fresh acknowledgements; replacing an edited
+draft asks first. Body snapshots preserve the bytes used by that send, including
+replacement files. Redacted credential headers are omitted with a notice.
+History is bounded and local to the window; expired evidence
+is unavailable rather than replaced by current source data. Source links and
+comparison require the original Traffic entry to remain available.
 
 For latency interpretation see [request timings](request-timings.md). To share or
 inspect saved evidence see [trace saving](trace-saving.md).
