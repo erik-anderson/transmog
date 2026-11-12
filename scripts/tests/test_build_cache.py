@@ -119,6 +119,40 @@ class CacheTests(unittest.TestCase):
             (self.profile / "deps" / f"example-{number:016x}.unknown").write_bytes(b"unknown")
         self.assertEqual(self.maintain(apply=True)["variants"], 0)
 
+    def test_codegen_objects_trim_with_their_complete_variant(self):
+        entries = [self.variant(i) for i in range(5)]
+        suffixes = (".012abc.0def.rcgu.o", ".example.123abc-cgu.00.rcgu.o")
+        objects = []
+        for number in range(5):
+            files = [self.profile / "deps" / f"example-{number:016x}{suffix}" for suffix in suffixes]
+            for file in files:
+                file.write_bytes(b"compiler object")
+                timestamp = self.now - 3 * build_cache.DAY + number
+                os.utime(file, (timestamp, timestamp))
+            objects.append(files)
+        # An object without a matching fingerprint remains outside the plan.
+        orphan = self.profile / "deps" / "example-ffffffffffffffff.012abc.0def.rcgu.o"
+        orphan.write_bytes(b"unowned compiler object")
+        preview = self.maintain()
+        self.assertEqual(preview["variants"], 2)
+        planned = {path for group in preview["candidates"] for path in group}
+        self.assertTrue(all(str(p.relative_to(self.root)) in planned for group in objects[:2] for p in group))
+        self.assertTrue(all(p.exists() for group in objects for p in group))
+        result = self.maintain(apply=True)
+        self.assertFalse(result["errors"])
+        self.assertEqual(result["variants"], 2)
+        for number, (fingerprint, files) in enumerate(entries):
+            self.assertTrue(all(p.exists() == (number >= 2) for p in [fingerprint, *files, *objects[number]]))
+        self.assertTrue(orphan.exists())
+
+    def test_unknown_sidecar_still_protects_a_variant_with_codegen_objects(self):
+        for number in range(5):
+            self.variant(number)
+            stem = f"example-{number:016x}.012abc.0def.rcgu.o"
+            (self.profile / "deps" / stem).write_bytes(b"compiler object")
+            (self.profile / "deps" / (stem + ".backup")).write_bytes(b"unknown")
+        self.assertEqual(self.maintain(apply=True)["variants"], 0)
+
     def test_incremental_retention_keeps_recent_variants(self):
         self.variant(1)
         incremental = self.profile / "incremental"

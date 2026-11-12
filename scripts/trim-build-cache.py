@@ -10,7 +10,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--apply", action="store_true", help="Delete the listed cache groups; default is preview.")
     parser.add_argument("--daily", action="store_true", help="Check at most once per 24 hours unless space is critically low.")
-    parser.add_argument("--keep", type=int, default=3, help="Retain at least this many variants per Cargo target (default: 3).")
+    parser.add_argument("--keep", type=int, default=3,
+                        help="Retain this many variants per package/target and compiled/check group (default: 3); recent and pinned variants are also protected.")
     parser.add_argument("--min-age-hours", type=float, default=24)
     parser.add_argument("--min-free-gib", type=float, default=20,
                         help="Below this free space, trim excess recent variants too (default: 20 GiB).")

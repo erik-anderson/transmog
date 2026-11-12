@@ -22,6 +22,7 @@ FINGERPRINT = re.compile(r"([A-Za-z0-9_-]+)-([0-9a-f]{16})")
 INCREMENTAL = re.compile(r"([A-Za-z0-9_]+)-[a-z0-9]+")
 SUFFIXES = {"", ".rlib", ".rmeta", ".pdb", ".exe", ".dll", ".dll.lib", ".dll.exp",
             ".so", ".dylib", ".lib", ".a", ".d", ".exp", ".ilk", ".dwp"}
+CODEGEN_OBJECT = re.compile(r"\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*\.rcgu\.o")
 REGISTERED_TARGETS = ("target", "sdk/target", "fuzz/target", ".local/sdk/rust-target",
                       ".local/sdk/model-codegen-target", ".tools/sdk-crubit-target")
 PIN = ".transmog-cache-pin"
@@ -262,8 +263,13 @@ def variants(profile: Path, root: Path, retained=None):
             if stem.startswith(("build-script-", "run-build-script-")):
                 continue
             artifacts = by_hash.get(match[2], [])
-            if not artifacts or any((HASHED.fullmatch(p.name)[3] or "") not in SUFFIXES
-                                    or not p.is_file() for p in artifacts):
+            # Interrupted rustc/linker runs can leave codegen objects beside
+            # the rlib or executable. They share its Cargo hash and must move
+            # with the fingerprint, rather than exempting the whole variant.
+            if not artifacts or any(not p.is_file() or not (
+                (suffix := HASHED.fullmatch(p.name)[3] or "") in SUFFIXES
+                or CODEGEN_OBJECT.fullmatch(suffix)
+            ) for p in artifacts):
                 skipped(directory, "unknown or unmatched artifact layout")
                 continue
             files = tree_files(directory, root)

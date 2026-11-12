@@ -96,11 +96,15 @@ activity.
 ### Automatic build-cache retention
 
 Configured Python Cargo commands and PowerShell environment setup check caches
-once per 24 hours. They retain three complete variants per target, protect builds
-used within the last day, and remove excess matching artifacts, fingerprints and
+once per 24 hours. They retain three complete variants per package and target,
+protect builds used within the last day, and remove excess artifacts, fingerprints and
 incremental caches. Successful configured build/check/Clippy use records supplement
 file timestamps; metadata-only checks do not displace compiled variants. Below
 20 GiB free, an extra check can trim excess recent variants while retaining three.
+Compiled and metadata-only variants have separate limits; library, binary and test
+targets are also separate. A crate can therefore have more than three hashes in
+`deps`. Matching compiler object files (`*.rcgu.o`) left by interrupted builds
+are removed with their owning variant and fingerprint.
 
 Automatic cleanup uses Cargo profile locks and skips active builds. It preserves
 release and native build-script outputs, unknown layouts and targets outside this
