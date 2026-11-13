@@ -17,6 +17,26 @@ class SelectionTests(unittest.TestCase):
         sdk_tools.verify_selections()
 
 
+class CompilerArgumentsTests(unittest.TestCase):
+    def test_receipts_supply_per_unit_dependency_paths(self):
+        paths = ["target/debug/build/library/789/out/liblibrary.rlib", "target/debug/build/new/123/out/libnew.rmeta",
+                 "target/debug/build/macros/456/out/macros.dll"]
+        receipts = [{"reason": "compiler-artifact", "filenames": paths + [paths[0], "target/debug/bin.exe"]},
+                    {"reason": "build-script-executed", "filenames": ["unrelated/libfake.rlib"]}]
+        arguments = sdk_tools.dependency_search_arguments(receipts)
+        self.assertEqual(arguments[::2], ["-L"] * 3)
+        self.assertEqual(set(arguments[1::2]), {f"dependency={Path(path).parent}" for path in paths})
+
+    def test_response_file_preserves_spaces_and_avoids_shell_quoting(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "compiler args.rsp"
+            values = ["--h-out", "a directory/header.hpp", "-L", "dependency=C:/some path/out"]
+            self.assertEqual(sdk_tools.write_response_file(path, values), "@" + str(path))
+            self.assertEqual(path.read_text().splitlines(), values)
+            with self.assertRaises(ValueError):
+                sdk_tools.write_response_file(path, ["invalid\nargument"])
+
+
 class GeneratorEnvironmentTests(unittest.TestCase):
     @unittest.skipIf(os.name == "nt", "Linux compiler-private linkage")
     def test_llvm_linkage_and_runtime_paths_are_scoped_to_the_generator(self):

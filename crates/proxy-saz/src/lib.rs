@@ -826,8 +826,7 @@ fn connection_reason(session: &Session) -> &'static str {
         .transports
         .iter()
         .find(|transport| transport.leg == "upstream")
-        .map(|transport| transport.outcome)
-        .unwrap_or_default()
+        .map_or_default(|transport| transport.outcome)
     {
         TransportOutcome::Connected => "Connection Established",
         TransportOutcome::DnsFailed => "Transmog - DNS Lookup Failed",

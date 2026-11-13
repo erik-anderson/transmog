@@ -25,6 +25,43 @@ typedef struct transmog_sdk_optional_text {
   uint32_t has_value;
   transmog_sdk_text value;
 } transmog_sdk_optional_text;
+// Which caller processes may enter inspection.
+#ifdef __cplusplus
+enum class transmog_sdk_process_inspection_mode : uint32_t {
+  All = 0,
+  Only = 1,
+  Except = 2,
+};
+#else
+typedef uint32_t transmog_sdk_process_inspection_mode;
+enum {
+  TRANSMOG_PROCESS_INSPECTION_MODE_ALL = 0,
+  TRANSMOG_PROCESS_INSPECTION_MODE_ONLY = 1,
+  TRANSMOG_PROCESS_INSPECTION_MODE_EXCEPT = 2,
+};
+#endif
+typedef struct transmog_sdk_slice_text {
+  const transmog_sdk_text *data;
+  size_t size;
+#ifdef __cplusplus
+  const transmog_sdk_text &operator[](size_t index) const noexcept { return data[index]; }
+  const transmog_sdk_text *begin() const noexcept { return data; }
+  const transmog_sdk_text *end() const noexcept { return size ? data + size : data; }
+#endif
+} transmog_sdk_slice_text;
+// Saved process-selection choices; inactive lists remain available for editing.
+typedef struct transmog_sdk_process_inspection_policy {
+  // Active selection mode.
+  transmog_sdk_process_inspection_mode mode;
+  // Exact executable names selected by [`ProcessInspectionMode::Only`].
+  transmog_sdk_slice_text include;
+  // Exact executable names selected by [`ProcessInspectionMode::Except`].
+  transmog_sdk_slice_text exclude;
+} transmog_sdk_process_inspection_policy;
+typedef struct transmog_sdk_optional_bool {
+  uint32_t has_value;
+  uint32_t value;
+} transmog_sdk_optional_bool;
 // Bounded status read model returned to every presentation layer.
 typedef struct transmog_sdk_app_status {
   // Current lifecycle category.
@@ -35,6 +72,12 @@ typedef struct transmog_sdk_app_status {
   transmog_sdk_text summary;
   // Whether exact host restoration remains pending.
   uint32_t host_restore_pending;
+  // Policy applied to newly accepted connections, or saved policy while stopped.
+  transmog_sdk_process_inspection_policy process_inspection;
+  // Effective HTTPS decryption for the owned run; absent while stopped.
+  transmog_sdk_optional_bool https_decryption;
+  // Connections bypassed because their executable name could not be resolved.
+  uint64_t unresolved_process_connections;
 } transmog_sdk_app_status;
 // HTTP protocols admitted when creating a new origin connection.
 typedef struct transmog_sdk_allowed_http_protocols {
@@ -283,6 +326,8 @@ typedef struct transmog_sdk_product_preferences {
   transmog_sdk_client_certificate_policy client_certificate_policy;
   // Decrypt HTTPS traffic; false forwards CONNECT contents without inspection.
   uint32_t decrypt_https;
+  // Select caller executable names whose new connections may be inspected.
+  transmog_sdk_process_inspection_policy process_inspection;
   // Partition origin connections by caller PID/source IP and downstream H2 session.
   uint32_t isolate_outbound_connections;
   // Compatibility mirror of the active profile's allowed protocols; edit through network profiles.
@@ -499,15 +544,6 @@ typedef struct transmog_sdk_slice_column_preference {
   const transmog_sdk_column_preference *end() const noexcept { return size ? data + size : data; }
 #endif
 } transmog_sdk_slice_column_preference;
-typedef struct transmog_sdk_slice_text {
-  const transmog_sdk_text *data;
-  size_t size;
-#ifdef __cplusplus
-  const transmog_sdk_text &operator[](size_t index) const noexcept { return data[index]; }
-  const transmog_sdk_text *begin() const noexcept { return data; }
-  const transmog_sdk_text *end() const noexcept { return size ? data + size : data; }
-#endif
-} transmog_sdk_slice_text;
 // Durable layout and table presentation preferences.
 typedef struct transmog_sdk_workspace_preferences {
   // Optional guide history, preserved independently of layout writes.
@@ -594,10 +630,6 @@ typedef struct transmog_sdk_optional_incident_window {
   uint32_t has_value;
   transmog_sdk_incident_window value;
 } transmog_sdk_optional_incident_window;
-typedef struct transmog_sdk_optional_bool {
-  uint32_t has_value;
-  uint32_t value;
-} transmog_sdk_optional_bool;
 // Supported deterministic column filter operation.
 #ifdef __cplusplus
 enum class transmog_sdk_filter_operator : uint32_t {
@@ -2108,6 +2140,10 @@ namespace transmog::models {
 using Text = transmog_sdk_text;
 using AppLifecycle = transmog_sdk_app_lifecycle;
 using OptionalText = transmog_sdk_optional_text;
+using ProcessInspectionMode = transmog_sdk_process_inspection_mode;
+using SliceText = transmog_sdk_slice_text;
+using ProcessInspectionPolicy = transmog_sdk_process_inspection_policy;
+using OptionalBool = transmog_sdk_optional_bool;
 using AppStatus = transmog_sdk_app_status;
 using AllowedHttpProtocols = transmog_sdk_allowed_http_protocols;
 using TlsVersions = transmog_sdk_tls_versions;
@@ -2143,14 +2179,12 @@ using TrafficLayout = transmog_sdk_traffic_layout;
 using TrafficColumn = transmog_sdk_traffic_column;
 using ColumnPreference = transmog_sdk_column_preference;
 using SliceColumnPreference = transmog_sdk_slice_column_preference;
-using SliceText = transmog_sdk_slice_text;
 using WorkspacePreferences = transmog_sdk_workspace_preferences;
 using ProductState = transmog_sdk_product_state;
 using ProxyRoute = transmog_sdk_proxy_route;
 using ProxyStartRequest = transmog_sdk_proxy_start_request;
 using IncidentWindow = transmog_sdk_incident_window;
 using OptionalIncidentWindow = transmog_sdk_optional_incident_window;
-using OptionalBool = transmog_sdk_optional_bool;
 using FilterOperator = transmog_sdk_filter_operator;
 using SessionColumnFilter = transmog_sdk_session_column_filter;
 using SliceSessionColumnFilter = transmog_sdk_slice_session_column_filter;

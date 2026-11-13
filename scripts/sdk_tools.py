@@ -13,6 +13,24 @@ SDK = ROOT / "sdk"
 PIN = json.loads((SDK / "toolchain.json").read_text(encoding="utf-8"))
 
 
+def dependency_search_arguments(receipts):
+    """Locate Rust dependencies from Cargo receipts, independent of its layout."""
+    directories = sorted({str(Path(filename).parent) for item in receipts
+                          if item.get("reason") == "compiler-artifact"
+                          for filename in item.get("filenames", [])
+                          if Path(filename).suffix in {".rlib", ".rmeta", ".dll", ".so", ".dylib"}})
+    return [argument for directory in directories for argument in ("-L", f"dependency={directory}")]
+
+
+def write_response_file(path, arguments):
+    """Crubit expands rustc-style response files, one UTF-8 argument per line."""
+    values = list(map(str, arguments))
+    if any("\n" in value or "\r" in value for value in values):
+        raise ValueError("Compiler response arguments cannot contain newlines")
+    path.write_text("\n".join(values) + "\n", encoding="utf-8", newline="\n")
+    return "@" + str(path)
+
+
 def verify_selections():
     root = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))
     sdk = tomllib.loads((SDK / "Cargo.toml").read_text(encoding="utf-8"))

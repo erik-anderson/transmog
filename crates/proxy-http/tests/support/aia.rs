@@ -136,11 +136,7 @@ pub async fn probe(
         result.is_ok(),
         expected,
         "{}",
-        result
-            .as_ref()
-            .err()
-            .map(ToString::to_string)
-            .unwrap_or_default()
+        result.as_ref().err().map_or_default(ToString::to_string)
     );
     assert_eq!(
         tokio::time::timeout(Duration::from_secs(3), server)

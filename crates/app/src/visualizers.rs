@@ -418,8 +418,7 @@ impl Service {
                     .as_ref()
                     .is_some_and(|current| Arc::ptr_eq(current, ticket))
             })
-            .map(|slot| slot.take_tickets().collect::<Vec<_>>())
-            .unwrap_or_default();
+            .map_or_default(|slot| slot.take_tickets().collect::<Vec<_>>());
         drop(slots);
         for ticket in tickets {
             ticket.cancel();

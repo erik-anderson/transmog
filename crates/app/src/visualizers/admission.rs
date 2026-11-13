@@ -52,11 +52,9 @@ impl<'a> Admission<'a> {
             request: request.map(|head| (head.method.as_str(), head.target.path.as_str())),
             response: response.map(|head| head.status),
             request_headers: request
-                .map(|head| head.headers.iter().map(RetainedHeader).collect())
-                .unwrap_or_default(),
+                .map_or_default(|head| head.headers.iter().map(RetainedHeader).collect()),
             response_headers: response
-                .map(|head| head.headers.iter().map(RetainedHeader).collect())
-                .unwrap_or_default(),
+                .map_or_default(|head| head.headers.iter().map(RetainedHeader).collect()),
         }
     }
     pub(super) fn metadata(&self) -> ExchangeMetadata<'_, RetainedHeader<'a>> {

@@ -28,17 +28,12 @@ impl Read for CancelReader<'_> {
     }
 }
 fn without_fields(value: &Value, excluded: &[&str]) -> Value {
-    Value::Object(
-        value
-            .as_object()
-            .map(|map| {
-                map.iter()
-                    .filter(|(key, _)| !excluded.contains(&key.as_str()))
-                    .map(|(key, value)| (key.clone(), value.clone()))
-                    .collect()
-            })
-            .unwrap_or_default(),
-    )
+    Value::Object(value.as_object().map_or_default(|map| {
+        map.iter()
+            .filter(|(key, _)| !excluded.contains(&key.as_str()))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect()
+    }))
 }
 
 pub(super) fn import(

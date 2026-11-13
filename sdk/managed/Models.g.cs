@@ -19,12 +19,40 @@ internal struct NativeOptionalText
     internal uint HasValue;
     internal NativeText Value;
 }
+// Which caller processes may enter inspection.
+public enum ProcessInspectionMode : uint
+{
+    All = 0,
+    Only = 1,
+    Except = 2,
+}
+// Saved process-selection choices; inactive lists remain available for editing.
+public sealed record ProcessInspectionPolicy(
+    ProcessInspectionMode Mode,
+    string[] Include,
+    string[] Exclude);
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeProcessInspectionPolicy
+{
+    internal ProcessInspectionMode Mode;
+    internal NativeSlice Include;
+    internal NativeSlice Exclude;
+}
+[StructLayout(LayoutKind.Sequential)]
+internal struct NativeOptionalBool
+{
+    internal uint HasValue;
+    internal uint Value;
+}
 // Bounded status read model returned to every presentation layer.
 public sealed record AppStatus(
     AppLifecycle Lifecycle,
     string? Listener,
     string Summary,
-    bool HostRestorePending);
+    bool HostRestorePending,
+    ProcessInspectionPolicy ProcessInspection,
+    bool? HttpsDecryption,
+    ulong UnresolvedProcessConnections);
 [StructLayout(LayoutKind.Sequential)]
 internal struct NativeAppStatus
 {
@@ -32,6 +60,9 @@ internal struct NativeAppStatus
     internal NativeOptionalText Listener;
     internal NativeText Summary;
     internal uint HostRestorePending;
+    internal NativeProcessInspectionPolicy ProcessInspection;
+    internal NativeOptionalBool HttpsDecryption;
+    internal ulong UnresolvedProcessConnections;
 }
 // HTTP protocols admitted when creating a new origin connection.
 public sealed record AllowedHttpProtocols(
@@ -216,6 +247,7 @@ public sealed record ProductPreferences(
     bool ReuseServerConnections,
     ClientCertificatePolicy ClientCertificatePolicy,
     bool DecryptHttps,
+    ProcessInspectionPolicy ProcessInspection,
     bool IsolateOutboundConnections,
     AllowedHttpProtocols AllowedOutboundProtocols,
     ThemePreference Theme,
@@ -230,6 +262,7 @@ internal struct NativeProductPreferences
     internal uint ReuseServerConnections;
     internal NativeClientCertificatePolicy ClientCertificatePolicy;
     internal uint DecryptHttps;
+    internal NativeProcessInspectionPolicy ProcessInspection;
     internal uint IsolateOutboundConnections;
     internal NativeAllowedHttpProtocols AllowedOutboundProtocols;
     internal ThemePreference Theme;
@@ -479,12 +512,6 @@ internal struct NativeOptionalIncidentWindow
 {
     internal uint HasValue;
     internal NativeIncidentWindow Value;
-}
-[StructLayout(LayoutKind.Sequential)]
-internal struct NativeOptionalBool
-{
-    internal uint HasValue;
-    internal uint Value;
 }
 // Supported deterministic column filter operation.
 public enum FilterOperator : uint
@@ -1783,11 +1810,25 @@ internal struct NativeAppError
 }
 internal static unsafe class ModelMarshal
 {
+    internal static ProcessInspectionPolicy ReadProcessInspectionPolicy(NativeProcessInspectionPolicy value) =>
+        new(value.Mode,
+            ModelMemory.Array<NativeText, string>(value.Include, static item => ModelMemory.Text(item)),
+            ModelMemory.Array<NativeText, string>(value.Exclude, static item => ModelMemory.Text(item)));
+    internal static NativeProcessInspectionPolicy WriteProcessInspectionPolicy(ProcessInspectionPolicy value, InputArena arena) =>
+        new()
+        {
+            Mode = value.Mode,
+            Include = arena.Array<string, NativeText>(value.Include, item => arena.Text(item)),
+            Exclude = arena.Array<string, NativeText>(value.Exclude, item => arena.Text(item)),
+        };
     internal static AppStatus ReadAppStatus(NativeAppStatus value) =>
         new(value.Lifecycle,
             (value.Listener.HasValue != 0 ? ModelMemory.Text(value.Listener.Value) : null),
             ModelMemory.Text(value.Summary),
-            value.HostRestorePending != 0);
+            value.HostRestorePending != 0,
+            ReadProcessInspectionPolicy(value.ProcessInspection),
+            (value.HttpsDecryption.HasValue != 0 ? value.HttpsDecryption.Value != 0 : null),
+            value.UnresolvedProcessConnections);
     internal static AllowedHttpProtocols ReadAllowedHttpProtocols(NativeAllowedHttpProtocols value) =>
         new(value.Http1 != 0,
             value.Http2 != 0,
@@ -1920,6 +1961,7 @@ internal static unsafe class ModelMarshal
             value.ReuseServerConnections != 0,
             ReadClientCertificatePolicy(value.ClientCertificatePolicy),
             value.DecryptHttps != 0,
+            ReadProcessInspectionPolicy(value.ProcessInspection),
             value.IsolateOutboundConnections != 0,
             ReadAllowedHttpProtocols(value.AllowedOutboundProtocols),
             value.Theme,
@@ -1934,6 +1976,7 @@ internal static unsafe class ModelMarshal
             ReuseServerConnections = (value.ReuseServerConnections ? 1u : 0u),
             ClientCertificatePolicy = WriteClientCertificatePolicy(value.ClientCertificatePolicy, arena),
             DecryptHttps = (value.DecryptHttps ? 1u : 0u),
+            ProcessInspection = WriteProcessInspectionPolicy(value.ProcessInspection, arena),
             IsolateOutboundConnections = (value.IsolateOutboundConnections ? 1u : 0u),
             AllowedOutboundProtocols = WriteAllowedHttpProtocols(value.AllowedOutboundProtocols, arena),
             Theme = value.Theme,

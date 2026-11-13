@@ -5,8 +5,8 @@ import subprocess
 import sys
 import time
 
-from build_cache import (HASHED, USAGE, cargo_locks, checked,
-                         successful_uses, write_json)
+from build_cache import (USAGE, cargo_locks, checked,
+                         successful_uses, unit_identity, unit_key, write_json)
 
 
 def record(root, messages):
@@ -23,23 +23,19 @@ def record(root, messages):
             if not value:
                 continue
             path = checked(Path(value), root)
-            if path.parent.name in ("deps", "examples"):
-                match = HASHED.fullmatch(path.name)
-                if match:
-                    units.setdefault(path.parent.parent, set()).update(
-                        (path.parent.parent / ".fingerprint").glob("*-" + match[2]))
-            elif path.parent.parent.name == "build":
-                units.setdefault(path.parent.parent.parent, set()).add(
-                    path.parent.parent.parent / ".fingerprint" / path.parent.name)
-            elif path.parent.name in {"debug", "release"} and path.is_file():
-                # Cargo reports the unhashed top-level executable for binaries.
-                # Its hardlinked deps entry identifies the exact fingerprint.
+            output = path if path.name == "out" and path.is_dir() else path.parent
+            if output.name == "out" and unit_identity(output.parent / "fingerprint"):
+                profile = output.parents[3]
+                units.setdefault(profile, set()).add(output.parent / "fingerprint")
+            # Primary binaries and examples are reported at their final path.
+            # Only a matching hardlink may identify their intermediate unit.
+            profile = path.parent.parent if path.parent.name == "examples" else path.parent
+            if profile.name in {"debug", "release"} and path.is_file():
                 for stem in {path.stem, path.stem.replace("-", "_")}:
-                    for artifact in (path.parent / "deps").glob(stem + "-*" + path.suffix):
-                        match = HASHED.fullmatch(artifact.name)
-                        if match and checked(artifact, root).samefile(path):
-                            units.setdefault(path.parent, set()).update(
-                                (path.parent / ".fingerprint").glob("*-" + match[2]))
+                    # Cargo 1.100 hardlinks final artifacts from a per-unit out/.
+                    for artifact in (profile / "build").glob("*/*/out/" + stem + "*" + path.suffix):
+                        if unit_identity(artifact.parent.parent / "fingerprint") and checked(artifact, root).samefile(path):
+                            units.setdefault(profile, set()).add(artifact.parent.parent / "fingerprint")
     for profile, directories in units.items():
         with cargo_locks(profile, root) as acquired:
             if not acquired:
@@ -50,12 +46,12 @@ def record(root, messages):
                 if len(metadata) == 1:
                     fingerprint = checked(directory / metadata[0].stem, root)
                     if fingerprint.is_file() and fingerprint.stat().st_size == 16:
-                        uses[directory.name] = {"stem": metadata[0].stem,
+                        uses[unit_key(directory, profile)] = {"stem": metadata[0].stem,
                                                 "fingerprint": fingerprint.read_text(),
                                                 "lastSuccessfulUse": time.time()}
             # Evicted units should not grow the record forever.
             uses = {name: row for name, row in uses.items()
-                    if checked(profile / ".fingerprint" / name, root).is_dir()}
+                    if unit_identity(profile / name) and checked(profile / name, root).is_dir()}
             write_json(profile / USAGE, {"schema": 1, "units": uses}, root)
 
 

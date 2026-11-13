@@ -1275,8 +1275,7 @@ fn script_abort(message: &str) -> HookAbort {
 fn script_failure_abort(manifest: &ScriptManifest, failure: &ScriptFailure) -> HookAbort {
     let location = failure
         .line
-        .map(|line| format!(":{line}:{}", failure.column.unwrap_or(1)))
-        .unwrap_or_default();
+        .map_or_default(|line| format!(":{line}:{}", failure.column.unwrap_or(1)));
     script_abort(&format!(
         "{}@{}{} {:?}: {}",
         manifest.id, manifest.revision, location, failure.category, failure.message

@@ -245,14 +245,11 @@ pub(crate) fn prepare_with_path(
         )
     };
     let head = store.response_head(exchange_id, boundary_id);
-    let dispositions = head
-        .as_ref()
-        .map(|head| {
-            head.headers
-                .values("content-disposition")
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+    let dispositions = head.as_ref().map_or_default(|head| {
+        head.headers
+            .values("content-disposition")
+            .collect::<Vec<_>>()
+    });
     let disposition = if dispositions.len() == 1 {
         std::str::from_utf8(dispositions[0]).ok()
     } else {

@@ -229,10 +229,7 @@ fn upstream(session: &Session) -> Option<&TransportObservation> {
 }
 
 fn status(session: &Session) -> u16 {
-    match upstream(session)
-        .map(|transport| transport.outcome)
-        .unwrap_or_default()
-    {
+    match upstream(session).map_or_default(|transport| transport.outcome) {
         TransportOutcome::Connected => 200,
         TransportOutcome::DnsFailed
         | TransportOutcome::TcpFailed
@@ -636,8 +633,7 @@ fn certificate_summary(text: &mut String, certificate: &transmog_core::PublicCer
                 let value = entry
                     .data()
                     .as_utf8()
-                    .map(|value| value.to_string())
-                    .unwrap_or_default();
+                    .map_or_default(|value| value.to_string());
                 format!("{key}={}", value.chars().take(512).collect::<String>())
             })
             .collect::<Vec<_>>()

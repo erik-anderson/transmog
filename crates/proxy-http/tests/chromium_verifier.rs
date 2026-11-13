@@ -102,11 +102,7 @@ async fn probe(
         response.is_ok(),
         expected,
         "{}",
-        response
-            .as_ref()
-            .err()
-            .map(ToString::to_string)
-            .unwrap_or_default()
+        response.as_ref().err().map_or_default(ToString::to_string)
     );
     assert_eq!(
         tokio::time::timeout(Duration::from_secs(3), task)

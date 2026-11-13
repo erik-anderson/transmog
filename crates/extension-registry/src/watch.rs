@@ -70,19 +70,14 @@ struct WatchSpec {
 }
 impl Registry {
     pub(super) fn stop_watches(&self, id: &str) {
-        let watches = self
-            .inner
-            .state
-            .lock()
-            .map(|mut state| {
-                state
-                    .active
-                    .values_mut()
-                    .filter(|active| active.info.extension_id == id)
-                    .filter_map(|active| active.watch.take())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        let watches = self.inner.state.lock().map_or_default(|mut state| {
+            state
+                .active
+                .values_mut()
+                .filter(|active| active.info.extension_id == id)
+                .filter_map(|active| active.watch.take())
+                .collect::<Vec<_>>()
+        });
         for watch in watches {
             stop(&watch);
         }

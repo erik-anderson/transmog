@@ -18,6 +18,10 @@ sandbox helpers, and launches the desktop. Use `--configuration Release` and
 `cargo run --release` for an optimized build. `CARGO_TARGET_DIR` is honored.
 Initial dependency downloads require network access.
 
+Registry dependency updates use a three-day minimum publication age, configured
+in [Cargo's shared configuration](../.cargo/config.toml). Cargo honors versions
+already recorded in the lockfile.
+
 PowerShell 7 users can also use `./scripts/run-desktop.ps1` after fetching Cargo
 dependencies. It configures tools, installs npm packages, builds and launches;
 `-Configuration Release` selects the optimized build. `TRANSMOG_PYTHON` selects
@@ -51,6 +55,11 @@ build scripts cannot detect newly created untracked files.
 
 ## Development cache maintenance
 
+The toolchain is pinned to Rust 1.100.0. Cache maintenance supports its per-unit
+`build/<package>/<hash>/{fingerprint,out,run}` layout. Final binaries remain in the
+profile directory; cleanup removes complete intermediate units and preserves
+unknown layouts.
+
 Preview build caches and completed test-run bulk data together, then add
 `--apply` to delete the selected data:
 
@@ -75,7 +84,9 @@ is supplied. Removed caches may need rebuilding and fixtures may need rerunning.
 Active builds, incomplete or unknown runs, pins, installed tools and signed
 bundles are protected. A `.transmog-cache-pin` file in a target root, profile,
 fingerprint or incremental/build directory protects that scope; a parent pin also
-protects nested caches. Pin release qualification caches while needed. There is
+protects nested caches, including a target triple or a per-package build directory.
+A pin anywhere inside a native output unit retains that complete unit.
+Pin release qualification caches while needed. There is
 no blanket cleanup of `.local`, `.tools` or unregistered `artifacts` directories.
 
 With `--include-release`, cleanup also finds shared V8 archives under registered
@@ -102,8 +113,8 @@ incremental caches. Successful configured build/check/Clippy use records supplem
 file timestamps; metadata-only checks do not displace compiled variants. Below
 20 GiB free, an extra check can trim excess recent variants while retaining three.
 Compiled and metadata-only variants have separate limits; library, binary and test
-targets are also separate. A crate can therefore have more than three hashes in
-`deps`. Matching compiler object files (`*.rcgu.o`) left by interrupted builds
+targets are also separate. A package can therefore retain more than three unit
+directories. Compiler object files (`*.rcgu.o`) left by interrupted builds
 are removed with their owning variant and fingerprint.
 
 Automatic cleanup uses Cargo profile locks and skips active builds. It preserves

@@ -513,8 +513,7 @@ impl HyperOriginClient {
                 .target
                 .query
                 .as_ref()
-                .map(|query| format!("?{query}"))
-                .unwrap_or_default()
+                .map_or_default(|query| format!("?{query}"))
         )
         .parse()?;
         let mut outgoing = Request::builder()
@@ -597,8 +596,7 @@ impl HyperOriginClient {
                 .target
                 .query
                 .as_ref()
-                .map(|query| format!("?{query}"))
-                .unwrap_or_default()
+                .map_or_default(|query| format!("?{query}"))
         )
         .parse()?;
         let mut outgoing = Request::builder()
@@ -701,8 +699,7 @@ impl HyperOriginClient {
                 .target
                 .query
                 .as_ref()
-                .map(|query| format!("?{query}"))
-                .unwrap_or_default()
+                .map_or_default(|query| format!("?{query}"))
         )
         .parse()?;
         let mut outgoing = Request::builder()

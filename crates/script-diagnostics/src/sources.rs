@@ -140,7 +140,7 @@ pub fn read(artifact: &str, source: &str, line: u32, column: u32) -> Option<Sour
         .take(41)
     {
         let number = u32::try_from(index).ok()?.checked_add(1)?;
-        let value = value.strip_suffix('\r').unwrap_or(value);
+        let value = value.trim_suffix('\r');
         let target = if number == line {
             column.saturating_sub(1)
         } else {

@@ -189,8 +189,7 @@ fn certificate_view(certificate: &PublicCertificate) -> CertificateView {
     view.pem = parsed
         .to_pem()
         .ok()
-        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
-        .unwrap_or_default();
+        .map_or_default(|bytes| String::from_utf8_lossy(&bytes).into_owned());
     view.der_base64 = STANDARD.encode(&certificate.der);
     view
 }

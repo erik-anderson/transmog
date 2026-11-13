@@ -1,5 +1,5 @@
 {
-  "rust": "1.99.1",
+  "rust": "1.100.0",
   "crubit_repository": "https://github.com/google/crubit.git",
   "crubit_revision": "bac1cec083efbf46537d10a7036973c027829e11"
 }

@@ -604,8 +604,7 @@ impl ScriptRegistry {
         runner.invoke(invocation).await.map_err(|failure| {
             let location = failure
                 .line
-                .map(|line| format!(":{line}:{}", failure.column.unwrap_or(1)))
-                .unwrap_or_default();
+                .map_or_default(|line| format!(":{line}:{}", failure.column.unwrap_or(1)));
             AppError::new(
                 match failure.category {
                     transmog_script::ScriptFailureCategory::InvalidAction

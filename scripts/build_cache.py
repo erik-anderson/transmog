@@ -17,8 +17,6 @@ import uuid
 DAY = 24 * 60 * 60
 KEEP = 3
 LOCKS = (".cargo-lock", ".cargo-build-lock", ".cargo-artifact-lock")
-HASHED = re.compile(r"(.+)-([0-9a-f]{16})(\..+)?")
-FINGERPRINT = re.compile(r"([A-Za-z0-9_-]+)-([0-9a-f]{16})")
 INCREMENTAL = re.compile(r"([A-Za-z0-9_]+)-[a-z0-9]+")
 SUFFIXES = {"", ".rlib", ".rmeta", ".pdb", ".exe", ".dll", ".dll.lib", ".dll.exp",
             ".so", ".dylib", ".lib", ".a", ".d", ".exp", ".ilk", ".dwp"}
@@ -183,9 +181,49 @@ def related_profiles(target: Path, root: Path) -> list[Path]:
     for parent in parents:
         for name in ("debug", "release"):
             profile = checked(parent / name, root)
-            if (profile / "deps").is_dir() and (profile / ".fingerprint").is_dir():
+            if has_artifacts(profile):
                 result.append(profile)
     return sorted(result)
+
+
+def has_artifacts(profile: Path) -> bool:
+    """Recognize the pinned Cargo toolchain's per-unit build layout."""
+    return (profile / "build").is_dir()
+
+
+def fingerprint_dirs(profile: Path, root: Path):
+    """Visit per-unit fingerprints without walking native output trees."""
+    build = checked(profile / "build", root)
+    if build.is_dir():
+        for package in build.iterdir():
+            if package.name == PIN:
+                continue
+            checked(package, root)
+            if not re.fullmatch(r"[A-Za-z0-9_-]+", package.name) or not package.is_dir():
+                yield package
+                continue
+            for unit in package.iterdir():
+                if unit.name == PIN:
+                    continue
+                checked(unit, root)
+                if re.fullmatch(r"[0-9a-f]{16}", unit.name) and unit.is_dir():
+                    yield checked(unit / "fingerprint", root)
+                else:
+                    yield unit
+
+
+def unit_identity(directory: Path):
+    """Return the package/hash only for a recognized fingerprint location."""
+    if (directory.name == "fingerprint" and directory.parent.parent.parent.name == "build"
+            and re.fullmatch(r"[0-9a-f]{16}", directory.parent.name)
+            and re.fullmatch(r"[A-Za-z0-9_-]+", directory.parent.parent.name)):
+        return directory.parent.parent.name, directory.parent.name
+    return None
+
+
+def unit_key(directory: Path, profile: Path) -> str:
+    """Namespace fingerprints by their owning package and unit hash."""
+    return directory.relative_to(profile).as_posix()
 
 
 def successful_uses(profile: Path, root: Path) -> dict:
@@ -201,7 +239,8 @@ def successful_uses(profile: Path, root: Path) -> dict:
 def last_use(directory: Path, uses: dict, root: Path) -> float:
     """Only trust use records whose fingerprint still matches this unit."""
     try:
-        row = uses[directory.name]
+        profile = directory.parents[3]
+        row = uses[unit_key(directory, profile)]
         when = row["lastSuccessfulUse"]
         if not isinstance(when, (int, float)) or not math.isfinite(when):
             return 0
@@ -216,9 +255,9 @@ def last_use(directory: Path, uses: dict, root: Path) -> float:
 
 @contextmanager
 def cargo_locks(profile: Path, root: Path):
-    """Try both legacy and current Cargo locks, never waiting for a build.
+    """Take all three profile locks used by the pinned Cargo, without waiting.
 
-    Cargo's layout retains the legacy shared lock for compatibility:
+    Cargo creates these locks in each profile directory:
     https://doc.rust-lang.org/stable/nightly-rustc/src/cargo/compiler/layout.rs.html
     An exclusive lock on its first byte conflicts with Cargo's Windows range.
     """
@@ -226,13 +265,8 @@ def cargo_locks(profile: Path, root: Path):
         yield all(stack.enter_context(file_lock(profile / name, root)) for name in LOCKS)
 
 
-def variants(profile: Path, root: Path, retained=None):
+def variants(profile: Path, root: Path, retained=None, pinned_paths=None):
     """Only pair recognized files with one valid Cargo fingerprint directory."""
-    by_hash = defaultdict(list)
-    for path in checked(profile / "deps", root).iterdir():
-        match = HASHED.fullmatch(path.name)
-        if match:
-            by_hash[match[2]].append(path)
     groups = defaultdict(list)
     target_owners = defaultdict(set)
     uses = successful_uses(profile, root)
@@ -241,9 +275,9 @@ def variants(profile: Path, root: Path, retained=None):
         if retained is not None:
             retained.append({"paths": [str(path.relative_to(root))], "reason": reason})
 
-    for directory in checked(profile / ".fingerprint", root).iterdir():
-        match = FINGERPRINT.fullmatch(directory.name)
-        if not match or not directory.is_dir():
+    for directory in fingerprint_dirs(profile, root):
+        identity = unit_identity(directory)
+        if not identity or not directory.is_dir():
             skipped(directory, "unknown fingerprint layout")
             continue
         try:
@@ -262,34 +296,43 @@ def variants(profile: Path, root: Path, retained=None):
             stem = metadata[0].stem
             if stem.startswith(("build-script-", "run-build-script-")):
                 continue
-            artifacts = by_hash.get(match[2], [])
+            output = checked(directory.parent / "out", root)
+            artifacts = [path for path in output.iterdir() if path.name != PIN] if output.is_dir() else []
+            def suffix(path):
+                return "".join(path.suffixes)
             # Interrupted rustc/linker runs can leave codegen objects beside
             # the rlib or executable. They share its Cargo hash and must move
             # with the fingerprint, rather than exempting the whole variant.
             if not artifacts or any(not p.is_file() or not (
-                (suffix := HASHED.fullmatch(p.name)[3] or "") in SUFFIXES
-                or CODEGEN_OBJECT.fullmatch(suffix)
+                (extension := suffix(p)) in SUFFIXES
+                or CODEGEN_OBJECT.fullmatch(extension)
             ) for p in artifacts):
                 skipped(directory, "unknown or unmatched artifact layout")
                 continue
-            files = tree_files(directory, root)
+            paths = [directory.parent]
+            if any(p.name not in {"fingerprint", "out", PIN} for p in directory.parent.iterdir()):
+                skipped(directory, "unknown unit layout")
+                continue
+            files = tree_files(directory.parent, root)
+            if pinned_paths is not None and any(file.name == PIN for file in files):
+                pinned_paths.update(paths)
             for artifact in artifacts:
                 checked(artifact, root)
             newest = max(last_use(directory, uses, root), *[p.stat().st_mtime for p in [*files, *artifacts]])
             # Metadata-only checks must not displace the retained rlib/PDB
             # builds merely because `cargo check` ran more recently.
-            linked = any((HASHED.fullmatch(p.name)[3] or "") in
+            linked = any(suffix(p) in
                          {"", ".rlib", ".pdb", ".exe", ".dll", ".so", ".dylib", ".a", ".lib"}
                          for p in artifacts)
-            key = (match[1], stem, "linked" if linked else "metadata")
-            groups[key].append((newest, [*artifacts, directory]))
+            key = (identity[0], stem, "linked" if linked else "metadata")
+            groups[key].append((newest, paths))
             # Ambiguous test/build-script target names are not grouped together
             # when identifying independently hashed incremental caches.
             prefixes = ("lib-", "bin-", "test-lib-", "test-bin-", "test-integration-test-",
                         "example-", "test-example-", "bench-", "test-bench-")
             dep_name = next((stem[len(prefix):] for prefix in prefixes if stem.startswith(prefix)), None)
             if dep_name:
-                target_owners[dep_name.replace("-", "_")].add(match[1])
+                target_owners[dep_name.replace("-", "_")].add(identity[0])
         except (OSError, ValueError, RecursionError):
             skipped(directory, "unreadable or unsafe fingerprint")
             continue
@@ -312,7 +355,7 @@ def variants(profile: Path, root: Path, retained=None):
 def remove_variant(paths: list[Path], profile: Path, root: Path) -> int:
     """Move the complete group before deletion; roll back a failed move.
 
-    Move fingerprints first: an interrupted trim must force recompilation.
+    Cargo units move atomically with their fingerprints, forcing recompilation.
     A loaded Windows binary can refuse a move; rollback restores metadata last.
     """
     files = [file for path in paths for file in tree_files(path, root)]
@@ -321,8 +364,7 @@ def remove_variant(paths: list[Path], profile: Path, root: Path) -> int:
     trash.mkdir(parents=True)
     moved = []
     try:
-        ordered = sorted(paths, key=lambda item: (item.parent.name != ".fingerprint", not item.is_dir()))
-        # Build directories and their fingerprint directories have the same name.
+        ordered = sorted(paths, key=lambda item: not item.is_dir())
         # Separate destinations also make interrupted staging recoverable.
         destinations = [trash / str(index) / path.name for index, path in enumerate(ordered)]
         write_json(trash / "manifest.json", {"schema": 1, "paths": [str(p.relative_to(root)) for p in ordered]}, root)
@@ -359,7 +401,7 @@ def recover_trash(profile: Path, root: Path) -> tuple[int, list[str]]:
     return size, errors
 
 
-def build_script_variants(profile: Path, profiles: list[Path], root: Path):
+def build_script_variants(profile: Path, profiles: list[Path], root: Path, pinned_paths=None):
     """Index Cargo's full fingerprint graph before considering native outputs.
 
     Cargo serializes the fingerprint file as little-endian hexadecimal; JSON
@@ -373,15 +415,16 @@ def build_script_variants(profile: Path, profiles: list[Path], root: Path):
     candidates = []
     uses = successful_uses(profile, root)
     for owner in profiles:
-        for directory in checked(owner / ".fingerprint", root).iterdir():
+        for directory in fingerprint_dirs(owner, root):
             try:
                 checked(directory, root)
                 if not directory.is_dir():
+                    unknown.append(str(directory.relative_to(root)))
                     continue
                 metadata = list(directory.glob("*.json"))
                 if not metadata and not list(directory.iterdir()):
                     continue
-                if len(metadata) != 1 or not FINGERPRINT.fullmatch(directory.name):
+                if len(metadata) != 1 or not unit_identity(directory):
                     unknown.append(str(directory.relative_to(root)))
                     continue
                 data = read_json(metadata[0], root)
@@ -402,9 +445,11 @@ def build_script_variants(profile: Path, profiles: list[Path], root: Path):
                 hashes[int.from_bytes(bytes.fromhex(digest), "little")].add(directory)
                 if owner != profile or not stem.startswith(("build-script-", "run-build-script-")):
                     continue
-                build = checked(profile / "build" / directory.name, root)
+                build = checked(directory.parent, root)
                 if not build.is_dir():
                     continue
+                if any(p.name not in {"fingerprint", "out", "run", PIN} for p in build.iterdir()):
+                    raise ValueError("Unrecognized build-script unit layout")
                 candidates.append((directory, build, stem))
             except (OSError, ValueError, KeyError, TypeError, RecursionError):
                 unknown.append(str(directory.relative_to(root)))
@@ -413,21 +458,31 @@ def build_script_variants(profile: Path, profiles: list[Path], root: Path):
     if not unknown:
         for directory, build, stem in candidates:
             try:
-                files = [*tree_files(directory, root), *tree_files(build, root)]
+                paths = [build]
+                files = [file for path in paths for file in tree_files(path, root)]
+                if pinned_paths is not None and any(file.name == PIN for file in files):
+                    pinned_paths.update(paths)
                 newest = max(last_use(directory, uses, root), *[p.stat().st_mtime for p in files])
-                package = FINGERPRINT.fullmatch(directory.name)[1]
-                groups[(package, stem)].append((newest, [directory, build]))
+                package = unit_identity(directory)[0]
+                groups[(package, stem)].append((newest, paths))
             except (OSError, ValueError):
                 unknown.append(str(directory.relative_to(root)))
     return groups, nodes, hashes, unknown
 
 
 def pinned(paths: list[Path], root: Path) -> bool:
+    visited = set()
     for path in paths:
-        if path.is_dir() and checked(path / PIN, root).exists():
-            return True
-        if path.parent.name == "build" and checked(path / "out" / PIN, root).exists():
-            return True
+        scope = path if path.is_dir() else path.parent
+        for ancestor in (scope, *scope.parents):
+            if ancestor in visited or not (ancestor == root or ancestor.is_relative_to(root)):
+                continue
+            visited.add(ancestor)
+            if checked(ancestor / PIN, root).exists():
+                return True
+        if re.fullmatch(r"[0-9a-f]{16}", path.name) and path.parent.parent.name == "build":
+            if any(checked(path / name / PIN, root).exists() for name in ("fingerprint", "out", "run")):
+                return True
     return False
 
 
@@ -449,7 +504,7 @@ def maintain(root: Path, target: Path | None = None, *, apply=False, daily=False
     report = {"status": "missing", "profile": str(profile.relative_to(root)), "variants": 0,
               "bytes": 0, "logicalBytes": 0, "uniqueBytes": 0, "reclaimableBytesEstimate": 0,
               "removedLogicalBytes": 0, "errors": [], "candidates": [], "details": [], "retained": []}
-    if not (profile / "deps").is_dir() or not (profile / ".fingerprint").is_dir():
+    if not has_artifacts(profile):
         return report
     now = time.time() if now is None else now
     emergency = shutil.disk_usage(target).free < min_free_gib * 1024**3
@@ -464,9 +519,9 @@ def maintain(root: Path, target: Path | None = None, *, apply=False, daily=False
                 return report
         # Independent caches discovered under target/ still inherit a pin on
         # that containing scope. Explicit selection must respect it as well.
-        scopes = [ancestor for ancestor in (target, *target.parents)
+        scopes = [ancestor for ancestor in (profile, *profile.parents)
                   if ancestor == root or ancestor.is_relative_to(root)]
-        if any(checked(scope / PIN, root).exists() for scope in [*scopes, profile]):
+        if any(checked(scope / PIN, root).exists() for scope in scopes):
             report["status"] = "pinned"
             return report
         report["freeBytesBefore"] = shutil.disk_usage(target).free
@@ -487,12 +542,15 @@ def maintain(root: Path, target: Path | None = None, *, apply=False, daily=False
         cutoff = now - (0 if emergency else min_age_hours * 3600)
         report["status"] = "applied" if apply else "preview"
         plan = []
+        # The existing safe scans also collect nested pins; native trees need
+        # no second traversal solely to protect an atomic unit from deletion.
+        pinned_paths = set()
 
         def choose(groups, category):
             for choices in groups.values():
                 for index, (newest, paths) in enumerate(sorted(choices, key=lambda item: item[0], reverse=True)):
                     reason = None
-                    if pinned(paths, root):
+                    if any(path in pinned_paths for path in paths) or pinned(paths, root):
                         reason = "pinned"
                     elif index < keep:
                         reason = "retention"
@@ -503,7 +561,7 @@ def maintain(root: Path, target: Path | None = None, *, apply=False, daily=False
                     else:
                         plan.append((newest, paths, category))
 
-        ordinary = variants(profile, root, report["retained"])
+        ordinary = variants(profile, root, report["retained"], pinned_paths)
         if purge_incremental:
             ordinary = {k: v for k, v in ordinary.items() if k[-1] != "incremental"}
         choose(ordinary, "artifact")
@@ -520,13 +578,14 @@ def maintain(root: Path, target: Path | None = None, *, apply=False, daily=False
                     else:
                         plan.append((directory.stat().st_mtime, [directory], "incremental purge"))
         if build_scripts:
-            groups, nodes, hashes, unknown = build_script_variants(profile, profiles, root)
+            groups, nodes, hashes, unknown = build_script_variants(profile, profiles, root, pinned_paths)
             if unknown:
                 report["retained"].append({"paths": [str((profile / "build").relative_to(root))],
                                             "reason": "incomplete fingerprint graph", "unknownUnits": unknown})
             else:
                 choose(groups, "build script")
-                selected = {p for _, paths, _ in plan for p in paths if p.parent.name == ".fingerprint"}
+                owners = {node.parent: node for node in nodes}
+                selected = {owners[p] for _, paths, _ in plan for p in paths if p in owners}
                 pending = list(set(nodes) - selected)
                 reachable = set(pending)
                 while pending:
@@ -536,7 +595,7 @@ def maintain(root: Path, target: Path | None = None, *, apply=False, daily=False
                             pending.append(dependency)
                 filtered = []
                 for item in plan:
-                    if item[2] == "build script" and any(p in reachable for p in item[1]):
+                    if item[2] == "build script" and any(owners.get(p) in reachable for p in item[1]):
                         report["retained"].append({"paths": [str(p.relative_to(root)) for p in item[1]], "reason": "retained dependency"})
                     else:
                         filtered.append(item)
@@ -551,7 +610,8 @@ def maintain(root: Path, target: Path | None = None, *, apply=False, daily=False
                 sizes = measure(paths, root)
                 report["details"].append({"paths": [str(p.relative_to(root)) for p in paths], "category": category,
                                           "lastModifiedOrUsed": newest,
-                                          "lastSuccessfulUse": max((last_use(p, uses, root) for p in paths if p.parent.name == ".fingerprint"), default=0) or None,
+                                          "lastSuccessfulUse": max((last_use(p / "fingerprint", uses, root)
+                                                                     for p in paths if (p / "fingerprint").is_dir()), default=0) or None,
                                           **sizes})
                 report["candidates"].append([str(p.relative_to(root)) for p in paths])
                 accepted.extend(paths)
@@ -561,7 +621,9 @@ def maintain(root: Path, target: Path | None = None, *, apply=False, daily=False
         report["bytes"] = report["logicalBytes"]
         for paths in report["candidates"]:
             try:
-                if apply and report["errors"] and any((root / p).parent.name == "build" for p in paths):
+                if apply and report["errors"] and any(
+                    (root / p).parent.parent.name == "build" for p in paths
+                ):
                     report["retained"].append({"paths": paths, "reason": "earlier cleanup failed"})
                     continue
                 if apply:

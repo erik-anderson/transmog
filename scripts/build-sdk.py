@@ -9,7 +9,8 @@ import shlex
 import sys
 
 from repo_tools import ROOT, command, development_environment, executable, main_guard, write_json
-from sdk_tools import SDK, PIN, bootstrap, cargo_build, verify_selections
+from sdk_tools import (SDK, PIN, bootstrap, cargo_build, dependency_search_arguments,
+                       verify_selections, write_response_file)
 
 
 def main():
@@ -37,16 +38,15 @@ def main():
     artifact = next(item for item in receipts if item.get("reason") == "compiler-artifact"
                     and item["target"]["name"] == "transmog_sdk_facade")
     rlib = Path(next(path for path in artifact["filenames"] if path.endswith(".rlib")))
-    host_deps = Path(env["CARGO_TARGET_DIR"]) / ("release" if profile else "debug") / "deps"
     header, glue = generated / "sdk_generated.hpp", generated / "glue.rs"
-    command([generator, "--h-out", header, "--rs-out", glue,
+    # Per-unit paths in Cargo 1.100 can exceed Windows' command-line limit.
+    response = write_response_file(generated / "crubit.rsp", ["--h-out", header, "--rs-out", glue,
              "--crubit-support-path-format", "<support/{header}>",
              "--crate-feature", "self=supported", "--portable-abi-compatible",
              "--crate-namespace", "self=transmog_sdk_rust", "--enable-rmeta-interface=true",
              "--source-crate-name", "transmog_sdk_facade", "--target", host,
-             "--extern", f"transmog_sdk_facade={rlib}", "-L", f"dependency={rlib.parent / 'deps'}",
-             "-L", f"dependency={host_deps}"],
-            cwd=SDK, env=generator_env)
+             "--extern", f"transmog_sdk_facade={rlib}", *dependency_search_arguments(receipts)])
+    command([generator, response], cwd=SDK, env=generator_env)
     # Fail before compiling C++ if a required facade operation was omitted.
     errors = header.read_text(encoding="utf-8")
     for name in ("application_create", "application_create_with_body_store", "application_release", "application_valid",

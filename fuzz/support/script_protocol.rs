@@ -1,5 +1,7 @@
 //! Shared protocol fuzz oracles, also replayed by ordinary Windows tests.
 
+#![allow(clippy::too_many_lines)] // The oracle covers each framing variant together.
+
 use serde::{Serialize, de::DeserializeOwned};
 use std::io::{Cursor, Read};
 use transmog_extensions::{HostReply, HostRequest, MAX_HOST_FRAME_BYTES, read_frame, write_frame};
@@ -262,24 +264,32 @@ pub fn check(data: &[u8]) {
             stream_roundtrip(&bytes, chunk);
         }
         _ => {
-            for length in [0, MAX_SCRIPT_HOST_FRAME_BYTES as u32 + 1, u32::MAX] {
+            for length in [
+                0,
+                u32::try_from(MAX_SCRIPT_HOST_FRAME_BYTES).unwrap() + 1,
+                u32::MAX,
+            ] {
                 let mut input = PrefixOnly {
                     prefix: Cursor::new(length.to_le_bytes()),
                 };
                 assert!(read_host_frame::<ScriptHostReply>(&mut input).is_err());
             }
-            for length in [0, MAX_HOST_FRAME_BYTES as u32 + 1, u32::MAX] {
+            for length in [
+                0,
+                u32::try_from(MAX_HOST_FRAME_BYTES).unwrap() + 1,
+                u32::MAX,
+            ] {
                 let mut input = PrefixOnly {
                     prefix: Cursor::new(length.to_le_bytes()),
                 };
                 assert!(read_frame::<HostReply>(&mut input).is_err());
             }
             let mut input = PrefixOnly {
-                prefix: Cursor::new((0x8000_0000u32 | 65537).to_le_bytes()),
+                prefix: Cursor::new((0x8000_0000u32 | 0x0001_0001).to_le_bytes()),
             };
             assert!(transmog_script::read_host_request_frame(&mut input).is_err());
             let mut input = PrefixOnly {
-                prefix: Cursor::new((0x8000_0000u32 | 65537).to_le_bytes()),
+                prefix: Cursor::new((0x8000_0000u32 | 0x0001_0001).to_le_bytes()),
             };
             assert!(transmog_extensions::read_reply(&mut input).is_err());
         }

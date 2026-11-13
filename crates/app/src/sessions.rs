@@ -3198,8 +3198,7 @@ mod tests {
                 filter_groups: vec![TrafficFilterGroup {
                     dimension: TrafficDimension::Column(TrafficColumn::Host),
                     values: picked
-                        .map(|value| vec![TrafficFilterValue::Text(value.into())])
-                        .unwrap_or_default(),
+                        .map_or_default(|value| vec![TrafficFilterValue::Text(value.into())]),
                     saved_values: saved,
                     selection_mode: mode,
                 }],

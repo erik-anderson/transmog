@@ -453,8 +453,7 @@ pub(super) async fn inspect_case_source(
 fn opened_links(window: &str) -> Vec<transmog_app::CaseEvidenceLink> {
     lock()
         .get(window)
-        .map(|o| o.opened.values().flat_map(|e| e.links.clone()).collect())
-        .unwrap_or_default()
+        .map_or_default(|o| o.opened.values().flat_map(|e| e.links.clone()).collect())
 }
 pub(super) type CasePreviewRequest = transmog_app::CasePreviewOptions;
 pub(super) async fn prepare_preview(

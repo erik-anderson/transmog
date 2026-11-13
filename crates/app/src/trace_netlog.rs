@@ -561,8 +561,7 @@ pub(super) fn import(
             let mut storage_response = response.clone();
             let mut body_headers = response
                 .as_ref()
-                .map(|head| head.headers.clone())
-                .unwrap_or_default();
+                .map_or_default(|head| head.headers.clone());
             if complete {
                 body_headers.remove_all("content-encoding");
                 body_headers.remove_all("transfer-encoding");

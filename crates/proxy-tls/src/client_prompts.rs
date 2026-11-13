@@ -323,8 +323,7 @@ pub fn certificate_name(name: &boring::x509::X509NameRef) -> String {
             let value = entry
                 .data()
                 .as_utf8()
-                .map(|value| value.to_string())
-                .unwrap_or_default();
+                .map_or_default(|value| value.to_string());
             format!("{label}={value}")
         })
         .collect::<Vec<_>>()

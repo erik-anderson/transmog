@@ -213,8 +213,7 @@ pub(super) fn number_label(
     }
     value
         .to_string(scope)
-        .map(|text| text.to_rust_string_lossy(scope))
-        .unwrap_or_default()
+        .map_or_default(|text| text.to_rust_string_lossy(scope))
 }
 
 fn inert_label(scope: &mut v8::PinScope<'_, '_>, value: v8::Local<v8::Value>) -> String {

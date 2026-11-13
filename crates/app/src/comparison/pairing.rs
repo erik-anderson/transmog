@@ -619,20 +619,18 @@ pub(super) fn normalize_url(text: &str, excluded: &[String]) -> Option<String> {
         host.into()
     };
     let port = parsed.port().map_or_else(String::new, |p| format!(":{p}"));
-    let query = query
-        .map(|q| {
-            let pairs = q
-                .split('&')
-                .filter(|pair| {
-                    let name = pair.split_once('=').map_or(*pair, |(n, _)| n);
-                    let decoded = percent_encoding::percent_decode_str(name).decode_utf8_lossy();
-                    !excluded.iter().any(|e| e == &decoded)
-                })
-                .collect::<Vec<_>>()
-                .join("&");
-            format!("?{pairs}")
-        })
-        .unwrap_or_default();
+    let query = query.map_or_default(|q| {
+        let pairs = q
+            .split('&')
+            .filter(|pair| {
+                let name = pair.split_once('=').map_or(*pair, |(n, _)| n);
+                let decoded = percent_encoding::percent_decode_str(name).decode_utf8_lossy();
+                !excluded.iter().any(|e| e == &decoded)
+            })
+            .collect::<Vec<_>>()
+            .join("&");
+        format!("?{pairs}")
+    });
     Some(format!(
         "{}://{authority}{port}{path}{query}",
         parsed.scheme()

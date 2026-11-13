@@ -13,7 +13,7 @@ Release packaging and compatibility across SDK builds remain deferred.
 ## Build and consume
 
 Run commands from the repository root with the
-[native build prerequisites](../docs/building.md), Python 3.11+, Rust 1.99.1,
+[native build prerequisites](../docs/building.md), Python 3.11+, Rust 1.100.0,
 and Git installed. The managed binding and full integration tests also need the
 .NET 10 SDK.
 

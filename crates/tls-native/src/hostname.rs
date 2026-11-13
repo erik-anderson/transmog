@@ -2,7 +2,7 @@
 use std::{collections::HashSet, net::IpAddr, sync::OnceLock};
 
 fn dns_name(name: &str) -> Option<String> {
-    let name = name.strip_suffix('.').unwrap_or(name);
+    let name = name.trim_suffix('.');
     if name.is_empty() || name.len() > 253 || !name.is_ascii() {
         return None;
     }
@@ -75,7 +75,7 @@ fn has_registry_controlled_domain(host: &str) -> bool {
     // Chromium's registry lookup ignores leading dots and one trailing dot,
     // and treats registry identifiers themselves as having no public domain.
     let host = host.trim_start_matches('.');
-    let host = host.strip_suffix('.').unwrap_or(host);
+    let host = host.trim_suffix('.');
     let length = registry_length_from_rules(host, false, rules);
     length != 0 && host.len() > length
 }

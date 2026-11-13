@@ -120,7 +120,7 @@ pub(crate) fn text(bytes: &[u8], media: &str) -> Option<String> {
     {
         return None;
     }
-    let bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(bytes);
+    let bytes = bytes.trim_prefix(&[0xef, 0xbb, 0xbf]);
     if charset.as_deref() == Some("us-ascii") && !bytes.is_ascii() {
         return None;
     }

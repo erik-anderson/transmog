@@ -36,8 +36,7 @@ fn header(block: &HeaderBlock, name: &str) -> String {
     block
         .values(name)
         .next()
-        .map(|value| String::from_utf8_lossy(value).into_owned())
-        .unwrap_or_default()
+        .map_or_default(|value| String::from_utf8_lossy(value).into_owned())
 }
 fn bytes(
     store: &BodyStore,
@@ -233,14 +232,11 @@ fn entry(
     };
     let req_size = size(ExchangeBoundary::ClientRequest)
         .or_else(|| request_body.as_ref().map(|b| b.len() as u64));
-    let query = url::Url::parse(&url)
-        .ok()
-        .map(|url| {
-            url.query_pairs()
-                .map(|(name, value)| json!({"name":name,"value":value}))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+    let query = url::Url::parse(&url).ok().map_or_default(|url| {
+        url.query_pairs()
+            .map(|(name, value)| json!({"name":name,"value":value}))
+            .collect::<Vec<_>>()
+    });
     let mut req = json!({"method":request.map_or("GET", |r| r.head.method.as_str()),"url":url,"httpVersion":protocol("client-request"),"cookies":[],"headers":headers(req_headers,redact),"queryString":query,"headersSize":-1,"bodySize":req_size.map_or(-1_i128, i128::from)});
     if let Some(body) = request_body {
         if !body.is_empty() {

@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 import unittest
 from unittest.mock import patch
 
@@ -22,21 +23,24 @@ class CacheTests(unittest.TestCase):
         # Use the same canonical owner spelling as the cache containment guard.
         self.root = Path(self.owner.name).resolve()
         self.profile = self.root / "target/debug"
-        (self.profile / "deps").mkdir(parents=True)
-        (self.profile / ".fingerprint").mkdir()
+        (self.profile / "build").mkdir(parents=True)
         self.now = time.time()
 
     def variant(self, number, *, age=3, kind="lib-example", package="example"):
         digest = f"{number:016x}"
-        fingerprint = self.profile / ".fingerprint" / f"{package}-{digest}"
-        fingerprint.mkdir()
+        unit = self.profile / "build" / package / digest
+        fingerprint = unit / "fingerprint"
+        fingerprint.mkdir(parents=True)
+        output = unit / "out"
+        output.mkdir()
         metadata = fingerprint / (kind + ".json")
         metadata.write_text(json.dumps({"rustc": 1, "target": 1, "profile": 1, "deps": []}))
-        outputs = [self.profile / "deps" / f"{prefix}example-{digest}{suffix}"
+        (fingerprint / kind).write_text(number.to_bytes(8, "little").hex())
+        outputs = [output / f"{prefix}example-{digest}{suffix}"
                    for prefix, suffix in [("lib", ".rlib"), ("", ".pdb"), ("", ".d")]]
         for path in outputs:
             path.write_bytes(b"cache")
-        for path in [metadata, *outputs]:
+        for path in [*fingerprint.iterdir(), *outputs]:
             timestamp = self.now - age * build_cache.DAY + number
             os.utime(path, (timestamp, timestamp))
         return fingerprint, outputs
@@ -46,7 +50,8 @@ class CacheTests(unittest.TestCase):
 
     def test_preview_and_retention_remove_complete_old_groups_only(self):
         entries = [self.variant(i) for i in range(5)]
-        unrelated = self.profile / "deps/orphan-1111111111111111.pdb"
+        unrelated = self.profile / "build/orphan/1111111111111111/out/orphan.pdb"
+        unrelated.parent.mkdir(parents=True)
         unrelated.write_bytes(b"unpaired")
         release = self.root / "target/release/user-output.txt"
         release.parent.mkdir()
@@ -74,10 +79,10 @@ class CacheTests(unittest.TestCase):
     def test_metadata_only_checks_do_not_displace_linked_builds(self):
         linked = [self.variant(i) for i in range(5)]
         for number in range(5, 8):
-            _, outputs = self.variant(number)
+            fingerprint, outputs = self.variant(number)
             for path in outputs[:2]:
                 path.unlink()
-            (self.profile / "deps" / f"libexample-{number:016x}.rmeta").write_bytes(b"metadata")
+            (fingerprint.parent / "out" / f"libexample-{number:016x}.rmeta").write_bytes(b"metadata")
         result = self.maintain(apply=True)
         self.assertEqual(result["variants"], 2)
         self.assertTrue(all(p.exists() for fp, files in linked[2:] for p in [fp, *files]))
@@ -101,22 +106,22 @@ class CacheTests(unittest.TestCase):
             build_cache.automatic({}, root=self.root, arguments=["build", "--target-dir", "elsewhere"])
             maintain.assert_not_called()
 
-    def test_failed_move_rolls_back_artifacts_and_fingerprint(self):
+    def test_failed_atomic_move_leaves_artifacts_and_fingerprint_intact(self):
         entries = [self.variant(i) for i in range(5)]
         rename = Path.rename
-        def refuse_pdb(path, destination):
-            if path.suffix == ".pdb" and path.parent.name == "deps":
-                raise PermissionError("fixture loaded symbol file")
+        def refuse_unit(path, destination):
+            if path.parent.name == "example" and path.parent.parent.name == "build":
+                raise PermissionError("fixture loaded unit")
             return rename(path, destination)
-        with patch.object(Path, "rename", refuse_pdb):
+        with patch.object(Path, "rename", refuse_unit):
             result = self.maintain(apply=True)
-        self.assertEqual(len(result["errors"]), 2)
+        self.assertTrue(result["errors"])
         self.assertTrue(all(path.exists() for fp, files in entries for path in [fp, *files]))
 
     def test_unknown_sidecars_keep_the_entire_group(self):
         for number in range(5):
-            self.variant(number)
-            (self.profile / "deps" / f"example-{number:016x}.unknown").write_bytes(b"unknown")
+            fp, _ = self.variant(number)
+            (fp.parent / "out" / f"example-{number:016x}.unknown").write_bytes(b"unknown")
         self.assertEqual(self.maintain(apply=True)["variants"], 0)
 
     def test_codegen_objects_trim_with_their_complete_variant(self):
@@ -124,19 +129,20 @@ class CacheTests(unittest.TestCase):
         suffixes = (".012abc.0def.rcgu.o", ".example.123abc-cgu.00.rcgu.o")
         objects = []
         for number in range(5):
-            files = [self.profile / "deps" / f"example-{number:016x}{suffix}" for suffix in suffixes]
+            files = [entries[number][0].parent / "out" / f"example-{number:016x}{suffix}" for suffix in suffixes]
             for file in files:
                 file.write_bytes(b"compiler object")
                 timestamp = self.now - 3 * build_cache.DAY + number
                 os.utime(file, (timestamp, timestamp))
             objects.append(files)
         # An object without a matching fingerprint remains outside the plan.
-        orphan = self.profile / "deps" / "example-ffffffffffffffff.012abc.0def.rcgu.o"
+        orphan = self.profile / "build/orphan/ffffffffffffffff/out/example.012abc.0def.rcgu.o"
+        orphan.parent.mkdir(parents=True)
         orphan.write_bytes(b"unowned compiler object")
         preview = self.maintain()
         self.assertEqual(preview["variants"], 2)
         planned = {path for group in preview["candidates"] for path in group}
-        self.assertTrue(all(str(p.relative_to(self.root)) in planned for group in objects[:2] for p in group))
+        self.assertTrue(all(str(fp.parent.relative_to(self.root)) in planned for fp, _ in entries[:2]))
         self.assertTrue(all(p.exists() for group in objects for p in group))
         result = self.maintain(apply=True)
         self.assertFalse(result["errors"])
@@ -147,10 +153,10 @@ class CacheTests(unittest.TestCase):
 
     def test_unknown_sidecar_still_protects_a_variant_with_codegen_objects(self):
         for number in range(5):
-            self.variant(number)
+            fp, _ = self.variant(number)
             stem = f"example-{number:016x}.012abc.0def.rcgu.o"
-            (self.profile / "deps" / stem).write_bytes(b"compiler object")
-            (self.profile / "deps" / (stem + ".backup")).write_bytes(b"unknown")
+            (fp.parent / "out" / stem).write_bytes(b"compiler object")
+            (fp.parent / "out" / (stem + ".backup")).write_bytes(b"unknown")
         self.assertEqual(self.maintain(apply=True)["variants"], 0)
 
     def test_incremental_retention_keeps_recent_variants(self):
@@ -176,7 +182,7 @@ class CacheTests(unittest.TestCase):
             build_cache.maintain(self.root, self.root.parent / "outside")
         external = self.root / "outside"
         external.mkdir()
-        link = self.profile / "deps/link-1111111111111111.rlib"
+        link = self.profile / "build/link"
         try:
             link.symlink_to(external / "missing")
         except OSError:
@@ -190,7 +196,7 @@ class CacheTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             build_cache.checked(link, self.root)
         with self.assertRaises(ValueError):
-            build_cache.tree_files(self.profile / "deps", self.root)
+            build_cache.tree_files(self.profile / "build", self.root)
 
     def test_parent_traversal_is_rejected_before_cache_mutation(self):
         entries = [self.variant(i) for i in range(5)]
@@ -262,16 +268,16 @@ class CacheTests(unittest.TestCase):
         self.assertTrue(all(p.exists() for p in [fingerprint, *files, *entries[1:]]))
 
     def script_unit(self, number, *, age, stem="build-script-build-script-build", deps=()):
-        directory = self.profile / ".fingerprint" / f"native-{number:016x}"
-        directory.mkdir()
+        build = self.profile / "build/native" / f"{number:016x}"
+        directory = build / "fingerprint"
+        directory.mkdir(parents=True)
         data = {"rustc": 1, "target": 1, "profile": 1,
                 "deps": [[0, "build_script_build", False, dep] for dep in deps]}
         (directory / (stem + ".json")).write_text(json.dumps(data))
         (directory / stem).write_text(number.to_bytes(8, "little").hex())
-        build = self.profile / "build" / directory.name
-        build.mkdir(parents=True)
-        (build / "native.lib").write_bytes(b"native output")
-        for file in [*directory.iterdir(), *build.iterdir()]:
+        (build / "out").mkdir()
+        (build / "out/native.lib").write_bytes(b"native output")
+        for file in build_cache.tree_files(build, self.root):
             os.utime(file, (self.now - age * build_cache.DAY, self.now - age * build_cache.DAY))
         return directory, build
 
@@ -295,8 +301,8 @@ class CacheTests(unittest.TestCase):
 
     def test_incomplete_graph_disables_native_pruning(self):
         units = [self.script_unit(i, age=3) for i in range(1, 4)]
-        bad = self.profile / ".fingerprint/unknown-000000000000000a"
-        bad.mkdir()
+        bad = self.profile / "build/unknown/000000000000000a/fingerprint"
+        bad.mkdir(parents=True)
         (bad / "unknown.json").write_text("null")
         result = self.maintain(apply=True, keep=1, build_scripts=True)
         self.assertTrue(all(p.exists() for pair in units for p in pair))
@@ -305,12 +311,12 @@ class CacheTests(unittest.TestCase):
     def test_incomplete_graph_does_not_walk_native_output_trees(self):
         self.script_unit(1, age=3)
         self.script_unit(2, age=3)
-        bad = self.profile / ".fingerprint/unknown-000000000000000a"
-        bad.mkdir()
+        bad = self.profile / "build/unknown/000000000000000a/fingerprint"
+        bad.mkdir(parents=True)
         (bad / "unknown.json").write_text("null")
         original = build_cache.tree_files
         def scan(path, root):
-            self.assertNotEqual(path.parent.name, "build", "An incomplete graph must skip native tree scans")
+            self.assertNotEqual(path.parent.name, "native", "An incomplete graph must skip native tree scans")
             return original(path, root)
         with patch.object(build_cache, "tree_files", side_effect=scan):
             result = self.maintain(build_scripts=True)
@@ -347,18 +353,210 @@ class CacheTests(unittest.TestCase):
         for number in range(5):
             self.variant(number)
         cross = self.root / "target/x86_64-pc-windows-msvc/debug"
-        (cross / "deps").mkdir(parents=True)
-        (cross / ".fingerprint").mkdir()
+        (cross / "build").mkdir(parents=True)
         with build_cache.cargo_locks(cross, self.root):
             self.assertEqual(self.maintain(apply=True)["status"], "busy")
         (self.root / "target" / build_cache.PIN).touch()
         self.assertEqual(self.maintain(apply=True)["status"], "pinned")
 
 
+class UnitLayoutTests(unittest.TestCase):
+    setUp = CacheTests.setUp
+    maintain = CacheTests.maintain
+
+    def unit(self, number, *, stem="lib-example", deps=(), age=3, metadata=False, package="example"):
+        unit = self.profile / "build" / package / f"{number:016x}"
+        fp, output = unit / "fingerprint", unit / "out"
+        fp.mkdir(parents=True)
+        output.mkdir()
+        data = {"rustc": 1, "target": 1, "profile": 1,
+                "deps": [[0, "example", False, dep] for dep in deps]}
+        (fp / (stem + ".json")).write_text(json.dumps(data))
+        (fp / stem).write_text(number.to_bytes(8, "little").hex())
+        (output / ("libexample.rmeta" if metadata else "libexample.rlib")).write_bytes(b"cache")
+        for file in build_cache.tree_files(unit, self.root):
+            stamp = self.now - age * build_cache.DAY + number
+            os.utime(file, (stamp, stamp))
+        return unit
+
+    def test_per_unit_profile_discovery_and_retention(self):
+        units = [self.unit(i) for i in range(1, 4)]
+        preview = self.maintain(keep=1)
+        self.assertEqual(preview["variants"], 2)
+        self.assertTrue(all(unit.exists() for unit in units))
+        result = self.maintain(apply=True, keep=1)
+        self.assertFalse(result["errors"])
+        self.assertTrue(all(not path.exists() for path in units[:2]))
+        self.assertTrue(units[2].exists())
+        self.assertEqual(build_cache.related_profiles(self.root / "target", self.root), [self.profile])
+        self.assertEqual(self.maintain()["status"], "preview")
+
+    def test_metadata_pins_unknown_outputs_and_successful_hits(self):
+        import cargo_cache_usage
+        units = [self.unit(i) for i in range(1, 7)]
+        metadata = [self.unit(i, metadata=True, age=0) for i in range(7, 10)]
+        (units[1] / "out" / build_cache.PIN).touch()
+        unknown = units[2] / "out/unknown.sidecar"
+        unknown.write_bytes(b"retain")
+        binary = self.profile / "libexample.rlib"
+        os.link(units[0] / "out/libexample.rlib", binary)
+        cargo_cache_usage.record(self.root, [{"reason": "compiler-artifact", "filenames": [str(binary)]}])
+        # Also exercise direct per-unit filenames and build-script out_dir.
+        cargo_cache_usage.record(self.root, [
+            {"reason": "compiler-artifact", "filenames": [str(units[0] / "out/libexample.rlib")]},
+            {"reason": "build-script-executed", "out_dir": str(units[0] / "out")}])
+        result = self.maintain(apply=True, keep=1)
+        self.assertFalse(result["errors"])
+        self.assertTrue(all(unit.exists() for unit in [*units[:3], *metadata]))
+        self.assertTrue(all(not unit.exists() for unit in units[3:]))
+        self.assertEqual(len(build_cache.successful_uses(self.profile, self.root)), 1)
+
+    def test_pinned_metadata_does_not_displace_compiled_variants(self):
+        compiled = [self.unit(i) for i in (1, 2)]
+        metadata = self.unit(3, metadata=True, age=0)
+        (metadata / "out" / build_cache.PIN).touch()
+        result = self.maintain(apply=True, keep=1, min_age_hours=0)
+        self.assertFalse(result["errors"])
+        self.assertEqual(result["variants"], 1)
+        self.assertFalse(compiled[0].exists())
+        self.assertTrue(compiled[1].exists())
+        self.assertTrue(metadata.exists())
+
+    def test_native_units_follow_retained_dependency_graph(self):
+        scripts = []
+        for number in (1, 3, 5):
+            scripts.append(self.unit(number, stem="build-script-build-script-build"))
+            scripts.append(self.unit(number + 1, stem="run-build-script-build-script-build", deps=[number]))
+        artifact = self.unit(100, deps=[2])
+        result = self.maintain(apply=True, keep=1, min_age_hours=0, build_scripts=True)
+        self.assertFalse(result["errors"])
+        self.assertTrue(artifact.exists())
+        self.assertTrue(all(p.exists() for p in [*scripts[:2], *scripts[4:]]))
+        self.assertTrue(all(not p.exists() for p in scripts[2:4]))
+
+    def test_unknown_fingerprint_disables_native_pruning(self):
+        scripts = [self.unit(i, stem="build-script-build-script-build") for i in range(1, 4)]
+        (self.profile / "build/example/000000000000ffff").mkdir()
+        result = self.maintain(apply=True, keep=1, min_age_hours=0, build_scripts=True)
+        self.assertTrue(all(p.exists() for p in scripts))
+        self.assertTrue(any(row["reason"] == "incomplete fingerprint graph" for row in result["retained"]))
+
+    def test_build_and_package_parent_pins_protect_nested_units(self):
+        units = [self.unit(i) for i in range(1, 4)]
+        units += [self.unit(i, stem="build-script-build-script-build") for i in range(4, 7)]
+        for scope in (self.profile / "build", self.profile / "build/example"):
+            with self.subTest(scope=scope):
+                pin = scope / build_cache.PIN
+                pin.touch()
+                for apply in (False, True):
+                    result = self.maintain(apply=apply, keep=1, min_age_hours=0, build_scripts=True)
+                    self.assertFalse(result["errors"])
+                    self.assertEqual(result["variants"], 0)
+                    self.assertTrue(all(unit.exists() for unit in units))
+                pin.unlink()
+
+    def test_cross_target_parent_pin_protects_the_whole_profile(self):
+        self.profile = self.root / "target/x86_64-pc-windows-msvc/debug"
+        units = [self.unit(i) for i in range(1, 4)]
+        (self.profile.parent / build_cache.PIN).touch()
+        result = self.maintain(apply=True, keep=1, min_age_hours=0, target_triple="x86_64-pc-windows-msvc")
+        self.assertEqual(result["status"], "pinned")
+        self.assertTrue(all(unit.exists() for unit in units))
+
+    def test_package_pin_does_not_disable_other_packages_native_cleanup(self):
+        protected = [self.unit(i, stem="build-script-build-script-build") for i in range(1, 4)]
+        others = [self.unit(i, stem="build-script-build-script-build", package="other") for i in range(4, 7)]
+        (protected[0].parent / build_cache.PIN).touch()
+        result = self.maintain(apply=True, keep=1, min_age_hours=0, build_scripts=True)
+        self.assertFalse(result["errors"])
+        self.assertEqual(result["variants"], 2)
+        self.assertTrue(all(unit.exists() for unit in [*protected, others[2]]))
+        self.assertTrue(all(not unit.exists() for unit in others[:2]))
+
+    def test_nested_native_output_pins_protect_the_complete_unit(self):
+        units = [self.unit(i, stem="build-script-build-script-build") for i in range(1, 4)]
+        pin = units[0] / "out/cmake" / build_cache.PIN
+        pin.parent.mkdir()
+        pin.touch()
+        old = self.now - 4 * build_cache.DAY
+        os.utime(pin, (old, old))
+        result = self.maintain(apply=True, keep=1, min_age_hours=0, build_scripts=True)
+        self.assertFalse(result["errors"])
+        self.assertEqual(result["variants"], 1)
+        self.assertTrue(units[0].exists())
+        self.assertFalse(units[1].exists())
+        self.assertTrue(units[2].exists())
+
+    def test_incomplete_units_do_not_displace_complete_units(self):
+        complete = [self.unit(i) for i in (1, 2)]
+        unit = self.unit(3)
+        for file in (unit / "out").iterdir():
+            file.unlink()
+        (unit / "out").rmdir()
+        result = self.maintain(apply=True, keep=1, min_age_hours=0)
+        self.assertFalse(result["errors"])
+        self.assertEqual(result["variants"], 1)
+        self.assertTrue(unit.exists())
+        self.assertFalse(complete[0].exists())
+        self.assertTrue(complete[1].exists())
+
+    def test_package_names_may_end_in_hex(self):
+        units = [self.unit(i, package="example-0123456789abcdef") for i in range(1, 4)]
+        result = self.maintain(apply=True, keep=1, min_age_hours=0)
+        self.assertFalse(result["errors"])
+        self.assertEqual(result["variants"], 2)
+        self.assertTrue(all(not unit.exists() for unit in units[:2]))
+        self.assertTrue(units[2].exists())
+
+def cargo_environment():
+    # Temporary crates sit outside the repository's rustup override. Always
+    # qualify the pinned compiler, rather than the developer's default stable.
+    env = development_environment()
+    pin = tomllib.loads((ROOT / "rust-toolchain.toml").read_text(encoding="utf-8"))
+    env["RUSTUP_TOOLCHAIN"] = pin["toolchain"]["channel"]
+    return env
+
+
 class CargoAcceptance(unittest.TestCase):
+    def test_example_cache_hits_protect_the_exact_used_variant(self):
+        import cargo_cache_usage
+        env = cargo_environment()
+        env.update(TRANSMOG_BUILD_CACHE_TRIM="0", CARGO_INCREMENTAL="0")
+        env.pop("CARGO_TARGET_DIR", None)
+        env.pop("CARGO_BUILD_BUILD_DIR", None)
+        with tempfile.TemporaryDirectory(prefix="example-cache-") as temporary:
+            root = Path(temporary).resolve()
+            (root / "src").mkdir()
+            (root / "examples").mkdir()
+            (root / "Cargo.toml").write_text('[workspace]\n[package]\nname="example-cache"\nversion="0.1.0"\nedition="2024"\n')
+            (root / "src/lib.rs").write_text('pub fn answer()->u32{42}\n')
+            (root / "examples/demo.rs").write_text('fn main(){println!("{}",example_cache::answer());}\n')
+            profile = root / "target/debug"
+            def compile_variant(number):
+                result = subprocess.run([executable("cargo", env), "build", "--examples", "--offline", "--message-format=json"],
+                                        cwd=root, env={**env, "RUSTFLAGS": f"--cfg example_variant_{number}"},
+                                        capture_output=True, text=True, timeout=120)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                return [json.loads(line) for line in result.stdout.splitlines() if line.startswith("{")]
+            compile_variant(0)
+            original = next(directory for directory in build_cache.fingerprint_dirs(profile, root)
+                            if (directory / "example-demo.json").is_file())
+            for number in range(1, 4):
+                compile_variant(number)
+            fresh = compile_variant(0)
+            self.assertTrue(all(item["fresh"] for item in fresh if item["reason"] == "compiler-artifact"))
+            cargo_cache_usage.record(root, fresh)
+            uses = build_cache.successful_uses(profile, root)
+            self.assertTrue(any(row["stem"] == "example-demo" for row in uses.values()))
+            result = build_cache.maintain(root, apply=True, keep=1, min_age_hours=0, min_free_gib=0)
+            self.assertFalse(result["errors"])
+            self.assertTrue(original.exists())
+            after = compile_variant(0)
+            self.assertTrue(all(item["fresh"] for item in after if item["reason"] == "compiler-artifact"))
+
     def test_native_build_outputs_rebuild_after_pruning_and_incremental_purge(self):
         import cargo_cache_usage
-        env = development_environment()
+        env = cargo_environment()
         env.update(TRANSMOG_BUILD_CACHE_TRIM="0", CARGO_INCREMENTAL="1")
         env.pop("CARGO_TARGET_DIR", None)
         env.pop("CARGO_BUILD_BUILD_DIR", None)
@@ -430,7 +628,7 @@ fn main(){
             self.assertEqual((root / "target/debug" / build_cache.USAGE).read_bytes(), before_failure)
 
     def test_malformed_fingerprint_does_not_prevent_configured_cargo_build(self):
-        env = development_environment()
+        env = cargo_environment()
         for name in ("TRANSMOG_BUILD_CACHE_TRIM", "CI", "CARGO_TARGET_DIR", "CARGO_BUILD_BUILD_DIR"):
             env.pop(name, None)
         with tempfile.TemporaryDirectory(prefix="transmog-cache-command-") as directory:
@@ -439,8 +637,7 @@ fn main(){
             (root / "Cargo.toml").write_text('[workspace]\n[package]\nname="cache-command"\nversion="0.1.0"\nedition="2021"\n')
             (root / "src/main.rs").write_text('fn main(){println!("configured build completed");}\n')
             profile = root / "target/debug"
-            (profile / "deps").mkdir(parents=True)
-            malformed = profile / ".fingerprint/unrelated-0000000000000001"
+            malformed = profile / "build/unrelated/0000000000000001/fingerprint"
             malformed.mkdir(parents=True)
             (malformed / "lib-unrelated.json").write_text("null")
             with patch("repo_tools.ROOT", root):
@@ -452,7 +649,7 @@ fn main(){
             self.assertEqual(subprocess.check_output([str(binary)], text=True).strip(), "configured build completed")
 
     def test_real_variants_rebuild_and_an_active_cargo_build_is_protected(self):
-        env = development_environment()
+        env = cargo_environment()
         env["TRANSMOG_BUILD_CACHE_TRIM"] = "0"
         env["CARGO_INCREMENTAL"] = "1"
         env.pop("CARGO_TARGET_DIR", None)

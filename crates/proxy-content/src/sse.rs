@@ -181,7 +181,7 @@ impl EventParser {
         }
         let (name, value) = line.split_once(':').unwrap_or((&line, ""));
         self.fields += 1;
-        let value = value.strip_prefix(' ').unwrap_or(value);
+        let value = value.trim_prefix(' ');
         match name {
             "data" => {
                 self.has_data = true;

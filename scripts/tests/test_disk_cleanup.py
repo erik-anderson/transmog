@@ -32,16 +32,16 @@ class DiskCleanupTests(unittest.TestCase):
 
     def variants(self, target, profile="debug"):
         owner = target / profile
-        (owner / "deps").mkdir(parents=True)
-        (owner / ".fingerprint").mkdir()
         groups = []
         for number in range(1, 4):
             digest = f"{number:016x}"
-            fp = owner / ".fingerprint" / f"example-{digest}"
-            fp.mkdir()
+            unit = owner / "build/example" / digest
+            fp = unit / "fingerprint"
+            fp.mkdir(parents=True)
+            (unit / "out").mkdir()
             (fp / "lib-example.json").write_text(json.dumps({"rustc": 1, "target": 1, "profile": 1, "deps": []}))
             (fp / "lib-example").write_text(number.to_bytes(8, "little").hex())
-            artifact = owner / "deps" / f"libexample-{digest}.rlib"
+            artifact = unit / "out" / f"libexample-{digest}.rlib"
             artifact.write_bytes(b"rebuildable")
             for path in [*fp.iterdir(), artifact]:
                 stamp = time.time() - 86400 * 3 + number

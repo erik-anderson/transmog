@@ -1120,8 +1120,7 @@ fn import_saz(
             .metadata
             .flags
             .get("x-transmog-connect-export-headers")
-            .map(|value| value.split(',').map(str::to_owned).collect::<Vec<_>>())
-            .unwrap_or_default();
+            .map_or_default(|value| value.split(',').map(str::to_owned).collect::<Vec<_>>());
         if !generated_connect_headers.is_empty()
             && evidence.is_none()
             && let Some(response) = &mut session.response

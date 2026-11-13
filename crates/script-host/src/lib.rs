@@ -78,6 +78,7 @@ fn send(
         .ok_or_else(|| "script output transport failed".into())
 }
 
+#[allow(clippy::too_many_lines)] // Keep the protocol dispatch and lifetime in one place.
 fn run_stream(
     input: impl Read + Send + 'static,
     output: &transmog_script::stream::OutputSender<ScriptHostReply>,
@@ -308,6 +309,7 @@ impl ScriptRuntime {
     }
     fn new_debug(
         manifest: &ScriptManifest,
+        #[allow(clippy::needless_pass_by_value)] // Initialization owns the supplied source.
         javascript: String,
         sink: impl Fn(u64, transmog_script::ConsoleEvent) -> bool + 'static,
         attachment: Option<DebugAttachment>,
@@ -462,7 +464,7 @@ pub fn configure_v8() {
     transmog_js_runtime::initialize();
 }
 
-/// Launches the actual host inside a zero-capability Windows AppContainer.
+/// Launches the actual host inside a zero-capability Windows `AppContainer`.
 ///
 /// # Errors
 /// Returns a redacted bootstrap failure. This function is available on every
@@ -481,7 +483,7 @@ pub fn sandbox_bootstrap(max_heap_bytes: usize) -> Result<i32, String> {
     )
 }
 
-/// Verifies the current host has both AppContainer and Job Object isolation.
+/// Verifies the current host has both `AppContainer` and Job Object isolation.
 ///
 /// # Errors
 /// Returns an error if a production host was launched without either boundary.

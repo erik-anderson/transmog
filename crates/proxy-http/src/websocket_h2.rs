@@ -105,8 +105,7 @@ impl Pool {
                 .target
                 .query
                 .as_ref()
-                .map(|q| format!("?{q}"))
-                .unwrap_or_default()
+                .map_or_default(|q| format!("?{q}"))
         )
         .parse()?;
         if uri.scheme_str() == Some("https") {

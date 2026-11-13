@@ -133,8 +133,7 @@ fn trace_frames<'s>(
         });
         let function = frame
             .get_function_name(scope)
-            .map(|name| budget.text(scope, name))
-            .unwrap_or_default();
+            .map_or_default(|name| budget.text(scope, name));
         frames.push(StackFrame {
             function,
             generated,

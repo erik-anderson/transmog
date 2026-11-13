@@ -8,6 +8,9 @@ license.workspace = true
 repository.workspace = true
 build = "build.rs"
 
+[lints]
+workspace = true
+
 [dependencies]
 serde_json.workspace = true
 transmog-js-runtime = { version = "=0.1.25", path = "../js-runtime", features = ["debugger"] }

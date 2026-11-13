@@ -92,8 +92,7 @@ class V8CacheTests(unittest.TestCase):
         self.source(current=True)
         variants = [self.native(n) for n in range(1, 3)]
         profile = self.root / "target/release"
-        (profile / "deps").mkdir(parents=True)
-        (profile / ".fingerprint").mkdir()
+        (profile / "build").mkdir(parents=True)
         tool_lock = self.root / ".tools/rusty-v8/tools/x86_64-pc-windows-msvc/toolchain.fslock"
         tool_lock.parent.mkdir(parents=True)
         for lease in (cache_lease(self.root), cargo_locks(profile, self.root), file_lock(tool_lock, self.root)):

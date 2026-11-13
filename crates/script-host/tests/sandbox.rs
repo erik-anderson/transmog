@@ -1,8 +1,10 @@
 //! Windows `AppContainer` integration tests for the script host.
 
 #![cfg(windows)]
+#![allow(clippy::too_many_lines)] // Integration scenarios include setup and assertions.
 
 use std::collections::BTreeSet;
+use std::fmt::Write as _;
 
 use transmog_script::{
     ScriptAction, ScriptCapabilities, ScriptContext, ScriptHandler, ScriptInvocation, ScriptLimits,
@@ -506,16 +508,16 @@ async fn every_callback_preserves_structured_exception_evidence() {
         ScriptHandler::Completed,
         ScriptHandler::Failed,
     ];
-    let source = handlers
-        .iter()
-        .map(|handler| {
-            format!(
-                "export function {}(){{throw new Error('{}');}}\n",
-                handler.export_name(),
-                handler.export_name()
-            )
-        })
-        .collect::<String>();
+    let source = handlers.iter().fold(String::new(), |mut source, handler| {
+        writeln!(
+            source,
+            "export function {}(){{throw new Error('{}');}}",
+            handler.export_name(),
+            handler.export_name()
+        )
+        .unwrap();
+        source
+    });
     let mut manifest = compile(
         "export function onRequestHead(){return {decision:{action:'continue'}};}",
         1000,
@@ -563,7 +565,7 @@ async fn every_callback_preserves_structured_exception_evidence() {
 
 #[tokio::test]
 async fn complete_scenario_uses_native_helpers_state_selection_and_timing() {
-    let source = r#"
+    let source = r"
       import {pass, readCookies, readForm, replaceForm, replaceJson} from 'transmog:api';
       export function onRequestHead(event) { return pass({state:{cookies:readCookies(event.request.headers)}}); }
       export function onRequestBody(event) {
@@ -578,7 +580,7 @@ async fn complete_scenario_uses_native_helpers_state_selection_and_timing() {
         if(event.context.source !== 'sandbox' || event.context.elapsedMs !== 400 || event.context.nowUnixMs !== 1400) throw new Error('wrong context');
         return pass({diagnostics:['scenario complete']});
       }
-    "#;
+    ";
     let mut manifest = compile(
         "export function onRequestHead() { return {decision:{action:'continue'}}; }",
         1000,
@@ -668,7 +670,7 @@ async fn complete_scenario_uses_native_helpers_state_selection_and_timing() {
 
 #[tokio::test]
 async fn streaming_scenario_uses_isolated_helpers_and_deferred_header_authority() {
-    let source = r#"
+    let source = r"
       import {pass, edit, needMore, deferResponseHeaders, replaceTextChunk, setHeader} from 'transmog:api';
       export function onResponseHead(event) { return event.parameters.defer ? deferResponseHeaders() : pass(); }
       export function onResponseChunk(event) {
@@ -681,7 +683,7 @@ async fn streaming_scenario_uses_isolated_helpers_and_deferred_header_authority(
         }
         return replaceTextChunk(event,'before','after');
       }
-    "#;
+    ";
     for (deferred, fail_at_end) in [(false, false), (true, false), (true, true)] {
         let mut manifest = compile(
             "export function onRequestHead() { return {decision:{action:'continue'}}; }",
@@ -959,11 +961,11 @@ async fn appcontainer_host_executes_without_ambient_authority() {
 
 #[tokio::test]
 async fn infinite_loop_is_killed_and_host_stays_failed_closed() {
-    let source = r#"
+    let source = r"
       export function onRequestHead() {
         while (true) {}
       }
-    "#;
+    ";
     let runner = SupervisedScriptRunner::start(&config(), compile(source, 50)).unwrap();
     let first = runner.invoke(invocation()).await.unwrap_err();
     assert_eq!(
@@ -1406,7 +1408,10 @@ async fn body_sample_clear_switch_does_not_decode_headers_or_require_header_writ
         panic!("The clear switch did not edit the body")
     };
     assert_eq!(edits.bytes, Some(Vec::new()));
-    assert!(edits.headers.is_empty());
+    assert_eq!(
+        edits.headers,
+        [] as [transmog_script::ScriptHeaderOperation; 0]
+    );
 }
 
 fn help_example(title: &str) -> String {
@@ -1702,8 +1707,11 @@ async fn bundled_help_examples_execute_with_the_documented_permissions() {
                         .then(|| serde_json::from_str("\"Upstream\"").unwrap());
                     let result = runner.invoke(input.clone()).await.unwrap();
                     assert_eq!(result.decision, ScriptAction::Continue);
-                    assert!(result.annotations.is_empty());
-                    assert!(result.diagnostics.is_empty());
+                    assert_eq!(
+                        result.annotations,
+                        [] as [transmog_script::ScriptAnnotation; 0]
+                    );
+                    assert_eq!(result.diagnostics, [] as [std::string::String; 0]);
                     assert!(result.state.is_none());
                 }
             }
