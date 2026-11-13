@@ -140,7 +140,9 @@ def development_environment(*, root=ROOT, environment=None, platform=None, targe
                 raise RuntimeError("The fixed MSVC installation is incomplete; rerun scripts/setup-windows-msvc.ps1.")
             env.update(VSINSTALLDIR=str(pinned_installation),
                        VCINSTALLDIR=str(pinned_installation / "VC"),
-                       VCToolsInstallDir=str(vc), VCToolsVersion=vc.name)
+                       VCToolsInstallDir=str(vc), VCToolsVersion=vc.name,
+                       GYP_MSVS_OVERRIDE_PATH=str(pinned_installation),
+                       vs2026_install=str(pinned_installation), WINDOWSSDKDIR=str(sdk))
             if not (sdk / "Include/10.0.26100.0").is_dir():
                 raise RuntimeError("The fixed Windows SDK 10.0.26100.0 is missing.")
         if vc and sdk.is_dir():

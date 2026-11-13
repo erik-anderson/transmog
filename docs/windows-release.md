@@ -109,7 +109,9 @@ Hosted setup installs MSVC 14.51.36231 privately from the hash- and
 signature-verified Visual Studio Build Tools 18.11.3 fixed-version bootstrapper.
 Engine producers and native consumers select that installation before the
 runner image's Visual Studio, so an image rollout cannot silently switch the
-MSVC headers, CRT or native linker between jobs. The existing SDK and toolset
+MSVC headers, CRT or native linker between jobs. Both GN's installation hint
+and override point to the same private tree; setup rejects extra toolsets or a
+different vcvarsall default. The existing SDK and toolset
 fingerprint checks still reject changed bytes. Changing this fixed profile
 invalidates the engine cache and native proof.
 Reuse additionally requires an identical engine manifest, consumer ABI, locked

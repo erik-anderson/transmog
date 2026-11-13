@@ -1,15 +1,23 @@
 """An image rollout must not change the hosted MSVC consumer profile."""
+import ast
+import collections
+import glob
 import json
+import os
+import re
 from pathlib import Path
 import subprocess
 import sys
+import tarfile
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import repo_tools
 import v8_artifact
+import v8_native
 
 
 class WindowsMsvcTests(unittest.TestCase):
@@ -75,6 +83,38 @@ class WindowsMsvcTests(unittest.TestCase):
                 self.assertEqual(self.configure(root, configured, image, architecture), configured)
                 self.assertNotIn("VCToolsVersion", env)
         self.assertEqual(*fingerprints)
+
+    def test_real_gn_discovery_uses_the_same_private_profile_over_newer_image_hints(self):
+        pin = v8_native.source_pin()
+        archive = v8_native.source_archive(pin)
+        with tarfile.open(archive) as source:
+            code = source.extractfile(f'v8-{pin["version"]}/build/vs_toolchain.py').read().decode()
+        tree = ast.parse(code)
+        functions = {"_GenerateCandidatePaths", "_CheckIfVersionInstalled", "GetVisualStudioVersion",
+                     "DetectVisualStudioPath", "_HostIsWindows", "SetEnvironmentAndGetRuntimeDllDirs",
+                     "_SortByHighestVersionNumberFirst", "FindVCComponentRoot"}
+        nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in functions or
+                 isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "MSVS_VERSIONS" for t in node.targets)]
+        namespace = {"os": os, "glob": glob, "re": re, "collections": collections,
+                     "sys": SimpleNamespace(platform="win32"),
+                     "platform": SimpleNamespace(architecture=lambda: ("64bit", "")), "json_data_file": "unused"}
+        # Execute the pinned archive's actual discovery functions, not a copy of
+        # their logic. No compiler, vcvarsall or application is launched.
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), "pinned-v8/build/vs_toolchain.py", "exec"), namespace)
+        for architecture in ("x64", "arm64"):
+            with self.subTest(architecture=architecture), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                env, image, vc = self.fixture(root, architecture)
+                env.update(DEPOT_TOOLS_WIN_TOOLCHAIN="0", vs2026_install=str(image),
+                           GYP_MSVS_OVERRIDE_PATH=str(image), WINDOWSSDKDIR="unrelated-sdk")
+                # Before setup, GN independently chooses the image's newer tree.
+                with patch.dict(os.environ, env, clear=True):
+                    self.assertEqual(Path(namespace["FindVCComponentRoot"]("Tools")).name, "14.52.37000")
+                configured = self.configure(root, env, image, architecture)
+                with patch.dict(os.environ, configured, clear=True):
+                    self.assertEqual(Path(namespace["FindVCComponentRoot"]("Tools")), vc)
+                    self.assertEqual(Path(namespace["DetectVisualStudioPath"]()), root / ".tools/msvc")
+                    self.assertEqual(Path(os.environ["WINDOWSSDKDIR"]), root / "programs/Windows Kits/10")
 
     def test_partial_private_installation_fails_without_image_fallback(self):
         with tempfile.TemporaryDirectory() as directory:

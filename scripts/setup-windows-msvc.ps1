@@ -32,12 +32,23 @@ if (-not (Test-Path -LiteralPath $toolset)) {
     # image's Visual Studio installation or following its moving channel.
     $arguments = @('--quiet', '--wait', '--norestart', '--nocache',
         '--installPath', ('"' + $installation + '"'),
-        '--add', 'Microsoft.VisualStudio.Component.VC.14.51.x86.x64',
-        '--add', 'Microsoft.VisualStudio.Component.VC.14.51.ARM64')
+        # These Latest components belong to the fixed 18.11.3 catalog, not the
+        # rolling runner catalog, and include the generic vcvarsall entry point.
+        '--add', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
+        '--add', 'Microsoft.VisualStudio.Component.VC.Tools.ARM64')
     $process = Start-Process -FilePath $bootstrapper -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru
     if ($process.ExitCode -notin @(0, 3010)) {
         throw "Fixed MSVC installation failed: $($process.ExitCode)"
     }
+}
+$installedToolsets = @(Get-ChildItem -LiteralPath (Join-Path $installation 'VC/Tools/MSVC') -Directory)
+if ($installedToolsets.Count -ne 1 -or $installedToolsets[0].Name -cne $version) {
+    throw 'Fixed MSVC installation contains an unexpected toolset; GN selects the newest directory.'
+}
+$defaultVersionFile = Join-Path $installation 'VC/Auxiliary/Build/Microsoft.VCToolsVersion.default.txt'
+if ((Get-Content -LiteralPath $defaultVersionFile -Raw).Trim() -cne $version -or
+        -not (Test-Path -LiteralPath (Join-Path $installation 'VC/Auxiliary/Build/vcvarsall.bat') -PathType Leaf)) {
+    throw 'Fixed MSVC default toolset or vcvarsall entry point differs.'
 }
 foreach ($relative in @('include/vcruntime.h', 'include/yvals_core.h',
         'lib/x64/libcmt.lib', 'lib/x64/msvcrt.lib', 'lib/x64/vcruntime.lib',
