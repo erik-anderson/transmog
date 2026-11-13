@@ -367,218 +367,184 @@ the blocks. An unrecorded protocol is labeled unavailable rather than guessed.
 
 ## Search and select
 
-**Filters** opens a shared field picker directly. Method, State, HTTP version,
-Traffic type, HTTP status families/codes and Fetch destination offer counted
-checkbox choices. Column menus open the same picker, and each active field has
-one chip with separate Edit and Remove actions. Choices remain a draft until
-**Apply filter**. Close, Escape and clicking outside preserve pending selections
-and text for each field in this window. Switching fields also preserves drafts.
-Closing the picker does not apply the draft or ask for confirmation. Close and
-Escape return focus to the opener. **Apply filter** commits all edited fields
-together, and **After Apply** previews their combined effect. Invalid or unfinished
-input takes you to the field needing correction before any filter is applied.
-**Discard changes** resets every field to its applied filter and closes the picker.
-**Clear filters** removes applied filters and all pending drafts.
-The fixed footer shows **Unapplied changes** while editing. The **Filters**
-button and field chooser identify retained drafts separately from applied filters.
-Explicit Favorite actions survive dismissal. **Saved and custom hosts** and
-**Observed hosts** are visually separate membership groups with selected counts.
-Other fields use **Saved and custom values** and **Observed values**. The first
-group contains **Add values**, Favorites and other custom terms. An idle Favorite
-library stays collapsed with its count; saved selections, pending pasted values or
-a nondefault mode open it. **Add values** reveals **Is in**; it starts open when
-the library is empty. Larger Favorite lists offer **Search Favorites**, which keeps
-checked terms visible even when they do not match the search.
-**Combine groups** sits between the two groups
-and explains their matching relationship using their names. It is hidden in the
-default observed-only view, appearing when selected custom membership values,
-pending pasted values or a nondefault mode make it relevant. Requirements alone
-do not reveal this membership control. An existing nondefault mode remains
-available to reset even when custom values have been removed.
-**Additional requirements** follows both groups in a separate disclosure. It opens
-when reusable or enabled requirements exist; its heading explains that all checked
-requirements must also match. Each disclosure preserves an explicit collapse
-during count and Favorite refreshes and while a draft is retained across fields.
-Enter a comparison value and choose **Add requirement**, then enable each
-condition individually. Every enabled Contains condition must pass. Equals and
-each numeric endpoint have one active value; previous authored values remain
-available unchecked for reuse.
+### Filter traffic
 
-Fields with an applied filter have an accent-colored dot in **Filter by**;
-unapplied drafts have a separate textual label, and paused saved-only selections
-do not mark a field as filtered. Reopening the picker or switching fields puts
-checked choices first within each list.
-Checkbox edits keep rows in place until the next opening, including zero-count
-choices under **More values**.
-Using **Use exact value** reveals its selected row even when it previously lived
-under collapsed **More values**. Unstarred filter values stay available when
-unchecked during editing; reopening drops unused values that are not Favorites.
+1. Open **Filters**, choose a field in **Filter by**, and check values or enter
+   a range. Different fields combine with AND.
+2. Switch fields to build the rest of the draft. **After Apply** previews all
+   edited fields together.
+3. Choose **Apply filter**, or **Save and apply** when pasted values need saving.
 
-Option counts apply other column filters and searches across all retained entries,
-but ignore this field’s saved selections, observed selections and requirements.
-The short count note provides a tooltip explaining the surrounding scope.
-**After Apply** includes the complete draft across fields. Other fields' pending
-edits also scope the option counts; this field's own edits are excluded from them.
-Unfinished comparisons, invalid pasted values or ranges, and exceeded limits
-replace the preview count with a prompt to finish or correct pending fields.
-Zero values
-stay selectable; longer zero lists use **More values**, and selected values stay
-visible when the picker is reopened. Loading or failed counts are shown as
-unavailable rather than zero. Values outside exact filter limits are disclosed;
-use Contains under **Additional requirements** to narrow long text.
+Column menus and a request's **Actions → Filter by** open the same picker.
+Fields can be filtered even when their columns are hidden. Each active field
+has a chip with Edit and Remove actions.
 
-Protocol choices group recorded `HTTP/2.0` with **HTTP/2** and `HTTP/3.0` with
-**HTTP/3**, for both counts and exact matches. Original recorded spellings remain
-visible in traffic and inspection evidence. App-generated fallback names already
-use canonical HTTP labels.
+| Action | Effect |
+| --- | --- |
+| **Apply filter** / **Save and apply** | Validate and apply all edited fields; save pending pasted values first. |
+| Close, Escape, click outside, or switch fields | Keep the draft in this window without applying it. |
+| **Discard changes** | Restore every field to its applied state and close the picker. |
+| **Clear this field** | Uncheck its values and requirements and clear entered filter values and range bounds. Apply commits the change. |
+| Remove a filter chip | Remove that field's applied filter and pending draft immediately; keep other fields' drafts. |
+| **Clear filters** | Remove all applied filters and drafts immediately. |
 
-Method, Protocol, State and Fetch destination include searched observed values
-alongside common choices. **Other** appears when entries have present values
-outside the common choices; it includes later arrivals with unfamiliar values,
-and remains visible while selected even when its count becomes zero. Missing
-method, protocol and fetch-destination evidence have separate choices. Status also
-offers all observed codes; its **Other** matches codes outside 100–599, since the usual
-families already cover every code in that range. Other overlaps the individual
-observed values it includes, just as status families overlap individual codes.
+**Unapplied changes** appears in the footer, on **Filters**, and beside edited
+fields. A dot marks fields with active filters. Invalid or unfinished input takes
+you to the field needing correction when you Apply. Filters and drafts belong to
+this window session; Favorites are shared and survive restart.
 
-Host, Process and normalized Content type offer searched observed choices with
-contextual counts. **Load more** continues the list; after 200 observed values,
-search narrows the remaining set. Selected values remain visible outside the
-searched page. **Is in** accepts values before they appear in Traffic;
-Contains and Equals remain available under **Additional requirements**. Content type choices omit parameters
-and compare without case. **No process name** means no captured process name,
-including remote callers; **Unavailable status** and **Missing content type** are
-explicit evidence states, distinct from zero or the literal text of those labels.
+### Save and reuse Favorites
 
-**Saved values** is a local Favorite library shared by the main window and saved-file
-viewers. A star adds or removes a Favorite immediately; it never changes either
-selection. Saved checkboxes select reusable terms, while observed checkboxes pick
-exact captured values independently. Removing an active Favorite keeps its term
-under **Other filter values**. **Clear all Host Favorites** clears only Host
-Favorites, including saved comparisons, reports the removed count and offers
-**Undo**. Undo preserves intervening additions and later explicit removals.
-Favorites are separate from layouts, capture files and case exports; first run
-starts with an empty library. Filters and picker drafts remain window-local.
+A star saves or removes a Favorite immediately. A checkbox changes the filter
+draft; Apply updates Traffic. Favorite changes survive Discard and Clear filters.
 
-For an empty capture, open **Filters → Host → Saved and custom hosts** and paste
-`api.example.test, *.domain.example, future.example.test` into **Is in**, expanding
-**Add values** first if needed.
-**Save and apply** validates all edited fields, saves pending pasted values across
-fields in one batch, selects their distinct terms and applies the whole draft.
-**Save to Favorites** saves
-the terms for reuse without checking them or applying a filter.
-Invalid or over-limit batches keep the complete text editable and save nothing.
-A zero-match filter stays active and includes later matching requests.
-Unfinished comparison text stays editable until **Add requirement** includes it
-in the draft; Apply asks for that step before continuing.
+To include hosts before they appear in Traffic, open **Saved and custom hosts**,
+expand **Add values** if needed, and paste into **Is in**:
 
-Host terms canonicalize case, IDNs and a trailing DNS dot without changing
-captured evidence. `*.domain.example` includes `domain.example` itself,
-`cdn.domain.example` and deeper descendants such as `eu.cdn.domain.example`.
-`otherdomain.example` does not match. Exact IPv4 and IPv6 literals are accepted;
-ports, URLs, paths, credentials, malformed hosts and wildcard IPs are rejected.
-Other built-in fields use their typed exact choices, including missing values,
-Other, protocol aliases and status families. URL, Path and Process accept one
-literal value, preserving commas. Wildcards are reserved for Host.
+```text
+api.example.test, *.domain.example, future.example.test
+```
 
-When an outside host appears, search **Observed hosts**, pick its checkbox and
-Apply to include it alongside the saved terms. Starring that row adds an unchecked
-saved row while preserving the observed checkbox and focus. **Combine groups**
-offers **Match either group (OR)** (default), **Match both groups (AND)**, and
-**Use observed hosts only** (or **Use observed values only** for other fields).
-Each nonempty group matches any checked term of its own. AND requires membership
-in both populated groups; with only one populated group, the summary explains
-that matching uses that group alone. Observed-only mode marks the saved/custom
-group **Not used in this mode** while retaining its checkmarks. If no observed
-values are selected in that mode, the summary explains that membership adds no
-restriction; additional requirements still apply. A saved-only ignored selection has no active-filter chip.
-Enabled **Additional requirements**
-conditions always apply after membership, along with other fields and searches.
-**Clear this field** clears this field's draft selections, requirements and input;
-Apply commits that change together with any other edited fields. Chip Remove also
-clears that field's pending draft so a later Apply cannot restore it; other fields'
-drafts remain. **Clear filters** clears all applied and pending restrictions while
-keeping Favorites.
+- **Save and apply** saves the pending values across fields, checks them, and
+  applies the complete draft.
+- **Save to Favorites** saves values for reuse while leaving selections and
+  Traffic unchanged.
 
-**After Apply** counts unique requests in the full surrounding scope before
-option search, option paging or table paging. Overlapping terms count a request
-once. Wildcard coverage and missing selections or requirements are explained on
-observed rows. Counts retain metadata/content-search, incident and applicable
-extension scopes with only the edited field lifted. Loading and unavailable
-counts remain distinct from measured zero. Active queries accept up to 32 fields,
-128 alternatives across both roles per field and 1,024 in total, plus 14 scalar
-requirements of up to 255 characters each. The Favorite library independently
-holds up to 1,024 entries per field and 4,096 total, read in pages of at most 256.
-One save can contain up to 1,024 values across fields.
-Its encoded storage is capped at 4 MiB; a batch exceeding that capacity saves
-nothing and keeps the draft editable.
-Counts for unchecked Favorites outside the current count batch may be unavailable;
-select a term to request its count. The full draft preview still includes all
-selected terms.
+Invalid batches save nothing and keep the text editable. A filter with no current
+matches stays active and can include later requests.
 
-Duration, size, request-order and time filters lead with their range editor;
-empty observed-value groups are omitted. Exact values, Favorites and missing-value
-choices remain available after the range. Duration and size ranges use inclusive
-From/To bounds with milliseconds, seconds
-or minutes and bytes, KiB, MiB or GiB. Blank ends are unrestricted; decimal values
-must resolve exactly to whole milliseconds or bytes. Request-order ranges retain
-the complete positive unsigned 64-bit decimal value. Start-time controls use local
-calendar time, preserving milliseconds; the picker names the time zone. Skipped
-daylight-saving times reject, and repeated times choose the first occurrence.
-Presets resolve when chosen and retain a fixed lower bound for later traffic.
-Unavailable starts never appear as an observed epoch-zero timestamp. Existing
-incident-time restrictions continue to apply alongside these filters.
+Host matching ignores case, normalizes IDNs and a trailing DNS dot, and preserves
+captured display values. `*.domain.example` matches the base domain and its
+subdomains, including `cdn.domain.example` and `eu.cdn.domain.example`;
+`otherdomain.example` is outside that boundary. Exact IPv4 and IPv6 addresses
+are accepted. Enter hosts without ports, URLs, paths or credentials. Wildcards
+are available only for Host.
 
-The row context menu and selected request's **Actions → Filter by** open the same
-picker with Host, Process, Status or Content type selected as a draft. Apply is
-explicit. Existing selection and inspection remain in place while choosing values.
+Other built-in fields use typed exact values such as status families, missing
+values and Other. **Full URL**, **Path and query**, and **Process / PID** accept
+one literal value, keeping commas as data; other list inputs accept commas or
+newlines. Use **Process ID** for a numeric PID.
 
-**View → List columns** offers optional **Stream sent** and **Stream received**
-columns. These count observed decoded message bytes, including controls/events;
-ordinary HTTP entries show unavailable. **Request size** and **Response size**
-continue to describe HTTP bodies. New stream columns start hidden and unpinned;
-upgrades preserve existing widths, order, visibility, pins and pane splits.
+The **Favorites** list is shared by the main window and saved-file viewers.
+Idle libraries stay collapsed with a count. Larger lists offer **Search
+Favorites**, keeping checked terms visible even when they do not match the search.
+Removing a selected Favorite leaves its value under **Other filter values** until
+it is no longer needed by the filter. **Clear all Host Favorites** removes only
+Host Favorites, including saved comparisons, and offers **Undo**. Undo preserves
+intervening additions and later explicit removals. Favorites are stored separately
+from layouts, capture files and case exports.
 
-Filtering preserves Follow newest or the paused inspection state. Empty live views
-automatically display later matches in either state. New traffic always loads;
-pausing holds the reading position instead of withholding arrivals. Saved viewers
-remain static, and Search contents keeps its completed snapshot until searched
-again. Filters never clear themselves.
-Duration uses established stream lifetime for WebSocket/SSE and the HTTP interval
-for ordinary requests; **HTTP duration** remains available as a separate column.
-The HTTP waterfall and Timeline retain their original HTTP timing boundaries.
+### Combine saved and observed values
 
-Traffic query metadata supports exact typed alternatives: choices within one
-dimension use OR, and distinct dimensions and existing text/numeric constraints
-use AND. Traffic type (HTTP, WebSocket or SSE) is independent of HTTP version and
-stream state, and dimensions do not need visible columns. Common status families
-are alternatives alongside exact numeric codes, so selecting 2xx and 404 includes
-both. Missing evidence is distinct from measured zero.
+**Saved and custom hosts** and **Observed hosts** are separate selection groups;
+other fields use the word *values*. Each group matches any of its checked terms.
+Checking an observed host picks that exact host. Starring it saves it for reuse;
+checkbox selections stay as they are.
 
-Contextual facet counts use all retained traffic, with the edited dimension's own
-constraints excluded and all other filters, metadata text, incident window and
-completed content-search snapshot retained. Counts describe traffic entries,
-not stream messages, and never decode bodies. The API returns bounded options
-in stable order with option search and an offset continuation. Each request is
-a fresh metadata snapshot; callers restart paging after scope or capture changes.
-Fixed presets can merge absent options with zero counts without disabling them.
-The picker and backend share `crates/app/src/sessions/filter-catalog.json` for
-categorical presets and evidenced external protocol spellings. Internal names
-are canonical at their producer; they do not need alias lists. Counts and result
-selection use the same normalization and Other predicate, including values beyond
-the currently displayed option page. Unknown external Fetch destination values
-remain selectable instead of being rejected by a fixed vocabulary.
+**Combine groups** appears between the groups when custom values are selected,
+a paste is pending, or a nondefault mode needs to remain accessible.
 
+| Mode | Matching rule |
+| --- | --- |
+| **Match either group (OR)** | Match a checked term in either group. This is the default. |
+| **Match both groups (AND)** | Match a checked term in each populated group. |
+| **Use observed hosts only** | Ignore saved/custom selections while keeping their checkmarks. Other fields call this **Use observed values only**. |
+
+Only groups with checked values participate; no participating values means
+unrestricted membership. Observed-only mode marks saved/custom values **Not used
+in this mode** and retains their checkmarks. Additional requirements and other
+fields still apply in every mode.
+
+### Add requirements and ranges
+
+Under **Additional requirements**, choose a comparison, enter its value, and
+choose **Add requirement**. This saves the condition as a Favorite and checks it
+in the draft. Apply activates it; uncheck it to disable it. Typing alone does not
+add a condition.
+
+All checked requirements must match, regardless of **Combine groups**. Each field
+allows multiple Contains conditions, one Equals condition, and one lower and
+upper bound. Replacing a condition keeps the previous authored value available
+unchecked for reuse. Disclosures preserve explicit collapse choices during
+refreshes and while a field's draft is retained.
+
+Duration, size, request-order and start-time filters lead with inclusive **From**
+and **To** bounds. Blank ends are unrestricted; missing measurements do not match
+a nonempty range. Duration units are milliseconds, seconds or minutes; size units
+are bytes, KiB, MiB or GiB. Decimal bounds must resolve to whole milliseconds or
+bytes. Request order supports the full positive unsigned 64-bit range.
+
+**Start time** uses the displayed local time zone and preserves milliseconds.
+Newly entered skipped daylight-saving times reject; repeated times choose the
+first occurrence. An existing exact bound keeps its original instant until edited.
+Presets resolve when chosen and retain that fixed bound for later traffic.
+
+**Duration** uses stream lifetime for WebSocket/SSE and the HTTP interval otherwise;
+**HTTP duration** always uses the HTTP interval. Optional **Stream sent** and
+**Stream received** columns in **View → List columns** count decoded message bytes,
+including control messages and events, and are unavailable for ordinary HTTP.
+**Request size** and **Response size** describe HTTP bodies.
+
+### Read counts and find values
+
+Option counts cover all retained requests in the surrounding scope, lifting only
+the edited field's restrictions. Other fields' applied filters or pending edits,
+URL/process search, incident scope, content-search results and extension filters
+still apply. **After Apply** includes the edited field too and counts overlapping
+matches once, before option search or table paging. Incomplete or invalid drafts
+show a correction prompt instead of a result count. Loading and unavailable counts
+are distinct from zero; some unchecked Favorites show no count until selected.
+
+Checked choices appear first on opening or switching fields. Rows stay in place
+while checking and unchecking. Zero-count choices remain selectable; longer lists
+put them under **More values**. **Use exact value** reveals its selected row.
+Unused unstarred values disappear on reopening.
+
+Host, Process / PID and Content type offer searched observed choices. Method,
+Protocol, State and Fetch destination also include common choices. **Load more**
+continues the list; after 200 observed values, search narrows the remainder.
+Selected values remain available outside the searched page. For values exceeding
+exact-match limits, use Contains under **Additional requirements**.
+
+- Content type ignores parameters and case. Protocol groups recorded `HTTP/2.0`
+  under **HTTP/2**, and `HTTP/3.0` under **HTTP/3**, preserving captured spellings
+  in inspection evidence. Traffic type chooses HTTP/WebSocket/SSE; Protocol
+  describes the HTTP version.
+- **Other** covers present values outside the common choices, including later
+  arrivals. For Status, it covers codes outside 100–599. It can overlap individual
+  observed choices, just as 2xx overlaps 200.
+- **No process name**, **Unavailable status**, and **Missing content type** describe
+  missing evidence, separately from zero or literal text with those labels.
+
+Filtering preserves Follow newest or the paused inspection state. Later matching
+requests appear automatically; saved viewers remain static. Content-search results
+remain a snapshot until searched again.
+
+### Filter limits
+
+| Scope | Limit |
+| --- | --- |
+| Active selections | 32 fields; 128 saved/observed alternatives per field; 1,024 total. |
+| Additional requirements | 14 total, including range endpoints; comparison values up to 255 characters, subject to field limits. |
+| Favorite library | 1,024 entries per field; 4,096 total; 4 MiB encoded storage. |
+| One Favorite save | 1,024 values across fields. |
+
+Capacity errors preserve the draft and the last saved library.
+
+### Filter URLs and process metadata
 
 The live **Filter** matches complete URLs, including text spanning the domain
 and path, as well as process metadata. Both Filter and metadata searches in
 **Search contents** also match URLs without an explicitly captured default port
 (`:443` for HTTPS or `:80` for HTTP). Non-default ports remain part of the URL.
 
+### Search retained contents
+
 In **Search contents** mode, **Search** or Enter searches retained evidence;
-typing alone does not repeatedly read bodies. **Search options** chooses metadata, request headers, response
-headers and decoded text request/response bodies, literal text or regex, case
-sensitivity and accent handling. Content codings and supported text encodings are decoded.
+typing alone does not repeatedly read bodies. **Search options** chooses metadata,
+request headers, response headers and decoded text request/response bodies,
+literal text or regex, case sensitivity and accent handling. Content codings and
+supported text encodings are decoded.
 The bounded regex engine does not support backreferences or look-around.
 
 Binary bodies are skipped quietly. Unavailable text and text over the search
@@ -596,10 +562,12 @@ canceled searches preserve the previous results and selections.
 accents and showing zero-width regex positions. F3 / Shift+F3 moves between
 matches; entry navigation preserves traffic multiselection, reveals the current
 request in Traffic and updates its inspector. Closing review focuses that
-request. Only a bounded number
-of occurrences per entry is displayed; refine the query to inspect later matches.
+request. Only a bounded number of occurrences per entry is displayed; refine the
+query to inspect later matches.
 Changed or removed evidence requires searching again. HTML and script fragments
 remain inert text in this view.
+
+### Select and remove requests
 
 Ctrl+click adds entries, Shift selects ranges across the full displayed order,
 even when intermediate rows are offscreen, Shift+arrow extends selection and
@@ -621,6 +589,8 @@ selection empty. If selection or
 focus changes while Undo is pending, the restored entries appear without replacing
 the newer selection or moving focus. Text fields retain their ordinary editing shortcuts.
 These actions do not delete source capture files or saved responses.
+
+### Follow newest traffic
 
 With the traffic list focused, F5 resumes **Follow newest**: ascending request order,
 the latest entries at the bottom, and automatic scrolling as matching requests arrive.

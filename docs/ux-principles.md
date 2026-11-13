@@ -306,50 +306,27 @@ when changing the experience.
   Large structured views may load explicit field ranges on demand. Keep source
   bytes accessible, identify flattened nesting, and report when copying requires
   a smaller range instead of silently omitting unloaded content.
-- Keep reusable Favorites, applied filters and per-window picker drafts separate.
-  Present saved/custom values and observed choices as distinct membership groups,
-  with selected counts and their OR/AND control between them. Keep additional
-  requirements after both groups and state that they always combine with AND.
-  Custom values and additional requirements have independent disclosures. Keep an
-  idle Favorite library collapsed with its count; expand custom values for active
-  selections or pending input. Put value authoring behind Add values when Favorites
-  already exist, and offer search for larger libraries while keeping selected terms
-  visible. Put available range editors first and omit empty
-  membership groups.
-  Preserve each explicit collapse during asynchronous refreshes and while retaining
-  a field's draft across field changes.
-  Name the groups in combination feedback; explain empty groups and mark ignored
-  selections as unused while preserving their checkmarks.
-  Omit the combination control in the default observed-only view. Reveal it for
-  selected custom membership values, pending values or an existing nondefault mode;
-  keep recovery from that mode available and return focus when the control hides.
-  Apply validates and commits the whole flyout draft across fields in one operation;
-  its preview includes all edited fields. Validate every field before saving pending
-  Favorites, and save the complete batch before changing Traffic. Reveal the field
-  needing correction and preserve all edits after failure or a late result.
-  Close, Escape, outside dismissal
-  and field switching preserve per-window drafts without a confirmation prompt.
-  Keep unapplied state visible beside Apply and identify retained drafts on the
-  Filters button and field chooser separately from applied filters. Discard changes
-  restores all fields to their applied state; Clear this field resets the displayed
-  field's draft selections, requirements and input. Clearing all filters clears drafts.
-  Removing an applied field also clears its pending draft, preserving other fields'
-  edits. Show an unfinished-state preview instead of a result count when pending
-  input cannot yet be applied, and keep invalid drafts out of native count requests.
-  Pasted values have a direct save-and-apply action; saving to Favorites alone
-  leaves selections unchanged. Explicit Favorite edits keep their saved result.
-  Subtle borderless stars persist authored values without changing membership;
-  use muted outlines, accent fills for Favorites and a visible keyboard focus ring.
-  Align primary row text and counts with the checkbox and star; put explanations
-  on a separate line. Put checked choices first when opening or switching fields,
-  and keep their positions stable while checking and unchecking. Explicit value
-  authoring reveals the chosen row. Mark applied fields in the field
-  chooser with accent color and a textual indicator; drafts and paused selections
-  do not imply an active filter. Saved and observed
-  selections retain their roles after removal or clearing of Favorites. Preview
-  unique requests across the full surrounding scope, and apply explicit additional
-  requirements after membership. Preserve drafts and focus during shared-library
-  refreshes; save pending values successfully before applying their query.
+- Separate reusable Favorites, applied filters and window-local drafts. Keep
+  Favorite persistence independent of filter activation. Closing or switching
+  fields preserves the draft. Apply validates and commits all edited fields
+  together; Discard restores their applied state. Removing a field also clears
+  its pending draft. Keep unapplied state visible outside the picker.
+- Lead filtering with the frequent task: ranges first where available, observed
+  choices easy to reach, and idle Favorite libraries collapsed with a count.
+  Offer value authoring on demand and search for larger libraries without hiding
+  checked terms. Distinguish saved/custom and observed groups, revealing OR/AND
+  controls when relevant; additional requirements always combine with AND.
+- Keep checked choices first on opening and rows stable during editing. Preserve
+  explicit disclosure choices, typed values and useful keyboard focus across
+  asynchronous refreshes. Outlined and filled stars show Favorite state
+  independently of checkbox selection and retain a visible focus ring.
+- Validate complete batches before saving, save successfully before applying, and
+  preserve newer edits when work finishes late. Shared-library changes must not
+  rewrite draft roles or applied predicates. Preview the whole draft across the
+  retained scope, count overlapping matches once, and show a correction prompt
+  instead of a result count while input is incomplete or invalid. See
+  [Traffic filtering](traffic-inspection.md#search-and-select) for the control
+  behavior, matching rules and limits.
 - Count and match filter choices with the same definitions. Host wildcards include
   the base domain and its descendants at whole DNS label boundaries. Common
   choices must not hide unfamiliar observed values; expose a counted Other choice
