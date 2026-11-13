@@ -205,16 +205,60 @@ export async function checkSavedDemos(page, root) {
   // Replacement failures retain the exact reviewed token for retry.
   await savedList();
   await list.getByRole("button", { name: "Replace…", exact: true }).click();
-  await prepare("Replacement demo");
+  await ready();
+  await save.getByLabel("Demo name", { exact: true }).fill("Replacement demo");
+  await save.getByRole("radio").first().check();
+  await demos.evaluate(async (element) => {
+    const render = element.$whenRendered;
+    let release, reached;
+    const ready = new Promise((resolve) => (reached = resolve));
+    const gate = new Promise((resolve) => (release = resolve));
+    element.$whenRendered = async () => {
+      await render.call(element);
+      reached();
+      await gate;
+    };
+    globalThis.__demoPrepareRelease = release;
+    globalThis.__pendingDemoPrepare = element.prepare(new Event("submit", { cancelable: true }));
+    try {
+      await ready;
+    } finally {
+      element.$whenRendered = render;
+    }
+    const state = globalThis.__workspaceFixture;
+    state.deferDemoCommit = true;
+    state.demoCommitError = "Disk unavailable: retry this exact snapshot";
+    globalThis.__pendingDemoCommit = element.commit();
+  });
+  await page.waitForFunction(() => !!globalThis.__workspaceFixture.finishDemoCommit);
+  try {
+    await page.evaluate(async () => {
+      globalThis.__demoPrepareRelease();
+      await globalThis.__pendingDemoPrepare;
+    });
+    assert.equal(
+      await demos.evaluate((element) => element.busy),
+      true,
+      "Preparation cleanup must not release a newer demo commit",
+    );
+    assert.equal(
+      await save.getByRole("button", { name: "Replace demo", exact: true }).isDisabled(),
+      true,
+    );
+  } finally {
+    await page.evaluate(async () => {
+      globalThis.__demoPrepareRelease();
+      globalThis.__workspaceFixture.finishDemoCommit();
+      await Promise.all([globalThis.__pendingDemoPrepare, globalThis.__pendingDemoCommit]);
+      delete globalThis.__demoPrepareRelease;
+      delete globalThis.__pendingDemoPrepare;
+      delete globalThis.__pendingDemoCommit;
+      delete globalThis.__workspaceFixture.finishDemoCommit;
+    });
+  }
   const replaceToken = await page.evaluate(
     () => document.querySelector("app-shell").automation.responseSetDemos.review.token,
   );
-  await page.evaluate(
-    () =>
-      (globalThis.__workspaceFixture.demoCommitError =
-        "Disk unavailable: retry this exact snapshot"),
-  );
-  await save.getByRole("button", { name: "Replace demo", exact: true }).click();
   await ready();
   assert.match(await save.locator(".field-error").textContent(), /Disk unavailable/);
   assert.equal(

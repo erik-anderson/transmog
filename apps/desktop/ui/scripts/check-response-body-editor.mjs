@@ -39,6 +39,18 @@ export async function checkResponseBodyEditor(page, root) {
         .model.getValue(),
     );
   const original = await field("body").inputValue();
+  assert.equal(
+    await page.evaluate(async () => {
+      const workspace = document.querySelector("app-shell").automation,
+        editor = workspace.bodyEditor;
+      const opening = editor.open("Cancelled before opening", "plaintext", false, workspace);
+      editor.close();
+      await opening;
+      return editor.surface.open;
+    }),
+    false,
+    "Cancelling a pending body editor must keep the dialog closed",
+  );
   let releaseStyles, requestedStyles;
   const stylesRequested = new Promise((resolve) => (requestedStyles = resolve)),
     stylesReleased = new Promise((resolve) => (releaseStyles = resolve));
@@ -528,6 +540,54 @@ async function checkSvgAndHexDialog(
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await closed();
   await page.setViewportSize({ width: 1280, height: 800 });
+  const cancelledHydration = await page.evaluate(async () => {
+    const editor = document.querySelector("app-shell").automation.bodyEditor;
+    const rendered = editor.$whenRendered,
+      ensure = editor.ensureEditor;
+    let release, reached, task;
+    const blocked = new Promise((resolve) => {
+      release = resolve;
+    });
+    const ready = new Promise((resolve) => {
+      reached = resolve;
+    });
+    editor.$whenRendered = async function () {
+      await rendered.call(this);
+      if (this.bodyEditorReady) {
+        reached();
+        await blocked;
+      }
+    };
+    editor.ensureEditor = function (generation) {
+      task = ensure.call(this, generation);
+      return task;
+    };
+    try {
+      await editor.open("Cancelled during hydration", "plaintext", false, editor);
+      await ready;
+      editor.close();
+      await new Promise((resolve) =>
+        editor.surface.addEventListener("close", resolve, { once: true }),
+      );
+      release();
+      await task;
+      return {
+        open: editor.surface.open,
+        editor: editor.editor,
+        model: editor.model,
+        error: editor.bodyError,
+      };
+    } finally {
+      release();
+      editor.$whenRendered = rendered;
+      editor.ensureEditor = ensure;
+    }
+  });
+  assert.deepEqual(
+    cancelledHydration,
+    { open: false, editor: null, model: null, error: "" },
+    "Cancelled hydration must not create an editor over a disposed model",
+  );
   await field("body").fill(original);
   await field("mediaType").fill(mediaType);
 }

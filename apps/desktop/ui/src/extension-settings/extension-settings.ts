@@ -1,4 +1,5 @@
 import initialState from "../initial-state.json";
+import { captureFocus, captureRenderScope } from "../rendering.js";
 import { attr, observable } from "@microsoft/webui-framework";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -103,7 +104,8 @@ export class ExtensionSettings extends WorkspaceElement {
       void this.refresh(true);
     }
   }
-  private accept(status: ExtensionStatus): void {
+  private async accept(status: ExtensionStatus): Promise<void> {
+    const focus = captureFocus(this);
     const surface = this.shadowRoot ?? this;
     const root = surface.getRootNode();
     const focused =
@@ -125,10 +127,16 @@ export class ExtensionSettings extends WorkspaceElement {
     this.extensionsBlocked = status.managementBlocked ?? Boolean(status.warning);
     this.extensionsLoaded = true;
     if (previousFocus) {
-      this.$flushUpdates();
+      const currentScope = captureRenderScope(this, () => [this.extensionsEntries, this.active]);
+      await this.$whenRendered();
       const current =
         root instanceof Document || root instanceof ShadowRoot ? root.activeElement : null;
-      if (!previousFocus.isConnected && (!current || current === this.ownerDocument.body)) {
+      if (
+        currentScope() &&
+        focus() &&
+        !previousFocus.isConnected &&
+        (!current || current === this.ownerDocument.body)
+      ) {
         summaries
           .find((summary) => summary.isConnected && summary.getClientRects().length > 0)
           ?.focus();
@@ -148,7 +156,7 @@ export class ExtensionSettings extends WorkspaceElement {
     try {
       const status = await invoke<ExtensionStatus>("extension_status");
       if (generation === this.generation && this.isConnected && !this.refreshAgain) {
-        this.accept(status);
+        await this.accept(status);
       }
     } catch (error: unknown) {
       if (generation === this.generation && !this.refreshAgain) {
@@ -181,7 +189,7 @@ export class ExtensionSettings extends WorkspaceElement {
         return;
       }
       if (status) {
-        this.accept(status);
+        await this.accept(status);
         this.extensionsText = complete;
       } else {
         this.extensionsText = "";
@@ -200,7 +208,7 @@ export class ExtensionSettings extends WorkspaceElement {
       try {
         const status = await invoke<ExtensionStatus>("extension_status");
         if (generation === this.generation && this.isConnected) {
-          this.accept(status);
+          await this.accept(status);
         }
       } catch {
         /* Keep the last valid inventory and the original actionable error. */

@@ -2,20 +2,20 @@ import assert from "node:assert/strict";
 import { resolve } from "node:path";
 
 export async function checkDebuggerDocking(page, workspace, root) {
-  const requestSplit = await page.locator("traffic-workspace").evaluate((element) => {
+  const requestSplit = await page.locator("traffic-workspace").evaluate(async (element) => {
     const preferences = element.preferences;
     const expanded = element.inspectorExpanded;
     const expandedSplit = element.expandedRequestSplit;
     try {
       element.preferences = { ...preferences, requestSplit: 65 };
       element.inspectorExpanded = false;
-      element.$flushUpdates();
+      await element.$whenRendered();
       const normal = element.querySelector(
         'pane-divider[label="Resize request and response inspectors"]',
       ).value;
       element.expandedRequestSplit = 55;
       element.inspectorExpanded = true;
-      element.$flushUpdates();
+      await element.$whenRendered();
       return [
         normal,
         element.querySelector('pane-divider[label="Resize request and response inspectors"]').value,
@@ -24,7 +24,7 @@ export async function checkDebuggerDocking(page, workspace, root) {
       element.preferences = preferences;
       element.inspectorExpanded = expanded;
       element.expandedRequestSplit = expandedSplit;
-      element.$flushUpdates();
+      await element.$whenRendered();
     }
   });
   assert.deepEqual(

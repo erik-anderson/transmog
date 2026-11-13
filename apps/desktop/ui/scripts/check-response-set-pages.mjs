@@ -68,6 +68,61 @@ export async function checkResponseSetPages(page, root) {
   };
   const data = () => page.evaluate(() => structuredClone(globalThis.__workspaceFixture.automation));
   const before = await data();
+  for (const action of ["cancel", "escape"])
+    assert.equal(
+      await page.evaluate(async (action) => {
+        const picker = document.querySelector("app-shell").responseSetPagePicker;
+        const original = picker.$whenRendered;
+        let reached;
+        const rendered = new Promise((resolve) => (reached = resolve));
+        picker.$whenRendered = async () => {
+          await original.call(picker);
+          if (action === "cancel") picker.cancel();
+          else picker.getRootNode().dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+          reached();
+        };
+        const request = picker.request("Facebook response", "", false, () => true);
+        try {
+          await rendered;
+          await Promise.resolve();
+          const reopened = picker.pageDialog.open;
+          picker.cancel();
+          await request;
+          return reopened;
+        } finally {
+          picker.$whenRendered = original;
+          picker.cancel();
+        }
+      }, action),
+      false,
+      "A page picker cancelled during rendering must stay closed",
+    );
+  assert.equal(
+    await page.evaluate(async () => {
+      const shell = document.querySelector("app-shell");
+      const prepare = shell.traffic.prepareRulePreview;
+      const rendered = shell.$whenRendered;
+      shell.traffic.prepareRulePreview = async () => null;
+      shell.$whenRendered = async () => {
+        await rendered.call(shell);
+        shell.shadowRoot.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+      };
+      try {
+        await shell.onPagePreview(
+          new CustomEvent("page-preview-request", {
+            detail: { ruleId: "facebook-post", mode: "captured" },
+          }),
+        );
+        return shell.previewPrerequisiteDialog.open;
+      } finally {
+        shell.traffic.prepareRulePreview = prepare;
+        shell.$whenRendered = rendered;
+        shell.closePreviewPrerequisite();
+      }
+    }),
+    false,
+    "A preview cancelled during rendering must not open its prerequisite dialog",
+  );
   await openPreview();
   await chooser.waitFor();
   assert.match(await chooser.textContent(), /No complete captured HTML pages/);

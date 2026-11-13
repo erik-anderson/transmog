@@ -69,7 +69,7 @@ export async function checkDebuggerNavigation(page, workspace, root) {
   // A poll can rebuild the tree before the browser delivers its queued toggle event.
   // Preserve both opening and closing through that exact event-order boundary.
   for (let attempt = 0; attempt < 2; attempt++) {
-    const toggled = await workspace.evaluate((element) => {
+    const toggled = await workspace.evaluate(async (element) => {
       const summary = [...element.shadowRoot.querySelectorAll(".sources summary")].find(
         (summary) => summary.textContent === "Extensions",
       );
@@ -78,7 +78,7 @@ export async function checkDebuggerNavigation(page, workspace, root) {
       summary.click();
       const clicked = details.open;
       element.updateNavigation();
-      element.$flushUpdates();
+      await element.$whenRendered();
       return { before, clicked, refreshed: details.open };
     });
     assert.notEqual(toggled.clicked, toggled.before, "The native summary click must toggle");
@@ -92,13 +92,13 @@ export async function checkDebuggerNavigation(page, workspace, root) {
   for (const key of ["Space", "Enter"]) {
     const before = await extensions.evaluate((summary) => summary.parentElement.open);
     await extensions.press(key);
-    const toggled = await workspace.evaluate((element) => {
+    const toggled = await workspace.evaluate(async (element) => {
       const details = [...element.shadowRoot.querySelectorAll(".sources summary")].find(
         (summary) => summary.textContent === "Extensions",
       ).parentElement;
       const clicked = details.open;
       element.updateNavigation();
-      element.$flushUpdates();
+      await element.$whenRendered();
       return { clicked, refreshed: details.open };
     });
     assert.notEqual(toggled.clicked, before, `${key} must retain native disclosure activation`);

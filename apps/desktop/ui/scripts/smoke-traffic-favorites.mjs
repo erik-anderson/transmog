@@ -23,7 +23,7 @@ export async function smokeTrafficFavorites({
       "Traffic Favorite operation did not finish",
     );
   const open = async (client) => {
-    await evaluate(client, 't.openFilterPicker("host");');
+    await evaluate(client, '(async()=>{await t.openFilterPicker("host");})()');
     await ready(client);
     await evaluate(client, "await t.loadFavorites();");
   };
@@ -52,7 +52,7 @@ export async function smokeTrafficFavorites({
   const reset = async (client, mode = "either", pick) => {
     await evaluate(
       client,
-      "if(!t.filterPicker.querySelector('.filter-custom').open)t.filterPicker.querySelector('.filter-custom > summary').click();t.clearPicker();",
+      "(async()=>{if(!t.filterPicker.querySelector('.filter-custom').open)t.filterPicker.querySelector('.filter-custom > summary').click();await t.clearPicker();})()",
     );
     await click(client, "Use saved term api.example.test");
     await click(client, "Use saved term *.domain.example");
@@ -129,7 +129,7 @@ export async function smokeTrafficFavorites({
         ),
         false,
       );
-      await evaluate(client, "t.closePicker();");
+      await evaluate(client, "(async()=>{await t.closePicker();})()");
     }
     return { restartPersistence: true, freshWindowUnrestricted: true };
   }
@@ -200,7 +200,7 @@ export async function smokeTrafficFavorites({
   assert.deepEqual(await evaluate(main, "return t.filterGroups;"), []);
   assert.equal(await evaluate(main, "return t.filterInput.value;"), "newer comparison");
   assert.equal(await evaluate(main, "return t.pickerOpen;"), true);
-  await evaluate(main, "t.discardPicker();");
+  await evaluate(main, "(async()=>{await t.discardPicker();})()");
   await open(main);
   await evaluate(
     main,
@@ -246,7 +246,7 @@ export async function smokeTrafficFavorites({
     );
     await click(client, "Pick observed host domain.example");
     await preview(client, 5);
-    await evaluate(client, "t.closePicker();");
+    await evaluate(client, "(async()=>{await t.closePicker();})()");
     assert.equal(await evaluate(client, "return t.filterDraftPending;"), true);
     await open(client);
     assert.equal(
@@ -287,7 +287,7 @@ export async function smokeTrafficFavorites({
     assert.ok(checkboxNames.includes("Pick observed host api.example.test"));
     await evaluate(
       client,
-      't.favoriteSearch.value="api";t.favoriteSearch.dispatchEvent(new Event("input"));t.$flushUpdates();t.favoriteSearch.focus();',
+      '(async()=>{t.favoriteSearch.value="api";t.favoriteSearch.dispatchEvent(new Event("input"));await t.$whenRendered();t.favoriteSearch.focus();})()',
     );
     await client.call("Input.dispatchKeyEvent", {
       type: "keyDown",
@@ -437,7 +437,10 @@ export async function smokeTrafficFavorites({
     );
     await preview(client, 5);
     await apply(client, 5);
-    await evaluate(client, "await t.clearFilters();t.openFilterPicker('method');");
+    await evaluate(
+      client,
+      "(async()=>{await t.clearFilters();await t.openFilterPicker('method');})()",
+    );
     await ready(client);
     assert.equal(
       await evaluate(
@@ -460,7 +463,7 @@ export async function smokeTrafficFavorites({
       't.observedSearch.value="other";t.observedSearch.dispatchEvent(new Event("input"));',
     );
     await preview(client, 3, 4);
-    await evaluate(client, "t.closePicker();await t.clearFilters();");
+    await evaluate(client, "(async()=>{await t.closePicker();await t.clearFilters();})()");
     await open(client);
     await click(client, "Pick observed host api.example.test");
     await evaluate(
@@ -477,14 +480,14 @@ export async function smokeTrafficFavorites({
     );
     assert.equal(await evaluate(client, "return t.filterDraftPending;"), false);
     await open(client);
-    await evaluate(client, "t.clearPicker();");
+    await evaluate(client, "(async()=>{await t.clearPicker();})()");
     await click(client, "Pick observed host domain.example");
     await evaluate(
       client,
-      "t.closePicker();[...t.getRootNode().querySelectorAll('.filter-chip-remove')].find(button=>button.getAttribute('aria-label').startsWith('Remove Host:')).click();",
+      "(async()=>{await t.closePicker();[...t.getRootNode().querySelectorAll('.filter-chip-remove')].find(button=>button.getAttribute('aria-label').startsWith('Remove Host:')).click();})()",
     );
     await ready(client);
-    await evaluate(client, "t.openFilterPicker('method');");
+    await evaluate(client, "(async()=>{await t.openFilterPicker('method');})()");
     await ready(client);
     await apply(client, 2);
     assert.deepEqual(
@@ -552,7 +555,7 @@ export async function smokeTrafficFavorites({
     }
     await evaluate(
       client,
-      "t.closePicker();await t.clearFilters();t.openFilterPicker('fetch-destination');",
+      "(async()=>{await t.closePicker();await t.clearFilters();await t.openFilterPicker('fetch-destination');})()",
     );
     await ready(client);
     assert.equal(
@@ -622,7 +625,7 @@ export async function smokeTrafficFavorites({
       ),
       false,
     );
-    await evaluate(client, "t.closePicker();await t.clearFilters();");
+    await evaluate(client, "(async()=>{await t.closePicker();await t.clearFilters();})()");
   }
   await open(main);
   await reset(main);

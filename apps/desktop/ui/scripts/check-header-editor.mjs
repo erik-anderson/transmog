@@ -66,6 +66,38 @@ export async function checkHeaderEditor(page, root) {
   assert.equal(await focused(name(2)), true);
 
   const eventsBeforeMode = await page.evaluate(() => globalThis.__headerEditorEvents.length);
+  assert.equal(
+    await editor.evaluate(async (element) => {
+      const render = element.$whenRendered;
+      let release, reached;
+      const ready = new Promise((resolve) => (reached = resolve));
+      const gate = new Promise((resolve) => (release = resolve));
+      element.$whenRendered = async () => {
+        await render.call(element);
+        reached();
+        await gate;
+      };
+      const outside = document.createElement("button");
+      outside.textContent = "Newer focus";
+      document.body.append(outside);
+      const pending = element.toggleMode();
+      try {
+        await ready;
+        outside.focus();
+        release();
+        await pending;
+        return document.activeElement === outside;
+      } finally {
+        release();
+        await pending;
+        element.$whenRendered = render;
+        outside.remove();
+        await element.toggleMode();
+      }
+    }),
+    true,
+    "Rendering header controls must preserve newer focus outside the app shadow tree",
+  );
   await editor.getByRole("button", { name: "Edit as text", exact: true }).click();
   const raw = editor.getByRole("textbox", { name: "Request headers as text", exact: true });
   assert.equal(await focused(raw), true);

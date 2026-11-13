@@ -91,6 +91,7 @@ import { checkConnectTunnels } from "./check-connect-tunnels.mjs";
 import { checkUserAgentOverrides } from "./check-user-agent-overrides.mjs";
 import { checkUserAgentPresets } from "./check-user-agent-presets.mjs";
 import { checkLoopback } from "./check-loopback.mjs";
+import { checkUpdateOwnership } from "./check-update-ownership.mjs";
 
 // Use the repository's existing, locked browser test installation.
 const { chromium } = createRequire(
@@ -126,7 +127,7 @@ const built = build({
   appDir: resolve(root, "src"),
   plugin: "webui",
   css: "link",
-  cssPublicBase: "/",
+  assetBase: "/",
   cssFileNameTemplate: "[name]-[hash].[ext]",
   projectionManifests: [resolve(root, "dist/webui-projection.json")],
 });
@@ -134,18 +135,23 @@ assert.deepEqual(built.warnings, []);
 const protocol = new Protocol(built.protocol, { plugin: "webui" });
 const renderHtml = (viewerMode = false) =>
   protocol
-    .render({
-      ...initial,
-      viewerMode,
-      language: "en",
-      pageTitle: "Transmog",
-      heading: "Inspect traffic without losing the thread",
-      lifecycleLabel: "Stopped",
-      lifecycleKind: "stopped",
-      listener: "Not listening",
-    })
+    .render(
+      {
+        ...initial,
+        cspNonce: "workspace-check",
+        viewerMode,
+        language: "en",
+        pageTitle: "Transmog",
+        heading: "Inspect traffic without losing the thread",
+        lifecycleLabel: "Stopped",
+        lifecycleKind: "stopped",
+        listener: "Not listening",
+      },
+      { nonce: "workspace-check" },
+    )
     .toString()
-    .replace(/<script(?=[\s>])/g, '<script nonce="workspace-check"');
+    // The Node buffered renderer does not forward nonce options to its native binding.
+    .replace(/<script(?![^>]*\bnonce=)(?=[\s>])/g, '<script nonce="workspace-check"');
 // Keep one build's bytes for the whole run, even if another workspace rebuilds dist.
 const resources = new Map(
   await Promise.all(
@@ -178,7 +184,7 @@ await page
   .grantPermissions(["clipboard-read", "clipboard-write"], { origin: "https://workspace.test" });
 const errors = [];
 const requests = [];
-page.on("pageerror", (error) => errors.push(error.stack ?? error.message));
+page.on("pageerror", (error) => errors.push(error.stack || `${error.name}: ${error.message}`));
 page.on("console", (message) => {
   if (message.type() === "error") errors.push(message.text());
 });
@@ -1964,6 +1970,10 @@ await page.addInitScript(
           }
           case "commit_demo_save": {
             state.demoCommitArgs = structuredClone(args);
+            if (state.deferDemoCommit) {
+              state.deferDemoCommit = false;
+              await new Promise((resolve) => (state.finishDemoCommit = resolve));
+            }
             if (state.demoCommitError) throw new Error(state.demoCommitError);
             const staged = state.demoPrepared?.[args.token];
             if (!staged) throw new Error("Prepared demo expired");
@@ -4929,6 +4939,63 @@ const cancelRule = async () => {
 const runBrowserCheck = createBrowserCheckRunner();
 
 try {
+  if (process.argv.includes("--trace-save-only")) {
+    await page.goto("https://workspace.test/");
+    await page.waitForFunction(() => document.querySelector("app-shell").traffic.queryLoaded);
+    await page.evaluate(() => document.querySelector("app-shell").traffic.showSaveTrace());
+    const dialog = page.locator(".trace-save-dialog");
+    await dialog.waitFor({ state: "visible" });
+    await page.waitForFunction(() => !document.querySelector("app-shell").traffic.exportReviewBusy);
+    await checkTraceSave(page, root, dialog);
+    assert.deepEqual(errors, []);
+    await browser.close();
+    process.stdout.write("Trace save ownership and progress verified.\n");
+    process.exit(0);
+  }
+  if (process.argv.includes("--response-save-only")) {
+    await page.goto("https://workspace.test/");
+    await page.waitForFunction(() => document.querySelector("app-shell").traffic.queryLoaded);
+    const result = await page.evaluate(async () => {
+      const shell = document.querySelector("app-shell");
+      await shell.activateView("automation");
+      const workspace = shell.automation;
+      await workspace.beginScratchAutoResponse();
+      for (const [name, value] of [
+        ["name", "Saved response ownership"],
+        ["url", "https://example.test/ownership"],
+        ["body", "Saved body"],
+      ]) {
+        const field = workspace.autoResponseForm.elements.namedItem(name);
+        field.value = value;
+        field.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      const [saved, duplicate] = await Promise.all([
+        workspace.saveAutoResponse(new Event("submit", { cancelable: true })),
+        workspace.saveAutoResponse(new Event("submit", { cancelable: true })),
+      ]);
+      return {
+        saved,
+        duplicate,
+        busy: workspace.savingAutoResponse,
+        existing: workspace.existingResponse,
+        dirty: workspace.draftDirty,
+        staging: workspace.stagingCollection,
+        saveOperation: workspace.saveOperation,
+        rules: workspace.rules.length,
+        error: workspace.autoResponseError,
+        message: workspace.automationText,
+      };
+    });
+    process.stdout.write(JSON.stringify(result) + "\n");
+    assert.equal(result.saved, true);
+    assert.equal(result.duplicate, false);
+    assert.equal(result.busy, false);
+    assert.equal(result.existing, true);
+    assert.equal(result.dirty, false);
+    assert.deepEqual(errors, []);
+    await browser.close();
+    process.exit(0);
+  }
   if (process.argv.includes("--inspector-layout-only")) {
     await checkInspectorLayout(page, root);
     assert.deepEqual(errors, []);
@@ -4942,6 +5009,13 @@ try {
     assert.deepEqual(errors, []);
     await browser.close();
     process.stdout.write("Header and Composer authoring checks passed.\n");
+    process.exit(0);
+  }
+  if (process.argv.includes("--update-ownership-only")) {
+    await checkUpdateOwnership(page);
+    assert.deepEqual(errors, []);
+    await browser.close();
+    process.stdout.write("Update cancellation and preference ownership verified.\n");
     process.exit(0);
   }
   if (process.argv.includes("--mcp-only")) {
@@ -5502,6 +5576,13 @@ try {
     await page.evaluate(() => customElements.get("automation-workspace") !== undefined),
     false,
     "Automation hydrated at startup",
+  );
+  assert.equal(
+    await page
+      .locator("automation-workspace, composer-workspace, breakpoint-workspace, capture-workspace")
+      .count(),
+    0,
+    "Secondary workspaces mounted before their definitions loaded",
   );
   if (process.env.TRANSMOG_STREAM_ONLY) {
     await checkStreams(page, root);
@@ -10846,6 +10927,7 @@ try {
   await runBrowserCheck(checkComparison, page, root);
   await runBrowserCheck(checkMcp, page, root);
   await runBrowserCheck(checkFormatConverter, page, root);
+  await runBrowserCheck(checkUpdateOwnership, page);
   await runBrowserCheck(checkPortableCases, page, root);
   await runBrowserCheck(checkIncidents, page, root);
   await runBrowserCheck(checkResponseFiles, page, root);

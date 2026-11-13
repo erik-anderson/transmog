@@ -85,6 +85,7 @@ export class HexViewer extends WebUIElement {
   private nativeTop = -1;
   private wheelRows = 0;
   private copyRevision = 0;
+  private menuEpoch = 0;
   private copying = false;
   private validatingUtf8 = false;
   private readonly viewerId = "hex-viewer-" + nextViewer++;
@@ -130,6 +131,9 @@ export class HexViewer extends WebUIElement {
       if (reset) {
         this.stopDrag();
         this.closeMenu(false);
+        if (this.offsetPopover?.matches(":popover-open")) {
+          this.offsetPopover.hidePopover();
+        }
         if (this.viewport) {
           this.viewport.scrollTop = 0;
         }
@@ -448,20 +452,20 @@ export class HexViewer extends WebUIElement {
     this.selectPointerByte();
   }
 
-  keyboard(event: KeyboardEvent): void {
+  async keyboard(event: KeyboardEvent): Promise<void> {
     if (!this.length || this.nativeSelection()) {
       return;
     }
     const control = event.ctrlKey || event.metaKey;
     if (control && event.key.toLowerCase() === "g") {
       event.preventDefault();
-      this.openOffset();
+      await this.openOffset();
       return;
     }
     if (control && event.key.toLowerCase() === "c") {
       event.preventDefault();
       if (event.altKey) {
-        this.openMenu(undefined, true);
+        await this.openMenu(undefined, true);
       } else {
         void this.copySelection("base64");
       }
@@ -474,7 +478,7 @@ export class HexViewer extends WebUIElement {
     }
     if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
       event.preventDefault();
-      this.openMenu();
+      await this.openMenu();
       return;
     }
     if (event.key === "Tab" && !control && !event.altKey) {
@@ -620,13 +624,19 @@ export class HexViewer extends WebUIElement {
       "Offset copied.",
     );
   }
-  openOffset(): void {
+  async openOffset(): Promise<void> {
     this.closeMenu(false);
+    const epoch = ++this.menuEpoch,
+      revision = this.copyRevision,
+      focused = (this.getRootNode() as Document | ShadowRoot).activeElement;
     this.offsetInput = this.hasCaret
       ? (BigInt(this.preview?.offset ?? 0) + BigInt(this.caret)).toString()
       : "0";
     this.offsetError = "";
-    this.$flushUpdates();
+    await this.$whenRendered();
+    if (!this.menuCurrent(epoch, revision, focused)) {
+      return;
+    }
     this.offsetField.value = this.offsetInput;
     this.offsetPopover.showPopover();
     this.offsetField.focus();
@@ -652,6 +662,7 @@ export class HexViewer extends WebUIElement {
       this.copyRevision++;
       this.describeSelection();
       this.revealCaret();
+      this.menuEpoch++;
       this.offsetPopover.hidePopover();
       this.viewport.focus({ preventScroll: true });
     } catch (error: unknown) {
@@ -662,6 +673,7 @@ export class HexViewer extends WebUIElement {
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
+      this.menuEpoch++;
       this.offsetPopover.hidePopover();
       this.viewport.focus({ preventScroll: true });
     }
@@ -678,7 +690,7 @@ export class HexViewer extends WebUIElement {
     }
   }
 
-  context(event: MouseEvent): void {
+  async context(event: MouseEvent): Promise<void> {
     const cell = (event.target as Element).closest<HTMLElement>("[data-byte]");
     if (!cell) {
       return;
@@ -692,13 +704,19 @@ export class HexViewer extends WebUIElement {
     }
     window.getSelection()?.removeAllRanges();
     this.viewport.focus({ preventScroll: true });
-    this.openMenu(event);
+    await this.openMenu(event);
   }
-  private openMenu(event?: MouseEvent, submenu = false): void {
+  private async openMenu(event?: MouseEvent, submenu = false): Promise<void> {
     if (!event) {
       this.revealCaret();
     }
-    this.$flushUpdates();
+    const epoch = ++this.menuEpoch,
+      revision = this.copyRevision,
+      focused = (this.getRootNode() as Document | ShadowRoot).activeElement;
+    await this.$whenRendered();
+    if (!this.menuCurrent(epoch, revision, focused)) {
+      return;
+    }
     const root = this.getRootNode() as Document | ShadowRoot;
     const cell =
       root.getElementById(this.activeCellId)?.getBoundingClientRect() ??
@@ -713,7 +731,10 @@ export class HexViewer extends WebUIElement {
     this.hexMenuY =
       Math.max(8, Math.min(event?.clientY ?? cell.bottom, window.innerHeight - 310)) + "px";
     this.copyMenuOpen = submenu;
-    this.$flushUpdates();
+    await this.$whenRendered();
+    if (!this.menuCurrent(epoch, revision, focused)) {
+      return;
+    }
     this.contextMenu.showPopover();
     void this.validateUtf8();
     (submenu ? this.copyMenu : this.contextMenu)
@@ -744,17 +765,35 @@ export class HexViewer extends WebUIElement {
       this.validatingUtf8 = false;
     }
   }
-  showCopyMenu(focus = false): void {
+  async showCopyMenu(focus = false): Promise<void> {
+    const epoch = ++this.menuEpoch,
+      revision = this.copyRevision,
+      focused = (this.getRootNode() as Document | ShadowRoot).activeElement;
     this.copyMenuOpen = true;
-    this.$flushUpdates();
-    if (focus) {
+    await this.$whenRendered();
+    if (
+      focus &&
+      this.menuCurrent(epoch, revision, focused) &&
+      this.copyMenuOpen &&
+      this.contextMenu.matches(":popover-open")
+    ) {
       this.copyMenu.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus();
     }
   }
   hideCopyMenu(): void {
+    this.menuEpoch++;
     this.copyMenuOpen = false;
   }
+  private menuCurrent(epoch: number, revision: number, focused: Element | null): boolean {
+    return (
+      this.isConnected &&
+      epoch === this.menuEpoch &&
+      revision === this.copyRevision &&
+      (this.getRootNode() as Document | ShadowRoot).activeElement === focused
+    );
+  }
   private closeMenu(restoreFocus = true): void {
+    this.menuEpoch++;
     this.copyMenuOpen = false;
     if (this.contextMenu?.matches(":popover-open")) {
       this.contextMenu.hidePopover();
@@ -763,7 +802,7 @@ export class HexViewer extends WebUIElement {
       }
     }
   }
-  menuKeyboard(event: KeyboardEvent): void {
+  async menuKeyboard(event: KeyboardEvent): Promise<void> {
     const target = event.target as HTMLButtonElement;
     const inSubmenu = this.copyMenu.contains(target);
     if (event.key === "Escape" || (inSubmenu && event.key === "ArrowLeft")) {
@@ -779,7 +818,7 @@ export class HexViewer extends WebUIElement {
     }
     if (target === this.copyAsButton && ["ArrowRight", "Enter", " "].includes(event.key)) {
       event.preventDefault();
-      this.showCopyMenu(true);
+      await this.showCopyMenu(true);
       return;
     }
     if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {

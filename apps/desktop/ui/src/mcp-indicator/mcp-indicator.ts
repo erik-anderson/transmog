@@ -202,8 +202,9 @@ export class McpIndicator extends WorkspaceElement {
     await this.change("mcp_end_session", { sessionId });
   }
   async capturePassword(event: Event, sessionId: string, operationId: string): Promise<void> {
+    const eventTarget = event?.currentTarget;
     event.preventDefault();
-    const form = event.currentTarget as HTMLFormElement;
+    const form = eventTarget as HTMLFormElement;
     const password = String(new FormData(form).get("password") ?? "");
     form.reset();
     await this.change("mcp_capture_password", { sessionId, operationId, password });

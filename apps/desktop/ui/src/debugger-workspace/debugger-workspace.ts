@@ -1,4 +1,5 @@
 import "../pane-divider/pane-divider.js";
+import { captureFocus, captureRenderScope } from "../rendering.js";
 import "./debug-value.js";
 import "./console-values.js";
 import {
@@ -348,7 +349,8 @@ export class DebuggerWorkspace extends WebUIElement {
       void this.saveLayout();
     }
   }
-  toggleSidebar(side: string): void {
+  async toggleSidebar(side: string): Promise<void> {
+    const focus = captureFocus(this);
     if (this.debuggerCompact) {
       this.debuggerCompactPane = this.debuggerCompactPane === side ? "source" : side;
     } else if (side === "sources") {
@@ -356,24 +358,39 @@ export class DebuggerWorkspace extends WebUIElement {
     } else {
       this.debuggerInspectorVisible = !this.debuggerInspectorVisible;
     }
-    this.$flushUpdates();
-    if (this.debuggerCompactPane === "source") {
+    void this.saveLayout();
+    const current = captureRenderScope(this, () => [
+      this.generation,
+      this.debuggerCompactPane,
+      this.debuggerSourcesVisible,
+      this.debuggerInspectorVisible,
+    ]);
+    await this.$whenRendered();
+    if (current() && focus() && this.debuggerCompactPane === "source") {
       this.editor?.focus();
     }
-    void this.saveLayout();
   }
   showCode(): void {
     this.debuggerCompactPane = "source";
   }
-  toggleConsole(): void {
+  async toggleConsole(): Promise<void> {
+    const focus = captureFocus(this);
     this.debuggerConsoleVisible = !this.debuggerConsoleVisible;
-    this.$flushUpdates();
+    void this.saveLayout();
+    const current = captureRenderScope(this, () => [
+      this.generation,
+      this.debuggerConsoleVisible,
+      this.debuggerConsoleContext,
+    ]);
+    await this.$whenRendered();
+    if (!current() || !focus()) {
+      return;
+    }
     if (this.debuggerConsoleVisible) {
       this.consolePrompt.focus();
     } else {
       this.editor?.focus();
     }
-    void this.saveLayout();
   }
   private updateNavigation(): void {
     const selected = this.selected ? sourceKey(this.selected) : "";
@@ -414,6 +431,7 @@ export class DebuggerWorkspace extends WebUIElement {
     }
   }
   async closeTab(key: string): Promise<void> {
+    const focus = captureFocus(this);
     const index = this.debuggerTabs.findIndex((tab) => tab.key === key);
     this.debuggerTabs = this.debuggerTabs.filter((tab) => tab.key !== key);
     if (this.selected && sourceKey(this.selected) === key) {
@@ -432,7 +450,15 @@ export class DebuggerWorkspace extends WebUIElement {
         this.updateNavigation();
       }
     }
-    this.$flushUpdates();
+    const current = captureRenderScope(this, () => [
+      this.generation,
+      this.sourceGeneration,
+      this.selected,
+    ]);
+    await this.$whenRendered();
+    if (!current() || !focus()) {
+      return;
+    }
     const selected = this.debuggerTabs.find((tab) => tab.selected);
     if (selected) {
       this.shadowRoot?.getElementById(`source-tab-${selected.key}`)?.focus();
@@ -544,7 +570,7 @@ export class DebuggerWorkspace extends WebUIElement {
     this.debuggerNavigationResults = found.results;
     this.debuggerNavigationStatus = `${found.results.length} results${found.limited ? " · some sources or matches omitted" : ""}`;
   }
-  navigationKey(event: KeyboardEvent): void {
+  async navigationKey(event: KeyboardEvent): Promise<void> {
     if (event.isComposing) {
       return;
     }
@@ -563,7 +589,15 @@ export class DebuggerWorkspace extends WebUIElement {
         ...result,
         selected: index === next,
       }));
-      this.$flushUpdates();
+      const current = captureRenderScope(this, () => [
+        this.generation,
+        this.debuggerNavigationResults,
+        this.navigationDialog.open,
+      ]);
+      await this.$whenRendered();
+      if (!current()) {
+        return;
+      }
       const selected = this.debuggerNavigationResults[next];
       if (selected) {
         this.shadowRoot
@@ -700,7 +734,8 @@ export class DebuggerWorkspace extends WebUIElement {
       this.debuggerError = describeError(error);
     }
   }
-  focusScratch(): void {
+  async focusScratch(): Promise<void> {
+    const focus = captureFocus(this);
     if (this.debuggerConsoleContext !== "scratch") {
       this.consoleDrafts.set(this.debuggerConsoleContext, {
         input: this.debuggerInput,
@@ -714,10 +749,18 @@ export class DebuggerWorkspace extends WebUIElement {
     this.debuggerConsoleVisible = true;
     this.closeCompletions();
     this.updateConsoleState();
-    this.$flushUpdates();
-    this.consolePrompt.focus();
     void this.saveLayout();
     this.rememberView();
+    const current = captureRenderScope(this, () => [
+      this.generation,
+      this.consoleRevision,
+      this.debuggerConsoleContext,
+      this.debuggerConsoleVisible,
+    ]);
+    await this.$whenRendered();
+    if (current() && focus()) {
+      this.consolePrompt.focus();
+    }
   }
   private async ensureScratch(): Promise<DebugSessionInfo> {
     if (this.scratch && !this.views.get(this.scratch.session)?.stream.closed) {
@@ -830,7 +873,9 @@ export class DebuggerWorkspace extends WebUIElement {
       this.debuggerScratchBusy = false;
       this.updateConsoleState();
       this.rememberView();
-      this.$flushUpdates();
+      if (this.isConnected) {
+        await this.$whenRendered();
+      }
       if (
         this.isConnected &&
         this.debuggerConsoleContext === "scratch" &&
@@ -1072,11 +1117,11 @@ export class DebuggerWorkspace extends WebUIElement {
   async removeWatch(id: number): Promise<void> {
     if (await this.saveWatches(this.debuggerWatches.filter((watch) => watch.id !== id))) {
       if (this.debuggerWatchEditing === id) {
-        this.cancelWatchEdit();
+        await this.cancelWatchEdit();
       }
     }
   }
-  editWatch(id: number): void {
+  async editWatch(id: number): Promise<void> {
     if (this.debuggerWatchSaving) {
       return;
     }
@@ -1087,7 +1132,16 @@ export class DebuggerWorkspace extends WebUIElement {
     this.debuggerWatchEditing = id;
     this.debuggerWatchDraft = watch.expression;
     this.rememberView();
-    this.$flushUpdates();
+    const focus = captureFocus(this),
+      current = captureRenderScope(this, () => [
+        this.generation,
+        this.debuggerWatchEditing,
+        this.debuggerWatchDraft,
+      ]);
+    await this.$whenRendered();
+    if (!current() || !focus()) {
+      return;
+    }
     const input = this.shadowRoot?.querySelector<HTMLTextAreaElement>(".watch-edit textarea");
     input?.focus();
     input?.select();
@@ -1096,7 +1150,7 @@ export class DebuggerWorkspace extends WebUIElement {
     this.debuggerWatchDraft = (event.target as HTMLTextAreaElement).value;
     this.rememberView();
   }
-  cancelWatchEdit(): void {
+  async cancelWatchEdit(): Promise<void> {
     if (this.debuggerWatchSaving) {
       return;
     }
@@ -1104,14 +1158,18 @@ export class DebuggerWorkspace extends WebUIElement {
     this.debuggerWatchEditing = 0;
     this.debuggerWatchDraft = "";
     this.rememberView();
-    this.$flushUpdates();
-    this.shadowRoot?.querySelector<HTMLButtonElement>(`[data-watch-edit="${id}"]`)?.focus();
+    const focus = captureFocus(this),
+      current = captureRenderScope(this, () => [this.generation, this.debuggerWatchEditing]);
+    await this.$whenRendered();
+    if (current() && focus()) {
+      this.shadowRoot?.querySelector<HTMLButtonElement>(`[data-watch-edit="${id}"]`)?.focus();
+    }
   }
-  watchEditKey(event: KeyboardEvent): void {
+  async watchEditKey(event: KeyboardEvent): Promise<void> {
     if (event.key === "Escape" && !event.isComposing) {
       event.preventDefault();
       event.stopPropagation();
-      this.cancelWatchEdit();
+      await this.cancelWatchEdit();
     } else if (
       event.key === "Enter" &&
       !event.shiftKey &&
@@ -1138,7 +1196,7 @@ export class DebuggerWorkspace extends WebUIElement {
       watch.id === id ? { id, expression, output: "Not paused" } : watch,
     );
     if (await this.saveWatches(watches)) {
-      this.cancelWatchEdit();
+      await this.cancelWatchEdit();
     }
   }
   watchDisclosure(event: Event): void {
@@ -1157,6 +1215,7 @@ export class DebuggerWorkspace extends WebUIElement {
     return this.model.getValueInRange(selection).trim();
   }
   private async watchSelection(): Promise<void> {
+    const focus = captureFocus(this);
     const expression = this.sourceSelection(1024);
     if (!expression) {
       return;
@@ -1169,7 +1228,15 @@ export class DebuggerWorkspace extends WebUIElement {
     void this.saveLayout();
     if (await this.addWatchExpression(expression)) {
       const watch = this.debuggerWatches.find((watch) => watch.expression === expression);
-      this.$flushUpdates();
+      const current = captureRenderScope(this, () => [
+        this.generation,
+        this.debuggerCompactPane,
+        this.debuggerWatchOpen,
+      ]);
+      await this.$whenRendered();
+      if (!current() || !focus()) {
+        return;
+      }
       this.shadowRoot
         ?.querySelector(`[data-watch-edit="${watch?.id}"]`)
         ?.scrollIntoView({ block: "nearest" });
@@ -1181,7 +1248,6 @@ export class DebuggerWorkspace extends WebUIElement {
       return;
     }
     this.debuggerConsoleVisible = true;
-    this.$flushUpdates();
     void this.saveLayout();
     await this.evaluate(expression);
   }
@@ -1338,19 +1404,26 @@ export class DebuggerWorkspace extends WebUIElement {
       ? `completion-${this.debuggerCompletions[0].name}`
       : "";
   }
-  acceptCompletion(name: string): void {
+  async acceptCompletion(name: string): Promise<void> {
+    const focus = captureFocus(this),
+      cursor = this.completionStart + name.length;
     this.debuggerInput =
       this.debuggerInput.slice(0, this.completionStart) +
       name +
       this.debuggerInput.slice(this.completionEnd);
     this.closeCompletions();
-    this.$flushUpdates();
-    this.consolePrompt.focus();
-    this.consolePrompt.setSelectionRange(
-      this.completionStart + name.length,
-      this.completionStart + name.length,
-    );
     this.rememberView();
+    const current = captureRenderScope(this, () => [
+      this.generation,
+      this.consoleRevision,
+      this.debuggerConsoleContext,
+      this.debuggerInput,
+    ]);
+    await this.$whenRendered();
+    if (current() && focus()) {
+      this.consolePrompt.focus();
+      this.consolePrompt.setSelectionRange(cursor, cursor);
+    }
   }
   completionMouse(event: MouseEvent): void {
     event.preventDefault();
@@ -1439,7 +1512,8 @@ export class DebuggerWorkspace extends WebUIElement {
     this.toggleUnlisten = unlisten;
   }
   sourceHost!: HTMLElement;
-  sourceStyles!: HTMLLinkElement;
+  @observable debuggerEditorLoaded = false;
+  sourceStyles?: HTMLLinkElement;
   conditionDialog!: HTMLDialogElement;
   private monaco: typeof MonacoApi | null = null;
   private editor: Monaco.editor.IStandaloneCodeEditor | null = null;
@@ -1484,7 +1558,8 @@ export class DebuggerWorkspace extends WebUIElement {
     point?: Point | undefined;
   };
   private states = new Map<string, Monaco.editor.ICodeEditorViewState | null>();
-  private readonly shortcutListener = (event: KeyboardEvent): void => this.keyboard(event);
+  private readonly shortcutListener = async (event: KeyboardEvent): Promise<void> =>
+    await this.keyboard(event);
   private readonly toggleShortcut = (event: KeyboardEvent): void => {
     debuggerToggleKey(event, () => this.place("closed"));
   };
@@ -1517,6 +1592,11 @@ export class DebuggerWorkspace extends WebUIElement {
   }
   private async createEditor(): Promise<void> {
     const version = this.generation;
+    this.debuggerEditorLoaded = true;
+    await this.$whenRendered();
+    if (!this.isConnected || version !== this.generation || !this.sourceStyles) {
+      return;
+    }
     const { monaco } = await loadMonaco();
     await waitForStyles(this.sourceStyles);
     if (!this.isConnected || version !== this.generation) {
@@ -1706,7 +1786,10 @@ export class DebuggerWorkspace extends WebUIElement {
             ? [{ key, file, label: file.path.split("/").at(-1)!, selected: false, tabIndex: -1 }]
             : [];
         });
-        this.$flushUpdates();
+        await this.$whenRendered();
+        if (!this.isConnected || version !== this.generation) {
+          return;
+        }
         if (saved.diagnostics) {
           this.diagnostics?.restoreView(saved.diagnostics);
         }
@@ -1736,9 +1819,10 @@ export class DebuggerWorkspace extends WebUIElement {
     } finally {
       if (this.isConnected && version === this.generation) {
         const restoreFocus = this.activeElement() === focus;
+        const unchangedFocus = captureFocus(this);
         this.debuggerTransition = "";
-        this.$flushUpdates();
-        if (restoreFocus) {
+        await this.$whenRendered();
+        if (restoreFocus && this.isConnected && version === this.generation && unchangedFocus()) {
           if (this.editor) {
             this.editor.focus();
           } else if (this.debuggerConsoleVisible) {
@@ -2168,7 +2252,14 @@ export class DebuggerWorkspace extends WebUIElement {
       }
       await this.loadPositions();
       this.renderPoints();
-      this.$flushUpdates();
+      await this.$whenRendered();
+      if (
+        !this.isConnected ||
+        generation !== this.generation ||
+        consoleRevision !== this.consoleRevision
+      ) {
+        return;
+      }
       this.debuggerClosed = this.views.get(this.debuggerTarget)?.stream.closed ?? true;
       const selectedStream = this.views.get(this.debuggerTarget)?.stream;
       const request = this.debuggerPaused ? this.views.get(this.debuggerTarget)?.request : null;
@@ -2239,7 +2330,14 @@ export class DebuggerWorkspace extends WebUIElement {
         mode.includes("visualizer") ||
         mode.includes("Visualizer");
       this.trimConsole();
-      this.$flushUpdates();
+      await this.$whenRendered();
+      if (
+        !this.isConnected ||
+        generation !== this.generation ||
+        consoleRevision !== this.consoleRevision
+      ) {
+        return;
+      }
       if (this.pendingConsoleScroll !== null) {
         this.consoleOutput.scrollTop = this.pendingConsoleScroll;
         this.pendingConsoleScroll = null;
@@ -2248,7 +2346,7 @@ export class DebuggerWorkspace extends WebUIElement {
       }
       this.rememberView();
     } catch (error) {
-      if (this.isConnected) {
+      if (this.isConnected && generation === this.generation) {
         this.debuggerError = describeError(error);
       }
     } finally {
@@ -2280,7 +2378,7 @@ export class DebuggerWorkspace extends WebUIElement {
       if (!this.editor) {
         this.debuggerCompactPane = "source";
         this.debuggerSourceLoading = true;
-        this.$flushUpdates();
+        await this.$whenRendered();
       }
       await this.ensureEditor();
       if (
@@ -2334,7 +2432,15 @@ export class DebuggerWorkspace extends WebUIElement {
         return false;
       }
       this.renderPoints();
-      this.$flushUpdates();
+      await this.$whenRendered();
+      if (
+        !this.isConnected ||
+        generation !== this.sourceGeneration ||
+        this.selected?.id !== file.id ||
+        this.selected.artifact !== file.artifact
+      ) {
+        return false;
+      }
       this.shadowRoot
         ?.getElementById(`source-tab-${key}`)
         ?.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -2348,7 +2454,7 @@ export class DebuggerWorkspace extends WebUIElement {
     } finally {
       if (this.isConnected && generation === this.sourceGeneration) {
         this.debuggerSourceLoading = false;
-        this.$flushUpdates();
+        await this.$whenRendered();
       }
     }
   }
@@ -3211,7 +3317,7 @@ export class DebuggerWorkspace extends WebUIElement {
       }
       if (event.key === "Tab") {
         event.preventDefault();
-        this.acceptCompletion(this.debuggerCompletions[this.debuggerCompletionIndex]!.name);
+        await this.acceptCompletion(this.debuggerCompletions[this.debuggerCompletionIndex]!.name);
         return;
       }
     }
@@ -3237,9 +3343,18 @@ export class DebuggerWorkspace extends WebUIElement {
           event.key === "ArrowUp" ? -1 : 1,
           this.debuggerInput,
         );
-        this.$flushUpdates();
-        prompt.setSelectionRange(prompt.value.length, prompt.value.length);
+        const focus = captureFocus(this),
+          current = captureRenderScope(this, () => [
+            this.generation,
+            this.consoleRevision,
+            this.debuggerConsoleContext,
+            this.debuggerInput,
+          ]);
         this.rememberView();
+        await this.$whenRendered();
+        if (current() && focus()) {
+          prompt.setSelectionRange(prompt.value.length, prompt.value.length);
+        }
         return;
       }
     }
@@ -3331,8 +3446,7 @@ export class DebuggerWorkspace extends WebUIElement {
       },
     ];
     this.trimConsole();
-    this.$flushUpdates();
-    this.consoleOutput.scrollTop = this.consoleOutput.scrollHeight;
+    const scrollTop = this.consoleOutput.scrollTop;
     let operation: Promise<number> | null = null;
     try {
       operation = invoke<number>("workspace_debug_command", {
@@ -3411,6 +3525,18 @@ export class DebuggerWorkspace extends WebUIElement {
         this.evaluationContext = null;
       }
       this.rememberView();
+      if (this.isConnected) {
+        await this.$whenRendered();
+      }
+      if (
+        this.isConnected &&
+        generation === this.generation &&
+        revision === this.consoleRevision &&
+        this.debuggerConsoleContext === context &&
+        this.consoleOutput.scrollTop === scrollTop
+      ) {
+        this.consoleOutput.scrollTop = this.consoleOutput.scrollHeight;
+      }
     }
   }
   private snapshotView(): SavedView {
@@ -3511,26 +3637,26 @@ export class DebuggerWorkspace extends WebUIElement {
         this.rememberedKey = "";
       });
   }
+  private placementRevision = 0;
   async place(placement: string): Promise<void> {
     if (placement !== "closed" && this.debuggerTransition) {
       return;
     }
+    const revision = ++this.placementRevision;
     this.debuggerTransition =
       placement === "closed"
         ? "Closing debugger…"
         : this.valueEditOperation
           ? "Applying value before moving debugger…"
           : "Moving debugger…";
-    this.$flushUpdates();
     try {
       if (placement !== "closed" && this.valueEditOperation) {
         // Continue polling until the edit is confirmed; only then transfer its draft/result.
         await this.valueEditOperation;
-        if (!this.isConnected) {
+        if (!this.isConnected || revision !== this.placementRevision) {
           return;
         }
         this.debuggerTransition = "Moving debugger…";
-        this.$flushUpdates();
       }
       await this.pointEdits;
       await this.watchEdit;
@@ -3545,11 +3671,16 @@ export class DebuggerWorkspace extends WebUIElement {
         }
       }
       await this.rememberedView;
+      if (!this.isConnected || revision !== this.placementRevision) {
+        return;
+      }
       const viewState = this.snapshotView();
       await invoke("place_debugger", { placement, viewState });
     } catch (error) {
-      this.debuggerTransition = "";
-      this.debuggerError = describeError(error);
+      if (this.isConnected && revision === this.placementRevision) {
+        this.debuggerTransition = "";
+        this.debuggerError = describeError(error);
+      }
     }
   }
   private addEditorAction(action: Monaco.editor.IActionDescriptor): void {
@@ -3557,7 +3688,7 @@ export class DebuggerWorkspace extends WebUIElement {
       this.editorRegistrations.push(this.editor.addAction(action));
     }
   }
-  keyboard(event: KeyboardEvent): void {
+  async keyboard(event: KeyboardEvent): Promise<void> {
     if (event.composedPath().some((node) => node instanceof HTMLDialogElement && node.open)) {
       return;
     }
@@ -3594,7 +3725,7 @@ export class DebuggerWorkspace extends WebUIElement {
         .composedPath()
         .some((node) => node instanceof HTMLFormElement && node.classList.contains("watch-edit"))
     ) {
-      this.watchEditKey(event);
+      await this.watchEditKey(event);
       return;
     }
     if (event.key === "Escape" && this.debuggerCompletions.length && !event.isComposing) {
@@ -3632,7 +3763,7 @@ export class DebuggerWorkspace extends WebUIElement {
       }
       if (event.key === "Escape" && event.eventPhase !== Event.CAPTURING_PHASE) {
         event.preventDefault();
-        this.toggleConsole();
+        await this.toggleConsole();
         return;
       }
     }

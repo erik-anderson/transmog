@@ -24,7 +24,7 @@ Transmog includes the following third-party software.
 | async-broadcast | 0.7.2 | MIT OR Apache-2.0 | https://github.com/smol-rs/async-broadcast |
 | async-channel | 2.5.0 | Apache-2.0 OR MIT | https://github.com/smol-rs/async-channel |
 | async-compression | 0.4.51 | MIT OR Apache-2.0 | https://github.com/Nullus157/async-compression |
-| async-executor | 1.14.0 | Apache-2.0 OR MIT | https://github.com/smol-rs/async-executor |
+| async-executor | 1.14.1 | Apache-2.0 OR MIT | https://github.com/smol-rs/async-executor |
 | async-io | 2.6.0 | Apache-2.0 OR MIT | https://github.com/smol-rs/async-io |
 | async-lock | 3.4.2 | Apache-2.0 OR MIT | https://github.com/smol-rs/async-lock |
 | async-process | 2.5.0 | Apache-2.0 OR MIT | https://github.com/smol-rs/async-process |
@@ -56,8 +56,8 @@ Transmog includes the following third-party software.
 | blocking | 1.7.0 | Apache-2.0 OR MIT | https://github.com/smol-rs/blocking |
 | boring | 5.3.0 | Apache-2.0 | https://github.com/cloudflare/boring/tree/2bea8245d9b21776bc9f767b4e82dc2a78a5a262 |
 | boring-sys | 5.3.0 | MIT | https://github.com/cloudflare/boring/tree/2bea8245d9b21776bc9f767b4e82dc2a78a5a262 |
-| brotli | 9.0.0 | BSD-3-Clause AND MIT | https://github.com/dropbox/rust-brotli |
-| brotli-decompressor | 6.0.1 | BSD-3-Clause/MIT | https://github.com/dropbox/rust-brotli-decompressor |
+| brotli | 9.1.1 | BSD-3-Clause AND MIT | https://github.com/dropbox/rust-brotli |
+| brotli-decompressor | 6.3.1 | BSD-3-Clause/MIT | https://github.com/dropbox/rust-brotli-decompressor |
 | bs58 | 0.5.1 | MIT/Apache-2.0 | https://github.com/Nullus157/bs58-rs |
 | bumpalo | 3.20.3 | MIT OR Apache-2.0 | https://github.com/fitzgen/bumpalo |
 | bytemuck | 1.25.2 | Zlib OR Apache-2.0 OR MIT | https://github.com/Lokathor/bytemuck |
@@ -300,14 +300,14 @@ Transmog includes the following third-party software.
 | matchers | 0.2.0 | MIT | https://github.com/hawkw/matchers |
 | memchr | 2.8.3 | Unlicense OR MIT | https://github.com/BurntSushi/memchr |
 | memoffset | 0.9.1 | MIT | https://github.com/Gilnaa/memoffset |
-| microsoft-webui | 3.0.4 | MIT | https://github.com/microsoft/webui |
-| microsoft-webui-discovery | 3.0.4 | MIT | https://github.com/microsoft/webui |
-| microsoft-webui-expressions | 3.0.4 | MIT | https://github.com/microsoft/webui |
-| microsoft-webui-handler | 3.0.4 | MIT | https://github.com/microsoft/webui |
-| microsoft-webui-parser | 3.0.4 | MIT | https://github.com/microsoft/webui |
-| microsoft-webui-protocol | 3.0.4 | MIT | https://github.com/microsoft/webui |
-| microsoft-webui-state | 3.0.4 | MIT | https://github.com/microsoft/webui |
-| microsoft-webui-tokens | 3.0.4 | MIT | https://github.com/microsoft/webui |
+| microsoft-webui | 3.1.1 | MIT | https://github.com/microsoft/webui |
+| microsoft-webui-discovery | 3.1.1 | MIT | https://github.com/microsoft/webui |
+| microsoft-webui-expressions | 3.1.1 | MIT | https://github.com/microsoft/webui |
+| microsoft-webui-handler | 3.1.1 | MIT | https://github.com/microsoft/webui |
+| microsoft-webui-parser | 3.1.1 | MIT | https://github.com/microsoft/webui |
+| microsoft-webui-protocol | 3.1.1 | MIT | https://github.com/microsoft/webui |
+| microsoft-webui-state | 3.1.1 | MIT | https://github.com/microsoft/webui |
+| microsoft-webui-tokens | 3.1.1 | MIT | https://github.com/microsoft/webui |
 | mime | 0.3.17 | MIT OR Apache-2.0 | https://github.com/hyperium/mime |
 | minimal-lexical | 0.2.1 | MIT/Apache-2.0 | https://github.com/Alexhuszagh/minimal-lexical |
 | minisign-verify | 0.3.0 | MIT | https://github.com/jedisct1/rust-minisign-verify |
@@ -437,13 +437,13 @@ Transmog includes the following third-party software.
 | resolv-conf | 0.7.6 | MIT OR Apache-2.0 | https://github.com/hickory-dns/resolv-conf |
 | rfd | 0.17.2 | MIT | https://github.com/PolyMeilex/rfd |
 | ring | 0.17.14 | Apache-2.0 AND ISC | https://github.com/briansmith/ring |
-| rmcp | 3.6.0 | Apache-2.0 | https://github.com/modelcontextprotocol/rust-sdk/ |
+| rmcp | 3.9.0 | Apache-2.0 | https://github.com/modelcontextprotocol/rust-sdk/ |
 | rpassword | 7.5.4 | Apache-2.0 | https://github.com/conradkleinespel/rpassword |
 | rtoolbox | 0.0.6 | Apache-2.0 | https://github.com/conradkleinespel/rtoolbox |
 | rustc_version | 0.4.1 | MIT OR Apache-2.0 | https://github.com/djc/rustc-version-rs |
 | rustc-hash | 2.1.3 | Apache-2.0 OR MIT | https://github.com/rust-lang/rustc-hash |
 | rustix | 0.38.44 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | https://github.com/bytecodealliance/rustix |
-| rustix | 1.1.5 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | https://github.com/bytecodealliance/rustix |
+| rustix | 1.1.6 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | https://github.com/bytecodealliance/rustix |
 | rustls | 0.23.46 | Apache-2.0 OR ISC OR MIT | https://github.com/rustls/rustls |
 | rustls-native-certs | 0.8.5 | Apache-2.0 OR ISC OR MIT | https://github.com/rustls/rustls-native-certs |
 | rustls-pki-types | 1.15.1 | MIT OR Apache-2.0 | https://github.com/rustls/pki-types |
@@ -733,13 +733,13 @@ The registry archives below are vendored with local patches. Original license an
 | hyper | 2c3e324da4c95177d6291d4c8730197c0d1822f8a9766814a4a44fa5ab797c9c | [third_party/rust-transport/patches/hyper.patch](third_party/rust-transport/patches/hyper.patch) | 2e736f88ed51aea63ffc14a48488e66b7bb4bc12476c0208b234cd4729f21113 |
 | quiche | 52b35a721a2a56797347929745fa783fc99e680d9484b80324ce40106b75493a | [third_party/rust-transport/patches/quiche.patch](third_party/rust-transport/patches/quiche.patch) | eda5505fa0c32aab58a1f79606ef7c5b5693b33e49321d6a5ca2d4d488a36484 |
 | swc_ecma_parser | a032f869f6690d4eddd6e67757c8d849f2c8219d8c5f3bb05a7ec8b456867642 | [third_party/swc-ecma-parser/parser.patch](third_party/swc-ecma-parser/parser.patch) | 7fb96a5ca82d3c6398819742d37a012a3777182bf3b7e00f331d21608dda9d1e |
-| v8 | a10fe1a92da5c32c7c7f838ce36c0ccfcfd5edf0865b58bdde820aa64cea9888 | [third_party/rusty-v8/bindings.patch](third_party/rusty-v8/bindings.patch) | 87e0cba545f10c6f24ffd93d4084e978c8af3590ca5984e19a4f8bbde0d75d71 |
+| v8 | a10fe1a92da5c32c7c7f838ce36c0ccfcfd5edf0865b58bdde820aa64cea9888 | [third_party/rusty-v8/bindings.patch](third_party/rusty-v8/bindings.patch) | 6734d530ab22d1e843b5e5e7ca69ca528cef19c68f1f77a24df34b14a95a06c6 |
 
 ## Desktop npm production packages
 
 | Package | Version | License expression | Source |
 |---|---:|---|---|
-| @microsoft/webui-framework | 3.0.4 | MIT | https://registry.npmjs.org/@microsoft/webui-framework/-/webui-framework-3.0.4.tgz |
+| @microsoft/webui-framework | 3.1.1 | MIT | https://registry.npmjs.org/@microsoft/webui-framework/-/webui-framework-3.1.1.tgz |
 | @tauri-apps/api | 2.12.4 | Apache-2.0 OR MIT | https://registry.npmjs.org/@tauri-apps/api/-/api-2.12.4.tgz |
 | @types/trusted-types | 2.0.7 | MIT | https://registry.npmjs.org/@types/trusted-types/-/trusted-types-2.0.7.tgz |
 | dompurify | 3.4.17 | (MPL-2.0 OR Apache-2.0) | https://registry.npmjs.org/dompurify/-/dompurify-3.4.17.tgz |

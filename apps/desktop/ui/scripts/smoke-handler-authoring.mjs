@@ -25,7 +25,7 @@ export async function smokeHandlerAuthoring(call, evaluate, editorPath, screensh
               : "";
         const off = await evaluate(`(async()=>{
           const e=${editorPath}; e.language=${JSON.stringify(language)}; e.replaceSource(${JSON.stringify(existingImports)},e.language);
-          await e.chooseHandler(${JSON.stringify(name)}); await e.refreshSourceAnalysis(); e.$flushUpdates();
+          await e.chooseHandler(${JSON.stringify(name)}); await e.refreshSourceAnalysis(); await e.$whenRendered();
           e.testMode='callback'; e.scriptTestHandler.value=${JSON.stringify(name)};
           e.scriptForm.elements.namedItem('readBodies').checked=true;
           e.scriptForm.elements.namedItem('writeBody').checked=true;
@@ -105,7 +105,7 @@ export async function smokeHandlerAuthoring(call, evaluate, editorPath, screensh
     return results;
   } finally {
     await evaluate(
-      `(()=>{const e=${editorPath};const prior=${JSON.stringify(prior)};e.applyDraft(prior.draft);e.testMode=prior.mode;e.scriptTestBody.value=prior.body;e.scriptTestHeaders.value=prior.request;e.scriptTestResponseHeaders.value=prior.response;e.scriptTestHandler.value=prior.handler;e.scriptTestEnd.checked=prior.end;e.scriptScenarioResponseBody.value=prior.scenarioBody;e.scriptScenarioChunkSizes.value=prior.chunks;e.scriptScenarioOutcome.value=prior.outcome;})()`,
+      `(async ()=>{const e=${editorPath};const prior=${JSON.stringify(prior)};await e.applyDraft(prior.draft);e.testMode=prior.mode;e.scriptTestBody.value=prior.body;e.scriptTestHeaders.value=prior.request;e.scriptTestResponseHeaders.value=prior.response;e.scriptTestHandler.value=prior.handler;e.scriptTestEnd.checked=prior.end;e.scriptScenarioResponseBody.value=prior.scenarioBody;e.scriptScenarioChunkSizes.value=prior.chunks;e.scriptScenarioOutcome.value=prior.outcome;})()`,
     );
   }
 }

@@ -1,9 +1,10 @@
+import { startRuntime } from "@microsoft/webui-framework/runtime.js";
+import "@microsoft/webui-framework/lazy-hydration.js";
 import "./stream-inspector/stream-inspector.js";
 import "./inspection-copy-menu/inspection-copy-menu.js";
 import "./converter-host/converter-host.js";
 import "./debugger-workspace/debugger-workspace.js";
 import "./certificate-inspector/certificate-inspector.js";
-import "@microsoft/webui-framework/lazy-hydration.js";
 import "./proxy-toggle/proxy-toggle.js";
 import "./pane-divider/pane-divider.js";
 import "./trace-drop-target/trace-drop-target.js";
@@ -30,3 +31,5 @@ window.addEventListener("error", (event) =>
 window.addEventListener("unhandledrejection", (event) =>
   report("unhandled-rejection", event.reason),
 );
+
+startRuntime();

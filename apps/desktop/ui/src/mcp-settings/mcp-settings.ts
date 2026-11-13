@@ -4,6 +4,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { WorkspaceElement } from "../workspace-element.js";
 import { describeError } from "../utilities.js";
 import initial from "../initial-state.json";
+import { capturePresentationIntent } from "../rendering.js";
 
 type Permission =
   | "inspect"
@@ -522,18 +523,26 @@ export class McpSettings extends WorkspaceElement {
     }
   }
   async configuration(id: string, event: Event): Promise<void> {
+    const eventTarget = event?.currentTarget;
     const grant = this.snapshot?.grants.find((item) => item.id === id);
-    if (!grant) {
+    if (!grant || this.mcpBusy) {
       return;
     }
-    this.returnFocus = event.currentTarget as HTMLElement;
-    await this.run(async () => {
-      const result = await invoke<{ key: string }>("mcp_configuration_key", {
-        id,
-        revision: grant.revision,
+    this.returnFocus = eventTarget as HTMLElement;
+    const presentation = capturePresentationIntent(this);
+    try {
+      await this.run(async () => {
+        const result = await invoke<{ key: string }>("mcp_configuration_key", {
+          id,
+          revision: grant.revision,
+        });
+        if (presentation.current()) {
+          this.showKey(result.key);
+        }
       });
-      this.showKey(result.key);
-    });
+    } finally {
+      presentation.dispose();
+    }
   }
   async copyConfig(): Promise<void> {
     try {

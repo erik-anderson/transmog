@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { resolve } from "node:path";
 
 export async function checkProcessInspection(page, root) {
+  await checkStatusCompletionOrder(page);
+  await checkSettingsNavigationOwnership(page);
   const settings = page.locator("settings-workspace");
   const panel = settings.locator("process-inspection-settings");
   const mode = panel.getByRole("combobox", { name: "Inspect traffic from", exact: true });
@@ -585,6 +587,109 @@ export async function checkProcessInspection(page, root) {
       element.certificateDetailsOpen = open;
     }, original.certificateDetailsOpen);
     await page.setViewportSize({ width: 800, height: 600 });
+  }
+}
+
+async function checkSettingsNavigationOwnership(page) {
+  for (const method of ["openMcpSettings", "openClientCertificateSettings"]) {
+    for (const fails of [false, true]) {
+      const result = await page.evaluate(
+        async ({ method, fails }) => {
+          const shell = document.querySelector("app-shell"),
+            original = shell.$whenRendered,
+            diagnostic = shell.diagnosticText;
+          let release,
+            entered,
+            held = false;
+          const gate = new Promise((resolve) => {
+            release = resolve;
+          });
+          const waiting = new Promise((resolve) => {
+            entered = resolve;
+          });
+          shell.$whenRendered = async () => {
+            await original.call(shell);
+            if (!held) {
+              held = true;
+              entered();
+              await gate;
+              if (fails) throw new Error("Older navigation failed");
+            }
+          };
+          try {
+            const older = shell[method]();
+            await waiting;
+            await shell.openConnectionSettings();
+            release();
+            await older;
+            return {
+              section: shell.settings.settingsSection,
+              diagnostic: shell.diagnosticText,
+              expectedDiagnostic: diagnostic,
+            };
+          } finally {
+            release();
+            shell.$whenRendered = original;
+          }
+        },
+        { method, fails },
+      );
+      assert.equal(result.section, "connection", `${method} replaced a newer settings destination`);
+      assert.equal(
+        result.diagnostic,
+        result.expectedDiagnostic,
+        `${method} reported an obsolete navigation failure`,
+      );
+    }
+  }
+}
+
+async function checkStatusCompletionOrder(page) {
+  for (const olderFails of [true, false]) {
+    const result = await page.evaluate(async (olderFails) => {
+      const shell = document.querySelector("app-shell"),
+        invoke = window.__TAURI_INTERNALS__.invoke,
+        originalDiagnostic = shell.diagnosticText;
+      await shell.settings.ready;
+      let release,
+        entered,
+        calls = 0;
+      const gate = new Promise((resolve) => (release = resolve)),
+        waiting = new Promise((resolve) => (entered = resolve));
+      window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+        if (command === "app_status") {
+          calls++;
+          if (calls === 1) {
+            const value = await invoke(command, args);
+            entered();
+            await gate;
+            if (olderFails) throw new Error("Older status failed");
+            return value;
+          }
+          if (calls === 2 && !olderFails) throw new Error("Current status failed");
+        }
+        return invoke(command, args);
+      };
+      const older = shell.refreshStatus();
+      try {
+        await waiting;
+        await shell.refreshStatus();
+        const expected = shell.diagnosticText;
+        release();
+        await older;
+        return { expected, actual: shell.diagnosticText };
+      } finally {
+        release();
+        await older;
+        window.__TAURI_INTERNALS__.invoke = invoke;
+        shell.diagnosticText = originalDiagnostic;
+      }
+    }, olderFails);
+    assert.equal(
+      result.actual,
+      result.expected,
+      "An older status completion replaced current feedback",
+    );
   }
 }
 

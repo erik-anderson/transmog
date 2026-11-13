@@ -66,7 +66,7 @@ export async function smokeTrafficList(client, screenshot) {
   const originalColumns = await client.evaluate(`${t}.preferences.columns`);
   try {
     await client.evaluate(
-      `${t}.patchPreferences({columns:${t}.preferences.columns.map(column=>({...column,visible:['request-number','method'].includes(column.id)}))},false);${t}.$flushUpdates()`,
+      `(async()=>{${t}.patchPreferences({columns:${t}.preferences.columns.map(column=>({...column,visible:['request-number','method'].includes(column.id)}))},false);await ${t}.$whenRendered()})()`,
     );
     await wait(
       `${t}.trafficTable.getBoundingClientRect().right<${t}.sessionScroller.getBoundingClientRect().right-40`,
@@ -144,7 +144,7 @@ export async function smokeTrafficList(client, screenshot) {
     );
   } finally {
     await client.evaluate(
-      `${t}.patchPreferences({columns:${JSON.stringify(originalColumns)}},false);${t}.$flushUpdates()`,
+      `(async()=>{${t}.patchPreferences({columns:${JSON.stringify(originalColumns)}},false);await ${t}.$whenRendered()})()`,
     );
   }
   for (const [value, code, virtualKey] of [
@@ -604,7 +604,7 @@ export async function smokeTrafficList(client, screenshot) {
     "Native range keyboard did not resize",
   );
   await client.evaluate(
-    `${t}.querySelector('traffic-timeline').resetRange();${t}.trafficSelection.replace(${JSON.stringify(ids[0])});${t}.trafficSelection.ids.add(${JSON.stringify(ids[1])});${t}.updateTrafficSelection()`,
+    `(async()=>{await ${t}.querySelector('traffic-timeline').resetRange();${t}.trafficSelection.replace(${JSON.stringify(ids[0])});${t}.trafficSelection.ids.add(${JSON.stringify(ids[1])});${t}.updateTrafficSelection()})()`,
   );
   await wait(`${t}.querySelectorAll('.timeline-row').length===2`);
   const timelineRow = await client.evaluate(
@@ -727,7 +727,9 @@ export async function smokeTrafficList(client, screenshot) {
       `${t}.refreshTimeline=globalThis.__nativeTimelineFocus.original;globalThis.__nativeTimelineFocus.release();delete globalThis.__nativeTimelineFocus`,
     );
   }
-  await client.evaluate(`${t}.setTimeline(false);${t}.clearTrafficSelection()`);
+  await client.evaluate(
+    `(async()=>{await ${t}.setTimeline(false);${t}.clearTrafficSelection()})()`,
+  );
   process.stdout.write(
     "WebView2 timeline: compact toggle, contextual help, full 20,000-row metadata scope, native keyboard range, selected subset and pointer inspection verified.\n",
   );

@@ -1,4 +1,5 @@
 import { automationActivity } from "../automation-state.js";
+import { capturePresentationIntent } from "../rendering.js";
 import initialState from "../initial-state.json";
 import "../comparison-workspace/comparison-workspace.js";
 import type { ComparisonWorkspace } from "../comparison-workspace/comparison-workspace.js";
@@ -78,10 +79,10 @@ export class AppShell extends WebUIElement {
       this.diagnosticText = describeError(error);
     }
   }
-  resizeDebugger(event: CustomEvent<{ value: number }>): void {
+  async resizeDebugger(event: CustomEvent<{ value: number }>): Promise<void> {
     this.debuggerSplit = String(event.detail.value);
     this.debuggerShare = `${event.detail.value}%`;
-    this.$flushUpdates();
+    await this.$whenRendered();
     const bounds = this.workspaceContent.parentElement!.getBoundingClientRect();
     const content = this.workspaceContent.getBoundingClientRect();
     const extent = this.debuggerPlacement === "right" ? bounds.width : bounds.height;
@@ -217,38 +218,46 @@ export class AppShell extends WebUIElement {
   }
   async onComparisonSource(event: CustomEvent<string>): Promise<void> {
     event.stopPropagation();
+    const sourceCurrent = this.comparison.sourceNavigationScope(),
+      focus = this.traffic.trackNavigationFocus(),
+      activation = this.activateView("traffic"),
+      navigation = this.navigationGeneration;
+    const current = (): boolean =>
+      sourceCurrent() &&
+      navigation === this.navigationGeneration &&
+      this.activeView === "traffic" &&
+      focus.unchanged();
     try {
-      if (!(await this.activateView("traffic"))) {
-        this.comparison.comparisonStatus =
-          "Navigation canceled; comparison and editor draft preserved.";
+      if (!(await activation) || !current()) {
         return;
       }
-      const focus = this.traffic.trackNavigationFocus();
-      try {
-        if (!(await this.traffic.revealSession(event.detail, focus.unchanged))) {
-          this.comparison.comparisonStatus =
-            "The source is no longer retained. Frozen comparison evidence remains available.";
-          return;
-        }
-        const restore = focus.unchanged();
-        this.comparison.sourceOpened();
-        if (this.traffic.previewReportDialog.open) {
-          this.traffic.closePreviewReport();
-        }
-        if (restore) {
-          this.traffic.focusTraffic();
-        }
-      } finally {
-        focus.dispose();
+      const found = await this.traffic.revealSession(event.detail, () => false, current);
+      if (!current()) {
+        return;
       }
+      if (!found) {
+        this.comparison.comparisonStatus =
+          "The source is no longer retained. Frozen comparison evidence remains available.";
+        return;
+      }
+      this.comparison.sourceOpened();
+      if (this.traffic.previewReportDialog.open) {
+        this.traffic.closePreviewReport();
+      }
+      await this.traffic.focusTraffic();
     } catch (error: unknown) {
-      this.comparison.comparisonStatus = "Source could not be opened: " + describeError(error);
+      if (current()) {
+        this.comparison.comparisonStatus = "Source could not be opened: " + describeError(error);
+      }
+    } finally {
+      focus.dispose();
     }
   }
 
   async openClientCertificateSettings(): Promise<void> {
-    await this.activateView("settings");
-    this.settings.showSettingsSection("client-certificates");
+    if (await this.activateView("settings")) {
+      this.settings.showSettingsSection("client-certificates");
+    }
   }
   certificatePanelClosed(): void {
     this.workspaceContent.focus();
@@ -275,34 +284,34 @@ export class AppShell extends WebUIElement {
   errorDialog!: HTMLDialogElement;
   workspaceContent!: HTMLElement;
   private operationErrors: OperationError[] = [];
-  onOperationError(event: CustomEvent<OperationError>): void {
+  async onOperationError(event: CustomEvent<OperationError>): Promise<void> {
     event.stopPropagation();
     this.operationErrors.push(event.detail);
     if (this.operationErrors.length === 1) {
-      this.showOperationError();
+      await this.showOperationError();
     }
   }
-  private showOperationError(): void {
+  private async showOperationError(): Promise<void> {
     const error = this.operationErrors[0];
     if (!error || !this.isConnected) {
       return;
     }
     this.errorTitle = error.title;
     this.errorMessage = error.message;
-    this.$flushUpdates();
+    await this.$whenRendered();
     this.errorDialog.showModal();
   }
   closeOperationError(): void {
     this.errorDialog.close();
   }
-  operationErrorClosed(): void {
+  async operationErrorClosed(): Promise<void> {
     if (this.errorDialog.open) {
       return;
     }
     this.operationErrors.shift()?.resolve();
     this.errorTitle = "";
     this.errorMessage = "";
-    this.showOperationError();
+    await this.showOperationError();
   }
   dismissDiagnostic(): void {
     this.diagnosticText = "";
@@ -377,6 +386,7 @@ export class AppShell extends WebUIElement {
   @observable viewerMode = false;
   @attr({ attribute: "data-theme" }) theme: ProductState["preferences"]["theme"] = "system";
   @observable activeView: ViewName = initialState.activeView as ViewName;
+  @observable loadedWorkspaces = initialState.loadedWorkspaces;
   @observable currentNavigation: Record<string, string> = initialState.currentNavigation;
   @observable lifecycleLabel = initialState.lifecycleLabel;
   @observable lifecycleKind = initialState.lifecycleKind;
@@ -404,13 +414,10 @@ export class AppShell extends WebUIElement {
   }
   @observable navigationExpanded = "true";
   traffic!: TrafficWorkspace;
-  @observable capturedPreviewController: TrafficWorkspace | null = null;
+  @observable capturedPreviewState: { controller: TrafficWorkspace } | null = null;
   capturedPreviewSurface!: CapturedPreview;
   onPreviewStateChange(): void {
-    // WebUI observes each component's own fields. Re-evaluate direct controller
-    // bindings explicitly rather than copying dialog state between components.
-    this.capturedPreviewSurface?.$update();
-    this.$update();
+    this.capturedPreviewState = { controller: this.traffic };
   }
   settings!: SettingsWorkspace;
   automation!: AutomationWorkspace;
@@ -620,7 +627,7 @@ export class AppShell extends WebUIElement {
     this.addEventListener("keydown", this.inspectorShortcut, true);
   }
   protected hydratedCallback(): void {
-    this.capturedPreviewController = this.traffic;
+    this.onPreviewStateChange();
     document.addEventListener("keydown", this.shortcutListener);
     if (this.viewerMode) {
       void invoke<ProductState>("product_state")
@@ -873,8 +880,9 @@ export class AppShell extends WebUIElement {
     event.detail.provide(this.traffic.selectedTrafficIds());
   }
   async openMcpSettings(): Promise<void> {
-    await this.activateView("settings");
-    this.settings.showSettingsSection("integrations");
+    if (await this.activateView("settings")) {
+      this.settings.showSettingsSection("integrations");
+    }
   }
   onNavigate(event: CustomEvent<ViewName>): void {
     if (event.detail === "settings") {
@@ -918,11 +926,16 @@ export class AppShell extends WebUIElement {
       if (generation !== this.navigationGeneration || !this.isConnected) {
         return false;
       }
+      if (view in loaders) {
+        this.loadedWorkspaces = { ...this.loadedWorkspaces, [view]: true };
+      }
       this.activeView = view;
-      this.$flushUpdates();
-      return true;
+      await this.$whenRendered();
+      return generation === this.navigationGeneration && this.isConnected;
     } catch (error: unknown) {
-      this.diagnosticText = "Workspace could not be loaded: " + describeError(error);
+      if (generation === this.navigationGeneration && this.isConnected) {
+        this.diagnosticText = "Workspace could not be loaded: " + describeError(error);
+      }
       return false;
     }
   }
@@ -946,9 +959,14 @@ export class AppShell extends WebUIElement {
     await this.settings.ready;
     await this.settings.stopProxy();
   }
+  private statusRefreshRevision = 0;
   async refreshStatus(): Promise<void> {
+    const revision = ++this.statusRefreshRevision;
     await this.settings.ready;
     const error = await this.settings.refreshStatus();
+    if (!this.isConnected || revision !== this.statusRefreshRevision) {
+      return;
+    }
     if (error) {
       this.diagnosticText = error;
     } else if (
@@ -981,7 +999,7 @@ export class AppShell extends WebUIElement {
   }
   private async returnToHttpsPreferences(): Promise<void> {
     if (await this.activateView("settings")) {
-      this.settings.backToPreferences();
+      await this.settings.backToPreferences();
     }
   }
   dismissNotice(): void {
@@ -1013,12 +1031,36 @@ export class AppShell extends WebUIElement {
     }
   }
   responseSetIntake!: ResponseSetIntake;
+  private intakeRevision = 0;
   async onResponseSetIntake(event: CustomEvent<ResponseSetIntakeRequest>): Promise<void> {
     event.stopPropagation();
     if (this.viewerMode) {
       return;
     }
-    await loaders.automation();
+    const revision = ++this.intakeRevision,
+      navigation = this.navigationGeneration,
+      intent = capturePresentationIntent(this);
+    try {
+      await loaders.automation();
+      if (
+        revision !== this.intakeRevision ||
+        navigation !== this.navigationGeneration ||
+        !intent.current()
+      ) {
+        return;
+      }
+      this.loadedWorkspaces = { ...this.loadedWorkspaces, automation: true };
+      await this.$whenRendered();
+      if (
+        revision !== this.intakeRevision ||
+        navigation !== this.navigationGeneration ||
+        !intent.current()
+      ) {
+        return;
+      }
+    } finally {
+      intent.dispose();
+    }
     await this.responseSetIntake.request(event.detail, {
       prepare: (id, current, movingRuleIds) =>
         this.automation.prepareResponseSetIntake(id, current, movingRuleIds),
@@ -1120,12 +1162,12 @@ export class AppShell extends WebUIElement {
   showPreviewDiagnostics(): void {
     void this.traffic.showPreviewReport();
   }
-  onSavedDemoPreview(event: CustomEvent<SavedDemoPreviewIntent>): void {
+  async onSavedDemoPreview(event: CustomEvent<SavedDemoPreviewIntent>): Promise<void> {
     event.stopPropagation();
     if (this.viewerMode || this.activeView !== "automation" || !event.detail.isCurrent()) {
       return;
     }
-    this.traffic.showSavedDemoPreview(event.detail.demo);
+    await this.traffic.showSavedDemoPreview(event.detail.demo);
   }
   async onPreviewSource(
     event: CustomEvent<{ id: string; isCurrent: () => boolean }>,
@@ -1155,7 +1197,7 @@ export class AppShell extends WebUIElement {
         const restore = focus.unchanged();
         this.traffic.closePreviewReport();
         if (restore) {
-          this.traffic.focusTraffic();
+          await this.traffic.focusTraffic();
         }
       } else {
         this.traffic.previewReportError =
@@ -1215,7 +1257,10 @@ export class AppShell extends WebUIElement {
         this.previewReturnFocus = active instanceof HTMLElement ? active : null;
         this.previewOrigin = origin;
         this.previewLookupFailed = failed;
-        this.$flushUpdates();
+        await this.$whenRendered();
+        if (!current()) {
+          return;
+        }
         this.previewPrerequisiteDialog.showModal();
         return;
       }
@@ -1252,7 +1297,7 @@ export class AppShell extends WebUIElement {
     this.previewReturnFocus = null;
     this.previewPrerequisiteDialog.close();
     if (await this.activateView("traffic")) {
-      this.traffic.focusTraffic();
+      await this.traffic.focusTraffic();
     }
   }
   async onMatchedRule(

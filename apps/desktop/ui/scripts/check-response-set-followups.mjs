@@ -104,7 +104,7 @@ export async function checkResponseSetFollowups(page, root) {
 
   await page.getByRole("link", { name: /Automation/ }).click();
   await page.waitForFunction(
-    () => !!document.querySelector("app-shell").automation.autoresponseState,
+    () => !!document.querySelector("app-shell").automation?.autoresponseState,
   );
   await checkGlobalResponseCompletion(page);
   await page.evaluate(() => {

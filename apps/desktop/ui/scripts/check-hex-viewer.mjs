@@ -243,6 +243,37 @@ export async function checkHexViewer(page, inspector, screenshotPath) {
       () => (globalThis.__workspaceFixture.bodyOverride.availability = "complete"),
     );
     await fixture([1, 0x47, 1, 0x57, 1, 0x5b, 1, 0x65]);
+    for (const action of ["close", "preview", "escape", "menu-focus", "offset-focus"]) {
+      assert.equal(
+        await viewer.evaluate(async (element, action) => {
+          const preview = element.preview;
+          element.viewport.focus();
+          const pending =
+            action === "close" || action === "menu-focus"
+              ? element.openMenu()
+              : element.openOffset();
+          try {
+            if (action === "close") element.closeMenu(false);
+            else if (action === "preview")
+              element.preview = { ...preview, key: preview.key + "-new" };
+            else if (action.endsWith("focus"))
+              document.querySelector("app-shell").traffic.searchInput.focus();
+            else element.offsetKeyboard(new KeyboardEvent("keydown", { key: "Escape" }));
+            await pending;
+            return (
+              element.contextMenu.matches(":popover-open") ||
+              element.offsetPopover.matches(":popover-open")
+            );
+          } finally {
+            element.closeMenu(false);
+            element.offsetPopover.hidePopover();
+            if (element.preview !== preview) element.preview = preview;
+          }
+        }, action),
+        false,
+        "Cancelled byte-viewer menus must not open after rendering",
+      );
+    }
     await drag(0, 7);
     assert.deepEqual(await selected("hex"), [0, 1, 2, 3, 4, 5, 6, 7]);
     assert.deepEqual(await selected("text"), await selected("hex"));

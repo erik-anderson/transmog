@@ -8,7 +8,7 @@ export async function smokeBuildInfo(call, evaluate, screenshotPath) {
       globalThis.__buildInfoProbe={view:shell.activeView,section:settings.settingsSection,focus:shell.shadowRoot.activeElement};
       shell.shadowRoot.querySelector('a[data-view="settings"]').click();
       settings.showSettingsSection('support');
-      await settings.refreshDiagnostics();settings.$flushUpdates();
+      await settings.refreshDiagnostics();await settings.$whenRendered();
       const report=JSON.parse(settings.supportDetails),build=report.build;
       if(!build?.identity?.target||!build.identity.profile||!build.identity.rustc.startsWith('rustc '))throw new Error('Build identity is unavailable');
       if(build.identity.sourceCommit!==null&&!/^[0-9a-f]{40}$/.test(build.identity.sourceCommit))throw new Error('Invalid source commit');

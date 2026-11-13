@@ -314,7 +314,8 @@ export class ComposerWorkspace extends WorkspaceElement {
     }));
     this.inspectResultMessage(resetMessage ? "response" : this.resultMessage);
   }
-  openComposerActions(kind: string, event: MouseEvent, id = 0): void {
+  async openComposerActions(kind: string, event: MouseEvent, id = 0): Promise<void> {
+    const eventTarget = event?.currentTarget;
     const result = this.composerResult;
     this.composerActionKind = kind;
     this.composerAction =
@@ -340,8 +341,8 @@ export class ComposerWorkspace extends WorkspaceElement {
     if (!this.composerAction) {
       return;
     }
-    this.menuReturnFocus = event.currentTarget as HTMLElement;
-    this.$flushUpdates();
+    this.menuReturnFocus = eventTarget as HTMLElement;
+    await this.$whenRendered();
     this.composerActionsMenu.showPopover({ source: this.menuReturnFocus });
     this.menuPlacement.open(menuAnchor(event, this.menuReturnFocus));
     this.composerActionsMenu
@@ -555,7 +556,8 @@ export class ComposerWorkspace extends WorkspaceElement {
       this.composerBodyError = describeError(error);
     }
   }
-  expandBody(event: Event): void {
+  async expandBody(event: Event): Promise<void> {
+    const eventTarget = event?.currentTarget;
     this.bodyEditorDraft = {
       generation: this.draftGeneration,
       revision: this.bodyRevision,
@@ -577,11 +579,11 @@ export class ComposerWorkspace extends WorkspaceElement {
     } catch {
       // Header validation remains beside the header editor.
     }
-    this.bodyEditor.open(
+    await this.bodyEditor.open(
       value,
       responseBodyLanguage(mediaType, value),
       false,
-      event.currentTarget as HTMLElement,
+      eventTarget as HTMLElement,
       {
         mode: this.bodyHexMode ? "hex" : "text",
         textEncoding: this.bodyTextEncoding,
@@ -963,9 +965,10 @@ export class ComposerWorkspace extends WorkspaceElement {
       this.input("method").value = source.method;
       this.input("url").value = source.url;
       this.composerUrl = source.url;
-      this.queryEditor.replaceValue(source.url);
+      // Apply the complete draft before yielding to the editors' focus restoration.
+      const queryRendered = this.queryEditor.replaceValue(source.url);
       this.validateUrlLength();
-      this.headerEditor.replaceValue(
+      const headersRendered = this.headerEditor.replaceValue(
         source.headers.map((header) => header.name + ": " + header.value).join("\n"),
       );
       this.capturedBodyId = capturedId;
@@ -996,15 +999,30 @@ export class ComposerWorkspace extends WorkspaceElement {
       }
       this.composerDirty = false;
       this.resultMatchesDraft = false;
-      this.editVersion++;
+      const appliedVersion = ++this.editVersion;
       if (revealRequest) {
         this.composerPane = "request";
-        // The compact Request pane must be visible before its URL can receive focus.
-        this.$flushUpdates();
       }
       this.updateRisk();
+      await Promise.all([queryRendered, headersRendered]);
+      if (revealRequest) {
+        // The compact Request pane must be visible before its URL can receive focus.
+        await this.$whenRendered();
+      }
+      if (
+        generation !== this.draftGeneration ||
+        revision !== this.bodyRevision ||
+        appliedVersion !== this.editVersion ||
+        !this.isConnected
+      ) {
+        if (generation === this.draftGeneration && this.isConnected) {
+          this.composerText = requestKind + " loading stopped. Your current draft is preserved.";
+        }
+        return;
+      }
       if (
         revealRequest &&
+        paneRevision === this.paneRevision &&
         this.view === "composer" &&
         (root instanceof ShadowRoot ? root.activeElement : document.activeElement) === focusAtStart
       ) {
@@ -1031,7 +1049,8 @@ export class ComposerWorkspace extends WorkspaceElement {
     if (!this.composerForm.reportValidity()) {
       return;
     }
-    if (!this.headerEditor.reportValidity()) {
+    if (!this.headerEditor.checkValidity()) {
+      await this.headerEditor.reportValidity();
       return;
     }
     let body = "";

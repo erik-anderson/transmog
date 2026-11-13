@@ -33,7 +33,7 @@ export async function smokeComposerAuthoring(
   const headers =
     "Content-Type: application/json\nX-Repeat: first\nx-repeat: second\nX-Empty: \nX-Disabled: keep this value\nContent-Length: 99\nTransfer-Encoding: chunked";
   const authoredUrl = url + "?tag=one&tag=two&flag&empty=&escaped=%2f+%20";
-  await viewer.evaluate(`(() => {
+  await viewer.evaluate(`(async () => {
     const workspace = ${composer};
     workspace.showComposerPane('request');
     const field = (name, value) => {
@@ -44,11 +44,11 @@ export async function smokeComposerAuthoring(
     field('method', 'POST');
     field('url', ${JSON.stringify(authoredUrl)});
     workspace.headerEditor.value = ${JSON.stringify(headers)};
-    workspace.headerEditor.toggleMode();
-    if (workspace.headerEditor.headerEditorMode === 'text') workspace.headerEditor.toggleMode();
+    await workspace.headerEditor.toggleMode();
+    if (workspace.headerEditor.headerEditorMode === 'text') await workspace.headerEditor.toggleMode();
     workspace.headerEditor.querySelector('[aria-label="Enable header 5"]').click();
-    workspace.headerEditor.toggleMode();
-    workspace.headerEditor.toggleMode();
+    await workspace.headerEditor.toggleMode();
+    await workspace.headerEditor.toggleMode();
     workspace.useEmptyBody();
     const view = workspace.composerForm.elements.namedItem('bodyView');
     view.value = 'text'; view.dispatchEvent(new Event('change', { bubbles: true }));

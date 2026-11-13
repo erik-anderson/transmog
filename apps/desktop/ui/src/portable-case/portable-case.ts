@@ -1,4 +1,5 @@
 import { attr, observable } from "@microsoft/webui-framework";
+import { captureFocus, captureRenderScope } from "../rendering.js";
 import { invoke } from "@tauri-apps/api/core";
 import type { AutomationStatus } from "../models.js";
 import { WorkspaceElement } from "../workspace-element.js";
@@ -189,6 +190,7 @@ export class PortableCase extends WorkspaceElement {
   private scopes: Scope[] = [];
   private returnFocus: HTMLElement | null = null;
   private connectedRevision = 0;
+  private operationRevision = 0;
   private openedReview: Review | null = null;
   private displayedReview: Review | null = null;
   private links = new Map<string, string>();
@@ -206,7 +208,7 @@ export class PortableCase extends WorkspaceElement {
     returnFocus: HTMLElement,
     comparisonId?: string,
   ): Promise<void> {
-    this.viewRevision++;
+    const view = ++this.viewRevision;
     this.returnFocus = returnFocus;
     if (!this.caseDialog.open) {
       this.caseDialog.showModal();
@@ -231,7 +233,15 @@ export class PortableCase extends WorkspaceElement {
     }
     this.caseStage = "author";
     this.caseInspection = false;
-    this.$flushUpdates();
+    await this.$whenRendered();
+    if (
+      !this.isConnected ||
+      view !== this.viewRevision ||
+      !this.caseDialog.open ||
+      this.caseStage !== "author"
+    ) {
+      return;
+    }
     await this.refreshChoices(comparisonId);
   }
   async refreshChoices(comparisonId?: string): Promise<void> {
@@ -287,10 +297,26 @@ export class PortableCase extends WorkspaceElement {
           ...this.scopes.filter((s) => s.value !== "comparison"),
         ];
         this.scopes = this.caseScopes;
-        this.$flushUpdates();
+        await this.$whenRendered();
+        if (
+          !this.isConnected ||
+          revision !== this.choiceRevision ||
+          view !== this.viewRevision ||
+          !this.caseDialog.open ||
+          this.caseStage !== "author"
+        ) {
+          return;
+        }
         (this.authorForm.elements.namedItem("scope") as HTMLSelectElement).value = "comparison";
         await this.refreshChoices();
-        this.comparisonChoices.open = true;
+        if (
+          this.isConnected &&
+          view === this.viewRevision &&
+          this.caseDialog.open &&
+          this.caseStage === "author"
+        ) {
+          this.comparisonChoices.open = true;
+        }
       }
     } catch (error: unknown) {
       if (revision !== this.choiceRevision || view !== this.viewRevision || !this.caseDialog.open) {
@@ -354,7 +380,8 @@ export class PortableCase extends WorkspaceElement {
     }
     this.caseBusy = true;
     this.caseStatus = status;
-    const revision = this.connectedRevision,
+    const operation = ++this.operationRevision,
+      revision = this.connectedRevision,
       viewRevision = this.viewRevision;
     try {
       await action();
@@ -374,7 +401,7 @@ export class PortableCase extends WorkspaceElement {
         }
       }
     } finally {
-      if (revision === this.connectedRevision) {
+      if (revision === this.connectedRevision && operation === this.operationRevision) {
         this.caseBusy = false;
         if (!this.caseDialog.open) {
           this.$emit("case-review-closed");
@@ -624,10 +651,19 @@ export class PortableCase extends WorkspaceElement {
       this.caseMoreButton.focus();
     }
   }
-  showSaveCopy(): void {
+  async showSaveCopy(): Promise<void> {
     this.closeMore();
+    const focus = captureFocus(this);
     this.caseStage = "copy";
-    this.$flushUpdates();
+    const current = captureRenderScope(this, () => [
+      this.viewRevision,
+      this.caseStage,
+      this.caseDialog.open,
+    ]);
+    await this.$whenRendered();
+    if (!current() || !focus()) {
+      return;
+    }
     this.caseScroll.scrollTop = this.caseScroll.scrollHeight;
     (this.saveForm.elements.namedItem("encrypt") as HTMLInputElement).focus();
   }
@@ -723,7 +759,19 @@ export class PortableCase extends WorkspaceElement {
           ? "Showing 100 HTML documents. Export a narrower case to choose another document."
           : "Choose a page and saved responses."
         : "No complete retained HTML response is available in this source.";
-      this.$flushUpdates();
+      const focus = captureFocus(this),
+        current = captureRenderScope(this, () => [
+          this.viewRevision,
+          this.caseStage,
+          this.casePreviewPages,
+          this.casePreviewDocument,
+          this.casePreviewVariant,
+          this.caseDialog.open,
+        ]);
+      await this.$whenRendered();
+      if (!current() || !focus()) {
+        return;
+      }
       this.caseScroll.scrollTop = 0;
       this.previewForm.reset();
     });
@@ -926,12 +974,30 @@ export class PortableCase extends WorkspaceElement {
     }
   }
   async cancel(): Promise<void> {
-    if (this.previewOperation) {
-      await invoke("cancel_captured_page", { operationId: this.previewOperation });
-    } else {
-      await invoke("cancel_case_operation");
+    if (!this.caseBusy) {
+      return;
     }
-    this.caseStatus = "Cancellation requested. Waiting for owned work to finish…";
+    const operation = this.operationRevision,
+      revision = this.connectedRevision;
+    const current = (): boolean =>
+      this.isConnected &&
+      this.caseBusy &&
+      operation === this.operationRevision &&
+      revision === this.connectedRevision;
+    try {
+      if (this.previewOperation) {
+        await invoke("cancel_captured_page", { operationId: this.previewOperation });
+      } else {
+        await invoke("cancel_case_operation");
+      }
+      if (current()) {
+        this.caseStatus = "Cancellation requested. Waiting for owned work to finish…";
+      }
+    } catch (error: unknown) {
+      if (current()) {
+        this.caseStatus = "Cancellation could not be requested: " + describeError(error);
+      }
+    }
   }
   close(event?: Event): void {
     event?.preventDefault();
@@ -951,17 +1017,19 @@ export class PortableCase extends WorkspaceElement {
       return;
     }
     this.closeMore();
-    await invoke("close_case");
-    this.$emit("case-open-change", false);
-    this.openedReview = null;
-    this.links.clear();
-    this.caseStage = "author";
-    this.caseInspection = false;
-    this.caseSources = [];
-    this.caseContexts = [];
-    this.caseContextText = "";
-    this.caseManifestText = "";
-    this.close();
+    await this.run("Unloading case…", async () => {
+      await invoke("close_case");
+      this.$emit("case-open-change", false);
+      this.openedReview = null;
+      this.links.clear();
+      this.caseStage = "author";
+      this.caseInspection = false;
+      this.caseSources = [];
+      this.caseContexts = [];
+      this.caseContextText = "";
+      this.caseManifestText = "";
+      this.close();
+    });
   }
 }
 PortableCase.define("portable-case");

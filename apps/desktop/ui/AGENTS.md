@@ -16,14 +16,37 @@ walkthrough, including a review and fix pass before reporting completion.
 - Read the consuming application's installed `@microsoft/webui/ai.md` before
   changing WebUI code. Resolve it from this directory; do not substitute a newer
   online reference. The repository's `webui-reference` skill explains resolution.
+  Follow its bundled task-specific guides, and reread the reference after upgrades.
+  Keep the Rust renderer, compiler, and browser framework on matching versions.
 - Use `@attr` and `@observable` properties with typed bubbling events between
   workspaces. Templates own DOM structure and visual state; CSS owns styling.
+  Keep reactive data in observable models; component references are not reactive
+  view models. Pass parent-owned values into children and emit changes upward.
   Avoid imperative DOM construction and inline style mutations for application
   UI. Native APIs remain appropriate for input values, dialogs/popovers, focus,
   and measurements.
 - Name components and files by their role. Avoid change-history names such as
   `refactor-*` and redundant application prefixes.
-- If URL routing is added, use `@microsoft/webui-router` after resolving its
+- Start the browser runtime explicitly after component imports. Replace observable
+  object/array roots to notify bindings; await `$whenRendered()` only when subsequent
+  focus, measurements, or native controls need the updated DOM. Render completion
+  includes affected descendants: load and mount them first, and retain stale-work
+  guards across the await. Cancel native events synchronously before awaiting.
+- Apply a complete draft, its native control values, and its baseline before
+  yielding; await only the DOM-dependent follow-up. Claim submission and request
+  ownership before the first await, and let only that owner release busy state.
+  Recheck context, cancellation, focus, and reading position after each wait.
+  Closing a native surface must invalidate a pending open even before it appears.
+  Track presentation cancellation through lazy loading as well as rendering.
+  Close the originating menu and restore its focus before capturing that intent.
+  A child's stale-work checks do not protect its caller's continuation; preserve
+  caller ownership across child operations too. Discard must invalidate retained
+  editor drafts before a same-item cache can reuse them.
+  Consume a confirmed discard when navigation replaces or leaves that editor;
+  a canceled destination must preserve retained fields as dirty.
+  When fixing an asynchronous race, review the same completion pattern in sibling
+  components and cover representative siblings with delayed-render regressions.
+- If URL routing is added, use `@microsoft/webui-delivery` after resolving its
   Trusted Types compatibility with the embedded origin; see ADR 0007.
 
 ## State and lifecycle rationale
@@ -37,7 +60,8 @@ walkthrough, including a review and fix pass before reporting completion.
 - Sort/filter retained metadata before virtual windowing so results describe the full
   retained capture. Preserve row keys and inspection position during updates;
   coalesce refresh hints and reject stale asynchronous results.
-- Secondary workspaces stay mounted after first use to preserve drafts. Monaco
+- Secondary workspaces mount after their definitions load and stay mounted after
+  first use to preserve drafts. Monaco
   loads after its Trusted Types environment. Dispose owned editors, models, and
   listeners when their component disconnects.
 - Reserve layout space before lazy editor hydration, including client-created

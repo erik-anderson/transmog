@@ -205,6 +205,7 @@ impl AppRenderer {
             "../../../apps/desktop/ui/src/initial-state.json"
         ))
         .map_err(|error| UiError::State(error.to_string()))?;
+        state["cspNonce"] = serde_json::Value::String(nonce.clone());
         state
             .as_object_mut()
             .expect("initial client state is an object")
@@ -297,6 +298,34 @@ mod tests {
         assert!(csp.contains("http://transmog-preview.localhost"));
         assert!(!csp.contains("unsafe-eval"));
         assert!(csp.contains("worker-src 'self'"));
+        let nonce = csp
+            .split("'nonce-")
+            .nth(1)
+            .unwrap()
+            .split('\'')
+            .next()
+            .unwrap();
+        let entry = html
+            .split("<script")
+            .find(|script| {
+                script
+                    .split('>')
+                    .next()
+                    .unwrap()
+                    .contains("src=\"/app.js\"")
+            })
+            .unwrap();
+        assert!(
+            entry
+                .split('>')
+                .next()
+                .unwrap()
+                .contains(&format!("nonce=\"{nonce}\""))
+        );
+        let next = renderer
+            .respond("GET", "/", &ShellView::from(&status()))
+            .unwrap();
+        assert_ne!(next.content_security_policy.as_deref(), Some(csp.as_str()));
         for path in [
             "/document.css",
             "/monaco.css",

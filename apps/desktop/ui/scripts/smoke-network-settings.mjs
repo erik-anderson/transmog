@@ -34,7 +34,7 @@ export async function smokeNetworkSettings(call, evaluate, screenshotPath) {
     const profiles=settings.querySelector('network-profile-settings');
     await profiles.load();
     if(profiles.networkBusy)throw new Error('Network profiles are unavailable');
-    profiles.customize();
+    await profiles.customize();
     const profileForm=profiles.networkForm;
     if(original.preferences.networkProfiles.activeProfile.id!=='webview2-chromium-154'||original.preferences.networkProfiles.activeProfile.settings.rootStore!=='webview2-installed')throw new Error('WebView2 root store is not the default');
     const rootStore=profileForm.elements.namedItem('rootStore');
@@ -45,7 +45,7 @@ export async function smokeNetworkSettings(call, evaluate, screenshotPath) {
       const box=rootStore.getBoundingClientRect();
       if(rootStore.getRootNode().activeElement!==rootStore||rootStore.getRootNode().elementFromPoint(box.x+box.width/2,box.y+box.height/2)!==rootStore)throw new Error('Root store choice is unreachable');
       profiles.edit(new Event('change',{bubbles:true}));
-      profiles.$flushUpdates();
+      await profiles.$whenRendered();
       if(localTrust.disabled!==(value==='os')||!localTrust.checked)throw new Error('Root-store choice lost or enabled the OS local-trust toggle');
       if(profiles.networkDraft.settings.rootStore!==value)throw new Error('Root store choice did not update the draft');
     }
@@ -104,7 +104,7 @@ export async function smokeNetworkSettings(call, evaluate, screenshotPath) {
     const port=Number(status.listener.split(':').at(-1));
     const form=settings.settingsForm;
     form.elements.namedItem('allowRemoteClients').checked=true;
-    form.elements.namedItem('customProxyPort').checked=true;settings.updateProxyPortMode();settings.$flushUpdates();
+    form.elements.namedItem('customProxyPort').checked=true;settings.updateProxyPortMode();await settings.$whenRendered();
     form.elements.namedItem('proxyPort').value=String(port);
     await settings.saveSettings(new Event('submit',{cancelable:true}));
     await settings.startProxy();
@@ -112,13 +112,13 @@ export async function smokeNetworkSettings(call, evaluate, screenshotPath) {
     if(remote.listener!=='0.0.0.0:'+port)throw new Error('Remote opt-in or desired port was not applied: '+settings.proxyText);
     if((await window.__TAURI_INTERNALS__.invoke('product_state')).preferences.reuseServerConnections)throw new Error('Pooling choice was not saved');
     await settings.stopProxy();
-    const bodySelect=form.elements.namedItem('requestBodyLimit');bodySelect.value='custom';settings.updateRequestBodyLimit();settings.$flushUpdates();
+    const bodySelect=form.elements.namedItem('requestBodyLimit');bodySelect.value='custom';settings.updateRequestBodyLimit();await settings.$whenRendered();
     form.elements.namedItem('customRequestBodyLimit').value='1.5';
     await settings.saveSettings(new Event('submit',{cancelable:true}));await settings.loadSettings();
     const bodyState=await window.__TAURI_INTERNALS__.invoke('product_state');
     if(bodyState.privacy.requestBodyLimit!==1500000||bodySelect.value!=='custom'||form.elements.namedItem('customRequestBodyLimit').value!=='1.5')throw new Error('Custom body limit did not survive reload');
     if((await window.__TAURI_INTERNALS__.invoke('app_status')).lifecycle!=='stopped')throw new Error('Opaque proxy did not stop');
-    settings.$flushUpdates();form.elements.namedItem('customRequestBodyLimit').scrollIntoView({block:'center'});
+    await settings.$whenRendered();form.elements.namedItem('customRequestBodyLimit').scrollIntoView({block:'center'});
     return {settingsPersisted:true,inputsReachable:true,opaqueStartWithoutCertificate:true,certificateStatePreserved:true,remoteOptIn:true,persistentPort:true,reuseDisabled:true,decryptionProminent:true,customBodyLimit:true,networkProfileSaveOnly:true,networkProfileActivation:true,alpsProfileControl:true};
   })()`);
     if (screenshotPath) {
@@ -137,7 +137,7 @@ export async function smokeNetworkSettings(call, evaluate, screenshotPath) {
         mobile: false,
       });
       await evaluate(
-        `(()=>{const settings=document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace');const profiles=settings.querySelector('network-profile-settings');profiles.customize();profiles.querySelector('.profile-handshake').open=true;for(const name of ['http2Alps','encryptedClientHello']){const input=profiles.networkForm.elements.namedItem(name);input.scrollIntoView({block:'center'});input.focus();const box=input.getBoundingClientRect();if(input.getRootNode().activeElement!==input||input.getRootNode().elementFromPoint(box.x+box.width/2,box.y+box.height/2)!==input)throw new Error('Narrow profile '+name+' control is covered');}})()`,
+        `(async ()=>{const settings=document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace');const profiles=settings.querySelector('network-profile-settings');await profiles.customize();profiles.querySelector('.profile-handshake').open=true;for(const name of ['http2Alps','encryptedClientHello']){const input=profiles.networkForm.elements.namedItem(name);input.scrollIntoView({block:'center'});input.focus();const box=input.getBoundingClientRect();if(input.getRootNode().activeElement!==input||input.getRootNode().elementFromPoint(box.x+box.width/2,box.y+box.height/2)!==input)throw new Error('Narrow profile '+name+' control is covered');}})()`,
       );
       await writeFile(
         screenshotPath.replace(/\.png$/i, "-network-settings-compact.png"),
@@ -152,7 +152,7 @@ export async function smokeNetworkSettings(call, evaluate, screenshotPath) {
   } finally {
     await call("Emulation.clearDeviceMetricsOverride");
     await evaluate(
-      `(async()=>{const probe=globalThis.__networkSettingsProbe;if(!probe)return;const shell=document.querySelector('app-shell'),settings=shell.shadowRoot.querySelector('settings-workspace');if((await window.__TAURI_INTERNALS__.invoke('app_status')).lifecycle!=='stopped')await settings.stopProxy();const profiles=settings.querySelector('network-profile-settings');if(profiles.networkEditor.open)profiles.discard();const current=await window.__TAURI_INTERNALS__.invoke('product_state'),catalog=current.preferences.networkProfiles,restore=structuredClone(probe.original);restore.preferences.decryptHttps=current.preferences.decryptHttps;await window.__TAURI_INTERNALS__.invoke('save_network_profiles',{expectedRevision:catalog.revision,profiles:probe.original.preferences.networkProfiles.customProfiles,useProfile:probe.original.preferences.networkProfiles.activeProfile.id});await profiles.load();await window.__TAURI_INTERNALS__.invoke('save_product_state',{productState:restore});await settings.loadSettings();settings.querySelector('.preferences-form .connection-advanced').open=probe.open;settings.showSettingsSection(probe.section);shell.shadowRoot.querySelector('a[data-view="'+probe.view+'"]').click();settings.$flushUpdates();shell.$flushUpdates();delete globalThis.__networkSettingsProbe;})()`,
+      `(async()=>{const probe=globalThis.__networkSettingsProbe;if(!probe)return;const shell=document.querySelector('app-shell'),settings=shell.shadowRoot.querySelector('settings-workspace');if((await window.__TAURI_INTERNALS__.invoke('app_status')).lifecycle!=='stopped')await settings.stopProxy();const profiles=settings.querySelector('network-profile-settings');if(profiles.networkEditor.open)profiles.discard();const current=await window.__TAURI_INTERNALS__.invoke('product_state'),catalog=current.preferences.networkProfiles,restore=structuredClone(probe.original);restore.preferences.decryptHttps=current.preferences.decryptHttps;await window.__TAURI_INTERNALS__.invoke('save_network_profiles',{expectedRevision:catalog.revision,profiles:probe.original.preferences.networkProfiles.customProfiles,useProfile:probe.original.preferences.networkProfiles.activeProfile.id});await profiles.load();await window.__TAURI_INTERNALS__.invoke('save_product_state',{productState:restore});await settings.loadSettings();settings.querySelector('.preferences-form .connection-advanced').open=probe.open;settings.showSettingsSection(probe.section);shell.shadowRoot.querySelector('a[data-view="'+probe.view+'"]').click();await settings.$whenRendered();await shell.$whenRendered();delete globalThis.__networkSettingsProbe;})()`,
     );
   }
 }

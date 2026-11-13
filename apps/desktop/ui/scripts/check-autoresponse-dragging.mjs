@@ -69,7 +69,7 @@ export async function checkAutoResponseDragging(page, root) {
       })),
     };
     await w.refreshAutomation();
-    w.$flushUpdates();
+    await w.$whenRendered();
   });
   try {
     await row("drag-0").click();

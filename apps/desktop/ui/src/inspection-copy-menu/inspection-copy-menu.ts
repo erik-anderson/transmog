@@ -1,4 +1,5 @@
 import { WebUIElement, observable } from "@microsoft/webui-framework";
+import { renderPresentation } from "../rendering.js";
 import {
   boundedCopy,
   CopyError,
@@ -26,15 +27,15 @@ export class InspectionCopyMenu extends WebUIElement {
   private feedbackTimer: ReturnType<typeof setTimeout> | undefined;
   private request: CopyRequest | null = null;
   private revision = 0;
+  private feedbackRevision = 0;
   private readonly placement = new MeasuredMenu(
     () => this.menu,
     (x, y) => {
       this.copyMenuX = x;
       this.copyMenuY = y;
-      this.$flushUpdates();
     },
   );
-  private readonly receive = (event: Event): void => {
+  private readonly receive = async (event: Event): Promise<void> => {
     const request = (event as CustomEvent<CopyRequest>).detail;
     if (copyDialog(request.source) !== copyDialog(this)) {
       return;
@@ -51,31 +52,54 @@ export class InspectionCopyMenu extends WebUIElement {
     }));
     this.copyMenuNote = request.note ?? "";
     this.copyMenuStatus = "";
-    this.$flushUpdates();
+    const revision = this.revision;
+    const current = await renderPresentation(this, () => [this.revision, this.request]);
+    if (
+      !current() ||
+      revision !== this.revision ||
+      this.request !== request ||
+      !this.isConnected ||
+      document.hidden ||
+      !request.source.isConnected ||
+      !request.current()
+    ) {
+      return;
+    }
     const anchor = request.anchor ?? menuAnchor(request.event, request.source);
     this.menu.showPopover({ source: request.source });
     this.placement.open(anchor);
     this.buttons()[0]?.focus();
   };
   private hideFeedback(): void {
+    this.feedbackRevision++;
     clearTimeout(this.feedbackTimer);
     this.copyFeedback = "";
     if (this.feedback?.matches(":popover-open")) {
       this.feedback.hidePopover();
     }
   }
-  private showFeedback(): void {
+  private async showFeedback(): Promise<void> {
     this.hideFeedback();
+    const revision = this.feedbackRevision,
+      dialog = copyDialog(this);
     this.copyFeedback = "Copied.";
-    this.$flushUpdates();
+    await this.$whenRendered();
+    if (
+      !this.isConnected ||
+      document.hidden ||
+      revision !== this.feedbackRevision ||
+      (dialog && !dialog.open)
+    ) {
+      return;
+    }
     this.feedback.showPopover();
     this.feedbackTimer = setTimeout(() => this.hideFeedback(), 1800);
   }
-  private readonly copied = (event: Event): void => {
+  private readonly copied = async (event: Event): Promise<void> => {
     if (
       copyDialog((event as CustomEvent<{ source: HTMLElement }>).detail.source) === copyDialog(this)
     ) {
-      this.showFeedback();
+      await this.showFeedback();
     }
   };
   protected hydratedCallback(): void {
@@ -175,7 +199,7 @@ export class InspectionCopyMenu extends WebUIElement {
       await navigator.clipboard.writeText(text);
       if (current()) {
         this.close();
-        this.showFeedback();
+        await this.showFeedback();
       }
     } catch (error: unknown) {
       if (current()) {

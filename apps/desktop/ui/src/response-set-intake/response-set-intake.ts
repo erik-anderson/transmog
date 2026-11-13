@@ -1,4 +1,5 @@
 import { WebUIElement, observable } from "@microsoft/webui-framework";
+import { captureFocus, captureRenderScope, renderPresentation } from "../rendering.js";
 import { invoke } from "@tauri-apps/api/core";
 import { ListSelection, isTextEditing } from "../list-selection.js";
 import {
@@ -143,7 +144,14 @@ export class ResponseSetIntake extends WebUIElement {
     this.intakeMore = false;
     this.updateSelection();
     this.intakeOpen = true;
-    this.$flushUpdates();
+    const presentation = await renderPresentation(this, () => [this.epoch, this.intakeOpen]);
+    if (!presentation() || epoch !== this.epoch || !this.intakeOpen) {
+      if (epoch === this.epoch) {
+        this.returnFocus = null;
+        this.close();
+      }
+      return;
+    }
     this.sourceSearch.value = "";
     this.intakeNameInput.value = "";
     this.intakeNotesInput.value = "";
@@ -365,7 +373,7 @@ export class ResponseSetIntake extends WebUIElement {
     this.invalidateReview();
     this.updateSelection();
   }
-  rowKeyboard(id: string, event: KeyboardEvent): void {
+  async rowKeyboard(id: string, event: KeyboardEvent): Promise<void> {
     const target = event.composedPath()[0];
     if (
       isTextEditing(event) ||
@@ -381,7 +389,17 @@ export class ResponseSetIntake extends WebUIElement {
       event.stopPropagation();
       this.invalidateReview();
       this.updateSelection();
-      this.$flushUpdates();
+      const focus = captureFocus(this),
+        current = captureRenderScope(this, () => [
+          this.epoch,
+          this.selection.focused,
+          this.intakeReview,
+          this.intakeOpen,
+        ]);
+      await this.$whenRendered();
+      if (!current() || !focus()) {
+        return;
+      }
       const root = this.getRootNode();
       const focused =
         root instanceof ShadowRoot
@@ -398,11 +416,19 @@ export class ResponseSetIntake extends WebUIElement {
   acknowledge(event: Event): void {
     this.intakeAcknowledged = (event.currentTarget as HTMLInputElement).checked;
   }
-  back(): void {
+  async back(): Promise<void> {
     if (!this.intakeSaving) {
+      const focus = captureFocus(this);
       this.invalidateReview();
-      this.$flushUpdates();
-      this.sourceSearch.focus({ preventScroll: true });
+      const current = captureRenderScope(this, () => [
+        this.epoch,
+        this.intakeReview,
+        this.intakeOpen,
+      ]);
+      await this.$whenRendered();
+      if (current() && focus()) {
+        this.sourceSearch.focus({ preventScroll: true });
+      }
     }
   }
   async review(): Promise<void> {
@@ -472,6 +498,7 @@ export class ResponseSetIntake extends WebUIElement {
         return;
       }
       const ownsFocus = this.active() === source;
+      const focus = captureFocus(this);
       this.intakeReview = review;
       this.reviewedInput = input;
       this.resolution = resolution;
@@ -481,8 +508,8 @@ export class ResponseSetIntake extends WebUIElement {
           ? `Move ${review.rows.length} rule${review.rows.length === 1 ? "" : "s"}`
           : "Add responses";
       this.intakeReviewSummary = `Add to ${set?.name ?? this.intakeName.trim()} · ${input.source.kind === "traffic" ? "Copy captured responses" : input.mode === "move" ? "Move rules" : "Copy rules"}`;
-      this.$flushUpdates();
-      if (ownsFocus) {
+      await this.$whenRendered();
+      if (ownsFocus && this.current(epoch) && this.intakeReview === review && focus()) {
         this.submitButton.focus({ preventScroll: true });
       }
     } catch (error) {
@@ -524,9 +551,10 @@ export class ResponseSetIntake extends WebUIElement {
       this.intakeResult = `Added ${result.addedCount} response${result.addedCount === 1 ? "" : "s"} to ${result.setName}. ${input.mode === "move" ? "Original rules were removed. Saved additions have not been applied." : "Live traffic is unchanged."}`;
       if (this.current(epoch)) {
         const ownsFocus = this.active() === this.submitButton;
+        const focus = captureFocus(this);
         this.intakeCompleted = true;
-        this.$flushUpdates();
-        if (ownsFocus) {
+        await this.$whenRendered();
+        if (ownsFocus && this.current(epoch) && this.intakeCompleted && focus()) {
           this.closeButton.focus({ preventScroll: true });
         }
       }

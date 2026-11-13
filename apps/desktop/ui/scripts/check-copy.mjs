@@ -159,6 +159,29 @@ export async function checkCopy(page, root) {
       has: page.locator(".visualizer-field", { hasText: new RegExp("^" + name + "$") }),
     });
   const menu = page.getByRole("menu", { name: "Copy inspection value", exact: true });
+  assert.equal(
+    await page.evaluate(async () => {
+      const traffic = document.querySelector("app-shell").traffic,
+        controller = [...document.querySelectorAll("inspection-copy-menu")].find(
+          (element) => !element.closest("dialog"),
+        );
+      const receiving = controller.receive(
+        new CustomEvent("inspection-copy-request", {
+          detail: {
+            source: traffic.trafficTable,
+            event: new MouseEvent("contextmenu"),
+            current: () => true,
+            actions: [{ id: "cancelled", label: "Cancelled copy", read: () => "unused" }],
+          },
+        }),
+      );
+      controller.close(false);
+      await receiving;
+      return controller.menu.matches(":popover-open");
+    }),
+    false,
+    "A cancelled copy request must not reopen its menu after rendering",
+  );
   await row("First").click();
   const selected = await visualizer.getByRole("tree").getAttribute("aria-activedescendant");
   await row("Bytes").click({ button: "right" });

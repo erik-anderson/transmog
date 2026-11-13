@@ -28,8 +28,13 @@ export class AppUpdates extends WebUIElement {
   @observable updateReminderText = initialState.updateReminderText;
   @observable updateError = initialState.updateError;
   @observable updatePreferenceBusy = initialState.updatePreferenceBusy;
+  @observable updateCancelBusy = initialState.updateCancelBusy;
   private preferenceGeneration = 0;
+  private preferenceRevision = 0;
+  private downloadGeneration: number | null = null;
+  private installWhenReadyGeneration: number | null = null;
   private generation = 0;
+  private statusRevision = 0;
   private closeChannel: Channel<null> | undefined;
 
   protected hydratedCallback(): void {
@@ -39,7 +44,11 @@ export class AppUpdates extends WebUIElement {
     void this.check(false);
   }
 
-  private apply(status: UpdateStatus): void {
+  private apply(status: UpdateStatus, preferenceRevision = this.preferenceRevision): void {
+    if (preferenceRevision !== this.preferenceRevision) {
+      status = { ...status, automaticChecksEnabled: this.updateState.automaticChecksEnabled };
+    }
+    this.statusRevision++;
     this.updateState = {
       ...status,
       channel: status.channel || this.updateState.channel || "Release",
@@ -60,26 +69,46 @@ export class AppUpdates extends WebUIElement {
   }
 
   async setAutomaticChecks(event: Event): Promise<void> {
-    const input = event.currentTarget as HTMLInputElement;
+    const eventTarget = event?.currentTarget;
+    const input = eventTarget as HTMLInputElement;
     if (this.updatePreferenceBusy) {
       return;
     }
-    this.preferenceGeneration++;
+    this.preferenceRevision++;
+    const generation = ++this.preferenceGeneration,
+      statusRevision = this.statusRevision;
+    const current = (): boolean => generation === this.preferenceGeneration && this.isConnected;
+    const accept = (status: UpdateStatus): void => {
+      if (current()) {
+        this.preferenceRevision++;
+        this.apply(
+          statusRevision === this.statusRevision
+            ? status
+            : { ...this.updateState, automaticChecksEnabled: status.automaticChecksEnabled },
+        );
+      }
+    };
     this.updatePreferenceBusy = true;
     this.updateError = "";
     try {
-      this.apply(
-        await invoke<UpdateStatus>("set_automatic_update_checks", { enabled: input.checked }),
-      );
+      accept(await invoke<UpdateStatus>("set_automatic_update_checks", { enabled: input.checked }));
     } catch (error: unknown) {
+      if (!current()) {
+        return;
+      }
       this.updateError = describeError(error);
       const status = await invoke<UpdateStatus>("update_status").catch(() => null);
+      if (!current()) {
+        return;
+      }
       if (status) {
-        this.apply(status);
+        accept(status);
       }
       input.checked = this.updateState.automaticChecksEnabled;
     } finally {
-      this.updatePreferenceBusy = false;
+      if (generation === this.preferenceGeneration) {
+        this.updatePreferenceBusy = false;
+      }
     }
   }
   async check(manual = true): Promise<void> {
@@ -87,7 +116,7 @@ export class AppUpdates extends WebUIElement {
       return;
     }
     const generation = ++this.generation;
-    const preferenceGeneration = this.preferenceGeneration;
+    const preferenceRevision = this.preferenceRevision;
     this.updateBusy = true;
     this.updateError = "";
     try {
@@ -98,7 +127,7 @@ export class AppUpdates extends WebUIElement {
       const currentSnapshot = snapshot && {
         ...snapshot,
         automaticChecksEnabled:
-          preferenceGeneration === this.preferenceGeneration
+          preferenceRevision === this.preferenceRevision
             ? snapshot.automaticChecksEnabled
             : this.updateState.automaticChecksEnabled,
       };
@@ -119,7 +148,7 @@ export class AppUpdates extends WebUIElement {
         return;
       }
       this.apply(
-        preferenceGeneration === this.preferenceGeneration
+        preferenceRevision === this.preferenceRevision
           ? status
           : { ...status, automaticChecksEnabled: this.updateState.automaticChecksEnabled },
       );
@@ -128,7 +157,7 @@ export class AppUpdates extends WebUIElement {
       if (generation === this.generation && this.isConnected) {
         if (status) {
           this.apply(
-            preferenceGeneration === this.preferenceGeneration
+            preferenceRevision === this.preferenceRevision
               ? status
               : { ...status, automaticChecksEnabled: this.updateState.automaticChecksEnabled },
           );
@@ -149,13 +178,16 @@ export class AppUpdates extends WebUIElement {
       return;
     }
     const generation = ++this.generation;
+    const preferenceRevision = this.preferenceRevision;
+    this.downloadGeneration = generation;
+    this.installWhenReadyGeneration = afterSession ? null : generation;
     this.updateBusy = true;
     this.updateError = "";
     this.apply({ ...this.updateState, phase: "downloading" });
     const progress = new Channel<UpdateStatus>();
     progress.onmessage = (status) => {
       if (generation === this.generation && this.isConnected) {
-        this.apply(status);
+        this.apply(status, preferenceRevision);
       }
     };
     try {
@@ -163,14 +195,71 @@ export class AppUpdates extends WebUIElement {
       if (generation !== this.generation || !this.isConnected) {
         return;
       }
-      this.apply(status);
-      if (!afterSession && status.phase === "ready") {
+      this.apply(status, preferenceRevision);
+      if (this.installWhenReadyGeneration === generation && status.phase === "ready") {
         this.$emit("install-update", { reopen: true });
       }
     } catch (error: unknown) {
-      if (generation === this.generation) {
+      if (generation === this.generation && this.isConnected) {
         this.updateError = describeError(error);
         this.apply({ ...this.updateState, phase: "error" });
+      }
+    } finally {
+      if (this.downloadGeneration === generation) {
+        this.downloadGeneration = null;
+        if (!this.updateCancelBusy) {
+          this.updateBusy = false;
+        }
+      }
+    }
+  }
+
+  async cancel(): Promise<void> {
+    if (this.updateCancelBusy) {
+      return;
+    }
+    let generation = this.generation;
+    const preferenceRevision = this.preferenceRevision;
+    // Continue observing the download until cancellation succeeds. A failed
+    // request must not abandon its progress or allow overlapping native work.
+    this.installWhenReadyGeneration = null;
+    this.updateCancelBusy = true;
+    this.updateError = "";
+    this.updateBusy = true;
+    try {
+      const status = await invoke<UpdateStatus>("cancel_update");
+      if (generation === this.generation && this.isConnected) {
+        generation = ++this.generation;
+        this.apply(status, preferenceRevision);
+      }
+    } catch (error: unknown) {
+      if (generation === this.generation && this.isConnected) {
+        this.updateError = describeError(error);
+      }
+    } finally {
+      if (generation === this.generation) {
+        this.updateBusy = this.downloadGeneration !== null;
+        this.updateCancelBusy = false;
+      }
+    }
+  }
+
+  async remind(): Promise<void> {
+    if (this.updateBusy) {
+      return;
+    }
+    const generation = ++this.generation,
+      preferenceRevision = this.preferenceRevision;
+    this.updateBusy = true;
+    this.updateError = "";
+    try {
+      const status = await invoke<UpdateStatus>("remind_update");
+      if (generation === this.generation && this.isConnected) {
+        this.apply(status, preferenceRevision);
+      }
+    } catch (error: unknown) {
+      if (generation === this.generation && this.isConnected) {
+        this.updateError = describeError(error);
       }
     } finally {
       if (generation === this.generation) {
@@ -179,36 +268,12 @@ export class AppUpdates extends WebUIElement {
     }
   }
 
-  async cancel(): Promise<void> {
-    ++this.generation;
-    this.updateError = "";
-    this.updateBusy = true;
-    try {
-      this.apply(await invoke<UpdateStatus>("cancel_update"));
-    } catch (error: unknown) {
-      this.updateError = describeError(error);
-    } finally {
-      this.updateBusy = false;
-    }
-  }
-
-  async remind(): Promise<void> {
+  async install(reopen: boolean): Promise<void> {
     if (this.updateBusy) {
       return;
     }
-    this.updateBusy = true;
-    this.updateError = "";
-    try {
-      this.apply(await invoke<UpdateStatus>("remind_update"));
-    } catch (error: unknown) {
-      this.updateError = describeError(error);
-    } finally {
-      this.updateBusy = false;
-    }
-  }
-
-  async install(reopen: boolean): Promise<void> {
-    ++this.generation;
+    const generation = ++this.generation,
+      preferenceRevision = this.preferenceRevision;
     this.updateBusy = true;
     this.updateError = "";
     this.apply({
@@ -219,15 +284,18 @@ export class AppUpdates extends WebUIElement {
     try {
       await invoke("install_update", { reopen });
     } catch (error: unknown) {
-      this.updateError = describeError(error);
-      this.apply(
-        await invoke<UpdateStatus>("update_status").catch(() => ({
-          ...this.updateState,
-          phase: "error",
-        })),
-      );
+      const status = await invoke<UpdateStatus>("update_status").catch(() => ({
+        ...this.updateState,
+        phase: "error",
+      }));
+      if (generation === this.generation && this.isConnected) {
+        this.updateError = describeError(error);
+        this.apply(status, preferenceRevision);
+      }
     } finally {
-      this.updateBusy = false;
+      if (generation === this.generation) {
+        this.updateBusy = false;
+      }
     }
   }
 
@@ -236,6 +304,13 @@ export class AppUpdates extends WebUIElement {
   }
   disconnectedCallback(): void {
     ++this.generation;
+    ++this.preferenceRevision;
+    ++this.preferenceGeneration;
+    this.downloadGeneration = null;
+    this.installWhenReadyGeneration = null;
+    this.updateBusy = false;
+    this.updateCancelBusy = false;
+    this.updatePreferenceBusy = false;
     this.closeChannel = undefined;
     super.disconnectedCallback();
   }

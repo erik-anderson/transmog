@@ -173,8 +173,8 @@ export async function smokeBodySource(viewer, traffic, directory, screenshotPath
       "fixture selection",
     );
     await evaluate(`(async()=>{
-      const w=${traffic},i=${inspector};w.showInspectorSide('response');if(!w.inspectorExpanded)w.toggleInspector();
-      i.viewer='auto';i.decodeContent=true;i.bodySourceMode='source';i.showMode('body');await i.inspectBody();w.$flushUpdates();i.$flushUpdates();
+      const w=${traffic},i=${inspector};w.showInspectorSide('response');if(!w.inspectorExpanded)await w.toggleInspector();
+      i.viewer='auto';i.decodeContent=true;i.bodySourceMode='source';i.showMode('body');await i.inspectBody();await w.$whenRendered();await i.$whenRendered();
     })()`);
     await wait(
       `${source}?.sourceEditorReady&&${source}.editor&&${source}.model`,
@@ -387,7 +387,9 @@ export async function smokeBodySource(viewer, traffic, directory, screenshotPath
         deviceScaleFactor: 1,
         mobile: false,
       });
-      await evaluate(`${traffic}.showInspectorSide('response');${traffic}.$flushUpdates()`);
+      await evaluate(
+        `(async()=>{${traffic}.showInspectorSide('response');await ${traffic}.$whenRendered()})()`,
+      );
       await wait(`${source}?.sourceEditorReady&&${source}.editor`, "source at " + width);
       await evaluate(`${source}.editor.layout()`);
       const layout = await evaluate(
@@ -421,7 +423,9 @@ export async function smokeBodySource(viewer, traffic, directory, screenshotPath
       if (width === 800) {
         // Exercise the ordinary compact inspector as well as its expanded
         // surface: Monaco must scroll the caret inside the real clipped pane.
-        await evaluate(`${traffic}.toggleInspector();${traffic}.$flushUpdates()`);
+        await evaluate(
+          `(async()=>{await ${traffic}.toggleInspector();await ${traffic}.$whenRendered()})()`,
+        );
         await wait(`${source}?.sourceEditorReady&&${source}.editor`, "ordinary compact source");
         await evaluate(`${source}.editor.layout();${source}.editor.focus()`);
         await key("Home", 36, 2);
@@ -441,7 +445,9 @@ export async function smokeBodySource(viewer, traffic, directory, screenshotPath
           "Native compact source caret is clipped: " + JSON.stringify(caret),
         );
         await capture("compact-caret-800");
-        await evaluate(`${traffic}.toggleInspector();${traffic}.$flushUpdates()`);
+        await evaluate(
+          `(async()=>{await ${traffic}.toggleInspector();await ${traffic}.$whenRendered()})()`,
+        );
         await wait(`${source}?.sourceEditorReady&&${source}.editor`, "expanded source restoration");
       }
     }
@@ -478,7 +484,7 @@ export async function smokeBodySource(viewer, traffic, directory, screenshotPath
       );
     const selectField = async (id, details = false) => {
       await evaluate(
-        `${fields}.selectNode(${JSON.stringify(id)},${details});${fields}.$flushUpdates();${fields}.treeViewport.focus()`,
+        `(async()=>{await ${fields}.selectNode(${JSON.stringify(id)},${details});await ${fields}.$whenRendered();${fields}.treeViewport.focus()})()`,
       );
     };
     const fieldKeyboard = async (id) => {
@@ -625,7 +631,7 @@ export async function smokeBodySource(viewer, traffic, directory, screenshotPath
     // Switching to decoded Text must retain exact original syntax and offer a
     // single whole-preview action, rather than a second identical source action.
     await evaluate(
-      `(async()=>{const i=${inspector};i.viewer='original-text';await i.inspectBody();i.$flushUpdates();})()`,
+      `(async()=>{const i=${inspector};i.viewer='original-text';await i.inspectBody();await i.$whenRendered();})()`,
     );
     await wait(`${source}?.sourceEditorReady&&${source}.model`, "decoded Text source");
     assert.equal(await evaluate(`${source}.preview.text`), raw);
@@ -693,7 +699,7 @@ export async function smokeBodySource(viewer, traffic, directory, screenshotPath
       "large retained fixture selection",
     );
     await evaluate(
-      `(async()=>{const i=${inspector};i.bodySourceMode='source';i.bodySourceWrap=true;i.bodyLimit.value='2097152';i.bodyViewerControl.value='original-text';i.bodyViewerControl.dispatchEvent(new Event('change',{bubbles:true}));await i.inspectBody();i.$flushUpdates();})()`,
+      `(async()=>{const i=${inspector};i.bodySourceMode='source';i.bodySourceWrap=true;i.bodyLimit.value='2097152';i.bodyViewerControl.value='original-text';i.bodyViewerControl.dispatchEvent(new Event('change',{bubbles:true}));await i.inspectBody();await i.$whenRendered();})()`,
     );
     const largeState = await evaluate(`(async()=>{
       const deadline=Date.now()+10000;let i,v;
@@ -821,18 +827,18 @@ export async function smokeBodySource(viewer, traffic, directory, screenshotPath
       if (saved)
         await evaluate(`(async()=>{
         const saved=globalThis.__bodySourceSmoke;if(!saved)return;
-        document.querySelector('inspection-copy-menu')?.close(false);
+        await document.querySelector('inspection-copy-menu')?.close(false);
         const w=${traffic};
         if(saved.ids.length)await window.__TAURI_INTERNALS__.invoke('remove_traffic_entries',{ids:saved.ids,restore:false});
         w.queryRevision++;await w.refreshSessions(undefined,true);
         const remaining=await window.__TAURI_INTERNALS__.invoke('query_sessions',{query:{limit:1}});
         if(remaining.totalMatched!==saved.count)throw new Error('Native body fixture cleanup changed the retained catalog');
         if(saved.selectedId&&!await w.revealSession(saved.selectedId))throw new Error('Native body fixture cleanup could not restore the previous request');
-        w.showInspectorSide(saved.side);if(w.inspectorExpanded!==saved.expanded)w.toggleInspector();
+        w.showInspectorSide(saved.side);if(w.inspectorExpanded!==saved.expanded)await w.toggleInspector();
         const root=document.querySelector('app-shell').shadowRoot;(root.getSelection?.()??document.getSelection())?.removeAllRanges();
         const i=${inspector};i.viewer=saved.viewer;i.decodeContent=saved.decode;i.bodySourceMode=saved.sourceMode;i.bodySourceWrap=saved.sourceWrap;i.bodyLimit.value=saved.limit;i.bodyOptions.open=saved.optionsOpen;i.showMode(saved.mode);
         if(['body','split'].includes(saved.mode))await i.inspectBody();
-        w.importStatus=saved.importStatus;w.$flushUpdates();
+        w.importStatus=saved.importStatus;await w.$whenRendered();
         if(saved.focus?.isConnected&&saved.focus.getClientRects().length)saved.focus.focus({preventScroll:true});
         const deadline=Date.now()+3000;while(w.totalMatched!==saved.count&&Date.now()<deadline){await new Promise(resolve=>setTimeout(resolve,25));await w.refreshSessions(undefined,true);}
         if(w.totalMatched!==saved.count)throw new Error('Native body fixture cleanup did not restore the Traffic count');

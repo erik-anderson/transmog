@@ -1,4 +1,5 @@
 import { WebUIElement, observable } from "@microsoft/webui-framework";
+import { captureFocus, captureRenderScope, renderPresentation } from "../rendering.js";
 import type {
   ValueView,
   ValueEditRequest,
@@ -42,10 +43,18 @@ export class DebugValueElement extends WebUIElement {
   private detailReturn: HTMLElement | null = null;
   private focusRestore: string | null = null;
   private moreObserver: IntersectionObserver | undefined;
+  private ready = false;
+  private valueRenderRevision = 0;
+  private detailRevision = 0;
+  protected hydratedCallback(): void {
+    this.ready = true;
+    void this.syncRenderedValue();
+  }
   valueChanged(): void {
     const replaced = this.displayedValue !== this.value?.value;
     this.displayedValue = this.value?.value;
     if (replaced) {
+      this.detailRevision++;
       this.focusKey = "";
     }
     const active = this.shadowRoot?.activeElement;
@@ -71,50 +80,61 @@ export class DebugValueElement extends WebUIElement {
     }
     this.restoreDraft();
     this.updateRows();
-    queueMicrotask(() => {
-      if (!this.isConnected) {
+    if (this.ready) {
+      void this.syncRenderedValue();
+    }
+  }
+  private async syncRenderedValue(): Promise<void> {
+    const revision = ++this.valueRenderRevision;
+    if (!this.isConnected) {
+      return;
+    }
+    await this.$whenRendered();
+    if (!this.isConnected || revision !== this.valueRenderRevision) {
+      return;
+    }
+    if (this.focusRestore !== null) {
+      const path = this.focusRestore;
+      const row = this.uniqueRow(path);
+      if (row || path === "") {
+        const parent = this.getRootNode();
+        if (
+          (parent instanceof ShadowRoot && parent.activeElement === this) ||
+          document.activeElement === document.body
+        ) {
+          this.focusPath = path;
+          this.focusKey = row?.key ?? "";
+          this.updateRows();
+          const focus = captureFocus(this);
+          await this.$whenRendered();
+          if (!this.isConnected || revision !== this.valueRenderRevision || !focus()) {
+            return;
+          }
+          const target =
+            this.editKey && row?.key === this.editKey
+              ? this.shadowRoot?.querySelector<HTMLTextAreaElement>(".value-edit textarea")
+              : this.rowElement(row);
+          target?.focus({ preventScroll: true });
+        }
+        this.focusRestore = null;
+      } else if (!this.value?.loading && !this.value?.restoring) {
+        this.focusRestore = null;
+      }
+    }
+    this.moreObserver ??= new IntersectionObserver((entries) => {
+      if (!this.value || this.value.loading || this.value.issue || this.value.restoring) {
         return;
       }
-      this.$flushUpdates();
-      if (this.focusRestore !== null) {
-        const path = this.focusRestore;
-        const row = this.uniqueRow(path);
-        if (row || path === "") {
-          const parent = this.getRootNode();
-          if (
-            (parent instanceof ShadowRoot && parent.activeElement === this) ||
-            document.activeElement === document.body
-          ) {
-            this.focusPath = path;
-            this.focusKey = row?.key ?? "";
-            this.updateRows();
-            this.$flushUpdates();
-            const target =
-              this.editKey && row?.key === this.editKey
-                ? this.shadowRoot?.querySelector<HTMLTextAreaElement>(".value-edit textarea")
-                : this.rowElement(row);
-            target?.focus({ preventScroll: true });
-          }
-          this.focusRestore = null;
-        } else if (!this.value?.loading && !this.value?.restoring) {
-          this.focusRestore = null;
-        }
-      }
-      this.moreObserver ??= new IntersectionObserver((entries) => {
-        if (!this.value || this.value.loading || this.value.issue || this.value.restoring) {
-          return;
-        }
-        const target = entries.find((entry) => entry.isIntersecting)?.target;
-        const row = this.value.rows.find((row) => row.key === target?.getAttribute("data-row-key"));
-        if (row) {
-          this.toggle(row);
-        }
-      });
-      this.moreObserver.disconnect();
-      for (const element of this.shadowRoot!.querySelectorAll("button[data-more]")) {
-        this.moreObserver.observe(element);
+      const target = entries.find((entry) => entry.isIntersecting)?.target;
+      const row = this.value.rows.find((row) => row.key === target?.getAttribute("data-row-key"));
+      if (row) {
+        this.toggle(row);
       }
     });
+    this.moreObserver.disconnect();
+    for (const element of this.shadowRoot!.querySelectorAll("button[data-more]")) {
+      this.moreObserver.observe(element);
+    }
   }
   draftChanged(): void {
     if (this.editKey && (!this.draft || !this.matchesDraft())) {
@@ -216,12 +236,21 @@ export class DebugValueElement extends WebUIElement {
         )
       : (this.shadowRoot?.querySelector<HTMLElement>(".heading") ?? undefined);
   }
-  private focusRow(row?: PropertyRow): void {
+  private async focusRow(row?: PropertyRow): Promise<void> {
+    const focus = captureFocus(this);
     this.focused(row);
-    this.$flushUpdates();
-    this.rowElement(row)?.focus();
+    const current = captureRenderScope(this, () => [
+      this.value?.epoch,
+      this.focusKey,
+      this.focusPath,
+    ]);
+    await this.$whenRendered();
+    if (current() && focus()) {
+      this.rowElement(row)?.focus();
+    }
   }
-  key(event: KeyboardEvent, row?: PropertyRow): void {
+  async key(event: KeyboardEvent, row?: PropertyRow): Promise<void> {
+    const eventTarget = event?.currentTarget;
     if (
       event
         .composedPath()
@@ -232,7 +261,7 @@ export class DebugValueElement extends WebUIElement {
     if (event.key === "F2" && row) {
       event.preventDefault();
       event.stopPropagation();
-      this.beginEdit(row);
+      await this.beginEdit(row);
       return;
     }
     const rows = this.value?.rows ?? [];
@@ -242,26 +271,26 @@ export class DebugValueElement extends WebUIElement {
       event.preventDefault();
       event.stopPropagation();
       if (event.key === "Home") {
-        this.focusRow();
+        await this.focusRow();
       } else if (event.key === "End") {
-        this.focusRow(rows.at(-1));
+        await this.focusRow(rows.at(-1));
       } else if (event.key === "ArrowDown") {
-        this.focusRow(rows[Math.min(index + 1, rows.length - 1)]);
+        await this.focusRow(rows[Math.min(index + 1, rows.length - 1)]);
       } else if (event.key === "ArrowUp") {
-        this.focusRow(rows[index - 1]);
+        await this.focusRow(rows[index - 1]);
       } else if (event.key === "ArrowRight") {
         if (!expanded && (!row || row.expandable || row.offset !== undefined)) {
           this.toggle(row);
         } else if (expanded) {
           const child = rows[index + 1];
           if (child && (!row || child.depth > row.depth)) {
-            this.focusRow(child);
+            await this.focusRow(child);
           }
         }
       } else if (expanded) {
         this.toggle(row);
       } else {
-        this.focusRow(
+        await this.focusRow(
           row
             ? rows
                 .slice(0, index)
@@ -272,26 +301,27 @@ export class DebugValueElement extends WebUIElement {
       }
       return;
     }
-    if (event.key === "Enter" && event.target === event.currentTarget) {
+    if (event.key === "Enter" && event.target === eventTarget) {
       event.preventDefault();
       event.stopPropagation();
       if (!row || row.expandable || row.offset !== undefined) {
         this.toggle(row);
       } else {
-        this.showValue(row);
+        await this.showValue(row);
       }
       return;
     }
     this.menu(event, row);
   }
-  beginEdit(row: PropertyRow): void {
+  async beginEdit(row: PropertyRow): Promise<void> {
     if (!this.value?.editable || this.value.expired || this.value.loading || this.editBusy) {
       return;
     }
     if (!row.writable) {
-      this.showValue(row);
+      await this.showValue(row);
       return;
     }
+    const focus = captureFocus(this);
     this.editKey = row.key;
     this.editRevision++;
     this.editEpoch = this.value.epoch;
@@ -301,7 +331,16 @@ export class DebugValueElement extends WebUIElement {
     this.editHint = this.replacementHint(row);
     this.rememberDraft(row);
     this.updateRows();
-    this.$flushUpdates();
+    const current = captureRenderScope(this, () => [
+      this.editRevision,
+      this.editKey,
+      this.editDraft,
+      this.value?.epoch,
+    ]);
+    await this.$whenRendered();
+    if (!current() || !focus()) {
+      return;
+    }
     const input = this.shadowRoot?.querySelector<HTMLTextAreaElement>(".value-edit textarea");
     input?.focus();
     input?.select();
@@ -310,26 +349,26 @@ export class DebugValueElement extends WebUIElement {
     this.editDraft = (event.target as HTMLTextAreaElement).value;
     this.rememberDraft();
   }
-  editKeydown(event: KeyboardEvent, row: PropertyRow): void {
+  async editKeydown(event: KeyboardEvent, row: PropertyRow): Promise<void> {
     event.stopPropagation();
     if (event.isComposing || event.repeat) {
       return;
     }
     if (event.key === "Escape" && !this.editBusy) {
       event.preventDefault();
-      this.cancelEdit(row);
+      await this.cancelEdit(row);
     } else if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       this.saveEdit(event, row);
     }
   }
-  cancelEdit(row: PropertyRow): void {
+  async cancelEdit(row: PropertyRow): Promise<void> {
     this.editRevision++;
     this.editKey = "";
     this.rememberDraft();
     this.editIssue = "";
     this.updateRows();
-    this.focusRow(row);
+    await this.focusRow(row);
   }
   saveEdit(event: Event, row: PropertyRow): void {
     event.preventDefault();
@@ -346,7 +385,7 @@ export class DebugValueElement extends WebUIElement {
       key: this.value.key,
       row,
       expression: this.editDraft.trim(),
-      reply: (issue: string) => {
+      reply: async (issue: string) => {
         if (
           !this.isConnected ||
           this.editRevision !== revision ||
@@ -365,7 +404,7 @@ export class DebugValueElement extends WebUIElement {
           this.rememberDraft();
           this.updateRows();
           if (focused) {
-            this.focusRow(
+            await this.focusRow(
               this.value.value === value
                 ? this.value.rows.find((item) => item.key === row.key)
                 : this.uniqueRow(JSON.stringify(row.path)),
@@ -376,7 +415,7 @@ export class DebugValueElement extends WebUIElement {
     };
     this.$emit("inspect-edit", request);
   }
-  showValue(row?: PropertyRow): void {
+  async showValue(row?: PropertyRow): Promise<void> {
     const value = row?.value ?? this.value?.value;
     if (!value) {
       return;
@@ -387,13 +426,20 @@ export class DebugValueElement extends WebUIElement {
     this.detailShortened = value.truncated;
     this.detailReadOnly = !!row && this.value?.editable === true && !row.writable;
     this.detailReturn = this.rowElement(row) ?? null;
-    this.$flushUpdates();
-    this.detailDialog.showModal();
+    this.detailRevision++;
+    const current = await renderPresentation(this, () => [this.detailRevision, this.value?.epoch]);
+    if (current()) {
+      this.detailDialog.showModal();
+    }
   }
   closeDetail(): void {
+    this.detailRevision++;
     this.detailDialog.close();
   }
   detailClosed(): void {
+    if (this.detailDialog.open) {
+      return;
+    }
     if (this.detailReturn?.isConnected) {
       this.detailReturn.focus();
     }
@@ -459,17 +505,18 @@ export class DebugValueElement extends WebUIElement {
         !this.value.expired &&
         this.value.rows === displayedRows,
       actions: [
-        { id: "view", label: "View value", run: () => this.showValue(row) },
+        { id: "view", label: "View value", run: async () => await this.showValue(row) },
         ...(row && view.editable && row.writable
-          ? [{ id: "edit", label: "Edit value", run: () => this.beginEdit(row) }]
+          ? [{ id: "edit", label: "Edit value", run: async () => await this.beginEdit(row) }]
           : []),
         ...(addressable
           ? [
               {
                 id: "watch",
                 label: "Add to Watch",
-                run: () =>
-                  this.$emit("inspect-watch", { key: view.key, row } satisfies ValueWatchRequest),
+                run: () => {
+                  this.$emit("inspect-watch", { key: view.key, row } satisfies ValueWatchRequest);
+                },
               },
             ]
           : []),

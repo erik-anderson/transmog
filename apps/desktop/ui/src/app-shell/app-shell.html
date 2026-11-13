@@ -70,14 +70,14 @@
 
       <main w-ref="{workspaceContent}" tabindex="-1">
         <traffic-workspace ?viewer-mode="{{viewerMode}}" w-ref="{traffic}" view="{{activeView}}" lifecycle="{{lifecycleKind}}" pending="{{proxyPending}}" :preferences="{{workspace}}" :autoresponseState="{{autoresponseState}}" :autoresponsePending="{{autoresponsePending}}"></traffic-workspace>
-        <if condition="!viewerMode"><breakpoint-workspace view="{{activeView}}" theme="{{theme}}"></breakpoint-workspace></if>
-        <if condition="!viewerMode"><automation-workspace :previewReportSetId="{{capturedPreviewController.previewReportSetId}}" :previewReportAvailable="{{capturedPreviewController.previewReportAvailable}}" :enabledScriptCount="{{enabledScriptCount}}" w-ref="{automation}" view="{{activeView}}" theme="{{theme}}" :selection="{{selection}}" :autoresponseState="{{autoresponseState}}" :autoresponsePending="{{autoresponsePending}}" :preferences="{{workspace}}" :preferencesReady="{{workspaceLoaded}}"></automation-workspace></if>
-        <composer-workspace w-ref="{composer}" view="{{activeView}}" theme="{{theme}}"></composer-workspace>
-        <if condition="!viewerMode"><capture-workspace @traffic-files-request="{openTrafficFiles()}" view="{{activeView}}" lifecycle="{{lifecycleKind}}" @status-changed="{onCaptureStatus(e)}"></capture-workspace></if>
+        <if condition="!viewerMode && loadedWorkspaces.breakpoints"><breakpoint-workspace view="{{activeView}}" theme="{{theme}}"></breakpoint-workspace></if>
+        <if condition="!viewerMode && loadedWorkspaces.automation"><automation-workspace :previewReportSetId="{{capturedPreviewState.controller.previewReportSetId}}" :previewReportAvailable="{{capturedPreviewState.controller.previewReportAvailable}}" :enabledScriptCount="{{enabledScriptCount}}" w-ref="{automation}" view="{{activeView}}" theme="{{theme}}" :selection="{{selection}}" :autoresponseState="{{autoresponseState}}" :autoresponsePending="{{autoresponsePending}}" :preferences="{{workspace}}" :preferencesReady="{{workspaceLoaded}}"></automation-workspace></if>
+        <if condition="loadedWorkspaces.composer"><composer-workspace w-ref="{composer}" view="{{activeView}}" theme="{{theme}}"></composer-workspace></if>
+        <if condition="!viewerMode && loadedWorkspaces.captures"><capture-workspace @traffic-files-request="{openTrafficFiles()}" view="{{activeView}}" lifecycle="{{lifecycleKind}}" @status-changed="{onCaptureStatus(e)}"></capture-workspace></if>
         <if condition="!viewerMode"><settings-workspace w-ref="{settings}" view="{{activeView}}" @check-updates="{checkUpdates()}" @extension-debug-request="{openExtensionDebugger(e)}"></settings-workspace></if>
         <comparison-workspace w-ref="{comparison}"></comparison-workspace>
         <if condition="!viewerMode"><response-set-intake w-ref="{responseSetIntake}"></response-set-intake></if>
-        <captured-preview w-ref="{capturedPreviewSurface}" :controller="{{capturedPreviewController}}"></captured-preview>
+        <captured-preview w-ref="{capturedPreviewSurface}" :state="{{capturedPreviewState}}"></captured-preview>
       </main>
       <if condition="debuggerDocked"><if condition="debuggerPlacement == 'right'"><pane-divider class="debugger-divider" basis="previous" orientation="vertical" label="Resize debugger" value="{{debuggerSplit}}" initial="40" @pane-resize="{resizeDebugger(e)}"></pane-divider></if><if condition="debuggerPlacement == 'bottom'"><pane-divider class="debugger-divider" basis="previous" orientation="horizontal" label="Resize debugger" value="{{debuggerSplit}}" initial="40" @pane-resize="{resizeDebugger(e)}"></pane-divider></if><debugger-workspace w-ref="{debuggerDock}" class="debugger-dock"></debugger-workspace></if>
     </div>

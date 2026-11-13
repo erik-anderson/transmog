@@ -14,7 +14,7 @@ export async function smokeConnectTunnels(viewer) {
       detail.performance={points:[],protocols:[],transports:[{leg:'client',connectionId:'native-connect',tunnelDestination:'media.stores.com:443',tlsVersion:'TLSv1.3'}]};
       workspace.applyDetail(detail);
       const inspector=workspace.querySelector('message-inspector[side="response"]');
-      inspector.viewer='auto';inspector.showMode('body');await inspector.inspectBody();inspector.$flushUpdates();
+      inspector.viewer='auto';inspector.showMode('body');await inspector.inspectBody();await inspector.$whenRendered();
       return {text:inspector.bodyText,notice:inspector.bodyNotice,rendered:inspector.textContent};
     })()`);
     assert.equal(decrypted.text, "saved viewer response");
@@ -27,7 +27,7 @@ export async function smokeConnectTunnels(viewer) {
       detail.performance.transports=[{leg:'upstream',connectionId:'native-opaque',tunnelDestination:'media.stores.com:443'}];
       workspace.applyDetail(detail);
       const inspector=workspace.querySelector('message-inspector[side="response"]');
-      await inspector.inspectBody();inspector.$flushUpdates();
+      await inspector.inspectBody();await inspector.$whenRendered();
       return {text:inspector.bodyText,notice:inspector.bodyNotice,rendered:inspector.textContent};
     })()`);
     assert.equal(opaque.text, "");

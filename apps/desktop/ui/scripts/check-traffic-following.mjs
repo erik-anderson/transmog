@@ -187,11 +187,11 @@ export async function checkTrafficFollowing(page, root) {
   }
 
   // A layout change can queue a scroll event before ResizeObserver follows the new bottom.
-  const resized = await page.evaluate(() => {
+  const resized = await page.evaluate(async () => {
     const t = document.querySelector("app-shell").traffic,
       top = t.sessionScroller.scrollTop;
     t.preferences = { ...t.preferences, listSplit: t.preferences.listSplit - 10 };
-    t.$flushUpdates();
+    await t.$whenRendered();
     const gap =
       t.sessionScroller.scrollHeight - t.sessionScroller.clientHeight - t.sessionScroller.scrollTop;
     const unchanged = t.sessionScroller.scrollTop === top;

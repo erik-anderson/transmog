@@ -1,3 +1,4 @@
+import { captureFocus, captureRenderScope } from "../rendering.js";
 import { WebUIElement, observable } from "@microsoft/webui-framework";
 import { invoke } from "@tauri-apps/api/core";
 import initialState from "../initial-state.json";
@@ -51,7 +52,8 @@ export class LoopbackExemptions extends WebUIElement {
   private readonly collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
   async open(event?: Event): Promise<void> {
-    this.opener = event?.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+    const eventTarget = event?.currentTarget;
+    this.opener = eventTarget instanceof HTMLElement ? eventTarget : null;
     if (!this.exemptionDialog.open) {
       this.exemptionDialog.showModal();
     }
@@ -314,7 +316,8 @@ export class LoopbackExemptions extends WebUIElement {
     this.select(sid, event.shiftKey, event.ctrlKey || event.metaKey);
     (event.currentTarget as HTMLElement).focus({ preventScroll: true });
   }
-  rowKey(event: KeyboardEvent, sid: string): void {
+  async rowKey(event: KeyboardEvent, sid: string): Promise<void> {
+    const focus = captureFocus(this);
     if (this.loopbackBusy || (event.target as Element).closest("input")) {
       return;
     }
@@ -354,7 +357,11 @@ export class LoopbackExemptions extends WebUIElement {
       this.focused = target;
       this.render();
     }
-    this.$flushUpdates();
+    const current = captureRenderScope(this, () => [this.focused, this.loopbackBusy]);
+    await this.$whenRendered();
+    if (!current() || !focus()) {
+      return;
+    }
     const row = this.containerTable.querySelector<HTMLElement>(
       'tr[data-appcontainer-sid="' + CSS.escape(target) + '"]',
     );

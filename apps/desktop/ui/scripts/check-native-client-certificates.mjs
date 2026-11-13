@@ -455,7 +455,7 @@ try {
     );
     for (const route of ["http1", "http2", "http3"])
       await evaluate(
-        `(async()=>{const editor=${shell}.settings.clientCertificates;editor.addRule();const set=(name,value)=>{const input=editor.certificatePolicyForm.elements.namedItem(name);input.value=String(value);input.dispatchEvent(new Event(input instanceof HTMLSelectElement?'change':'input',{bubbles:true}));};set('host','localhost');set('port',${fixture[route]});set('action','automatic');await Promise.resolve();editor.$flushUpdates();set('identity',${JSON.stringify(fixture.identity)});})()`,
+        `(async()=>{const editor=${shell}.settings.clientCertificates;editor.addRule();const set=(name,value)=>{const input=editor.certificatePolicyForm.elements.namedItem(name);input.value=String(value);input.dispatchEvent(new Event(input instanceof HTMLSelectElement?'change':'input',{bubbles:true}));};set('host','localhost');set('port',${fixture[route]});set('action','automatic');await Promise.resolve();await editor.$whenRendered();set('identity',${JSON.stringify(fixture.identity)});})()`,
       );
     await evaluate(`${shell}.settings.clientCertificates.certificatePolicyForm.requestSubmit()`);
     await until(
@@ -481,7 +481,7 @@ try {
     );
     for (const rule of pinned.rules)
       await evaluate(
-        `(()=>{const editor=${shell}.settings.clientCertificates;editor.chooseRule(${JSON.stringify(rule.id)});const mode=editor.certificatePolicyForm.elements.namedItem('selector');mode.value='attributes';mode.dispatchEvent(new Event('change',{bubbles:true}));editor.$flushUpdates();const subject=editor.certificatePolicyForm.elements.namedItem('CN-subject');subject.value=${JSON.stringify(commonName)};subject.dispatchEvent(new Event('input',{bubbles:true}));})()`,
+        `(async ()=>{const editor=${shell}.settings.clientCertificates;editor.chooseRule(${JSON.stringify(rule.id)});const mode=editor.certificatePolicyForm.elements.namedItem('selector');mode.value='attributes';mode.dispatchEvent(new Event('change',{bubbles:true}));await editor.$whenRendered();const subject=editor.certificatePolicyForm.elements.namedItem('CN-subject');subject.value=${JSON.stringify(commonName)};subject.dispatchEvent(new Event('input',{bubbles:true}));})()`,
       );
     await evaluate(`${shell}.settings.clientCertificates.certificatePolicyForm.requestSubmit()`);
     await until(

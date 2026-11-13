@@ -1,4 +1,10 @@
 import "../draft-status/draft-status.js";
+import {
+  captureFocus,
+  captureRenderScope,
+  renderPresentation,
+  trackScrollInput,
+} from "../rendering.js";
 import "../script-diagnostics/script-diagnostics.js";
 import type { DebugSessionInfo } from "../debugger-workspace/models.js";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -110,6 +116,7 @@ export class ScriptEditor extends WorkspaceElement {
   handlerMenu!: HTMLDivElement;
   sampleButton!: HTMLButtonElement;
   private helpOpener: HTMLElement | null = null;
+  private helpEpoch = 0;
   private sourceAnalysis: ScriptAnalysis | null = null;
   private readonly analysisCache = new Map<string, ScriptAnalysis>();
   private analyzedSource = "";
@@ -257,11 +264,20 @@ export class ScriptEditor extends WorkspaceElement {
     this.themeChanged();
   };
 
-  openScriptHelp(sample = false): void {
+  async openScriptHelp(sample = false): Promise<void> {
+    ++this.helpEpoch;
     this.helpOpener = sample ? this.sampleButton : this.scriptHelpButton;
     if (sample) {
       this.helpSearch = "Explore the API without changing traffic";
-      this.filterScriptHelp();
+      this.updateHelpSections();
+    }
+    const current = await renderPresentation(this, () => [
+      this.helpEpoch,
+      this.active,
+      this.helpSections,
+    ]);
+    if (!current() || !this.active) {
+      return;
     }
     this.scriptHelpDialog.showModal();
     this.syncApiReference();
@@ -275,10 +291,14 @@ export class ScriptEditor extends WorkspaceElement {
     }
   }
   closeScriptHelp(): void {
+    this.helpEpoch++;
     this.disposeApiReference();
-    this.scriptHelpDialog.close();
+    this.scriptHelpDialog?.close();
   }
   scriptHelpClosed(): void {
+    if (this.scriptHelpDialog.open) {
+      return;
+    }
     this.disposeApiReference();
     if (this.active && this.isConnected) {
       const opener = this.helpOpener?.getClientRects().length
@@ -287,11 +307,30 @@ export class ScriptEditor extends WorkspaceElement {
       opener.focus();
     }
   }
-  searchScriptHelp(event: Event): void {
+  async searchScriptHelp(event: Event): Promise<void> {
     this.helpSearch = (event.target as HTMLInputElement).value;
-    this.filterScriptHelp();
+    await this.filterScriptHelp();
   }
-  private filterScriptHelp(): void {
+  private async filterScriptHelp(): Promise<void> {
+    this.updateHelpSections();
+    const current = captureRenderScope(this, () => [
+        this.helpEpoch,
+        this.helpSections,
+        this.active,
+      ]),
+      reading = trackScrollInput(this.scriptHelpContent);
+    try {
+      await this.$whenRendered();
+      if (!current() || !this.scriptHelpDialog.open || !reading.unchanged()) {
+        return;
+      }
+      this.scriptHelpContent.scrollTop = 0;
+      this.syncApiReference(undefined, true);
+    } finally {
+      reading.dispose();
+    }
+  }
+  private updateHelpSections(): void {
     const terms = this.helpSearch.toLocaleLowerCase().split(/\s+/).filter(Boolean);
     this.helpSections = this.allHelpSections.filter((section) => {
       const text = [
@@ -304,9 +343,6 @@ export class ScriptEditor extends WorkspaceElement {
       const searchable = text.join(" ").toLocaleLowerCase();
       return terms.every((term) => searchable.includes(term));
     });
-    this.$flushUpdates();
-    this.scriptHelpContent.scrollTop = 0;
-    this.syncApiReference(undefined, true);
   }
   syncApiReference(sectionId?: string, search = false): void {
     if (sectionId && sectionId !== "api-reference") {
@@ -528,8 +564,14 @@ export class ScriptEditor extends WorkspaceElement {
       this.current(version) &&
       (!root.activeElement || root.activeElement === focused)
     ) {
-      this.$flushUpdates();
-      this.handlerButton.focus();
+      await this.$whenRendered();
+      if (
+        this.active &&
+        this.current(version) &&
+        (!root.activeElement || root.activeElement === focused)
+      ) {
+        this.handlerButton.focus();
+      }
     }
   }
   async saveScript(): Promise<void> {
@@ -699,7 +741,7 @@ export class ScriptEditor extends WorkspaceElement {
     }
     this.diffModels = [];
   }
-  useSelectedTestRequest(): void {
+  async useSelectedTestRequest(): Promise<void> {
     const request = this.selection?.detail.requests.find(
       (head) => head.boundary === "client-request",
     );
@@ -708,7 +750,7 @@ export class ScriptEditor extends WorkspaceElement {
     }
     this.scriptTestUrl.value = request.target ?? "";
     this.scriptTestMethod.value = request.method ?? "GET";
-    this.scriptTestHeaders.replaceValue(
+    const rendered = this.scriptTestHeaders.replaceValue(
       request.headers
         .filter((header) => !header.sensitive)
         .map((header) => header.name + ": " + header.value)
@@ -716,6 +758,7 @@ export class ScriptEditor extends WorkspaceElement {
     );
     this.scriptTestBody.value = "";
     this.markTestChanged();
+    await rendered;
   }
   protected hydratedCallback(): void {
     void this.watchDebugger();
@@ -730,7 +773,7 @@ export class ScriptEditor extends WorkspaceElement {
       void this.ensureEditor();
       this.scheduleRuntimeRefresh();
     } else {
-      this.scriptHelpDialog?.close();
+      this.closeScriptHelp();
       this.handlerMenu?.hidePopover();
       this.sourceMenu?.hidePopover();
       this.debugMenu?.hidePopover();
@@ -801,6 +844,7 @@ export class ScriptEditor extends WorkspaceElement {
     }
   }
   disconnectedCallback(): void {
+    this.helpEpoch++;
     this.debuggerUnlisten?.();
     this.debuggerUnlisten = null;
     this.disposeApiReference();
@@ -858,7 +902,7 @@ export class ScriptEditor extends WorkspaceElement {
     ];
     this.helpSections = this.allHelpSections;
     this.editorLoaded = true;
-    this.$flushUpdates();
+    await this.$whenRendered();
     await waitForStyles(this.monacoStyles);
     if (!this.isConnected) {
       return;
@@ -949,11 +993,12 @@ export class ScriptEditor extends WorkspaceElement {
     }
     this.sourceEditor.onDidChangeModelContent(() => this.markScriptChanged());
     await this.refreshSourceAnalysis();
-    this.scriptReady = true;
-    this.$flushUpdates();
+    if (!this.isConnected) {
+      return;
+    }
     this.initialDraft = structuredClone(this.scriptDraft());
     this.savedDraft = saved ? structuredClone(saved) : null;
-    this.$flushUpdates();
+    this.scriptReady = true;
     this.renderScriptStatus(status);
     this.updateDraftState();
     this.sourceEditor.updateOptions({ readOnly: false });
@@ -1063,7 +1108,10 @@ export class ScriptEditor extends WorkspaceElement {
     };
     const requestHeaderSnapshot = readHeaders(this.scriptTestHeaders),
       responseHeaderSnapshot = readHeaders(this.scriptTestResponseHeaders);
-    const requireHeaders = (snapshot: ReturnType<typeof readHeaders>, editor: HeaderEditor) => {
+    const requireHeaders = async (
+      snapshot: ReturnType<typeof readHeaders>,
+      editor: HeaderEditor,
+    ) => {
       if (snapshot.headers) {
         return snapshot.headers;
       }
@@ -1072,7 +1120,7 @@ export class ScriptEditor extends WorkspaceElement {
         if (surface) {
           surface.open = true;
         }
-        editor.reportValidity();
+        await editor.reportValidity();
       }
       throw snapshot.error;
     };
@@ -1097,7 +1145,7 @@ export class ScriptEditor extends WorkspaceElement {
       canEditHeaders: this.scriptTestHeaderEdits.checked,
     };
     try {
-      const requestHeaders = requireHeaders(requestHeaderSnapshot, this.scriptTestHeaders);
+      const requestHeaders = await requireHeaders(requestHeaderSnapshot, this.scriptTestHeaders);
       const candidate = this.candidate ?? (await this.validateDraft());
       if (!candidate || !this.current(version)) {
         return;
@@ -1116,7 +1164,7 @@ export class ScriptEditor extends WorkspaceElement {
       const responseHeaders = (
         input.mode === "scenario" ? input.outcome === "response" : hasResponse
       )
-        ? requireHeaders(responseHeaderSnapshot, this.scriptTestResponseHeaders)
+        ? await requireHeaders(responseHeaderSnapshot, this.scriptTestResponseHeaders)
         : null;
       this.scriptText = "Running the sandbox for this input…";
       this.statusKind = "progress";
@@ -1489,7 +1537,11 @@ export class ScriptEditor extends WorkspaceElement {
     this.draftSettings = scriptSettings(draft);
     this.diffStale = false;
     this.diffVisible = true;
-    this.$flushUpdates();
+    const models = this.diffModels;
+    await this.$whenRendered();
+    if (!this.active || !this.isConnected || !this.diffVisible || this.diffModels !== models) {
+      return false;
+    }
     this.revisionDiff = this.monaco!.editor.createDiffEditor(this.scriptDiffEditor, {
       automaticLayout: true,
       accessibilitySupport: "on",
@@ -1647,6 +1699,25 @@ export class ScriptEditor extends WorkspaceElement {
       throw new Error("Script editor is still loading");
     }
     const data = new FormData(this.scriptForm);
+    // Disabled authoring controls still belong to the draft, including the
+    // interval between changing readiness and rendering its enabled controls.
+    for (const field of this.scriptForm.elements) {
+      if (
+        !(
+          field instanceof HTMLInputElement ||
+          field instanceof HTMLTextAreaElement ||
+          field instanceof HTMLSelectElement
+        ) ||
+        !field.name ||
+        !field.matches(":disabled") ||
+        (field instanceof HTMLInputElement &&
+          ["checkbox", "radio"].includes(field.type) &&
+          !field.checked)
+      ) {
+        continue;
+      }
+      data.append(field.name, field.value);
+    }
     const source = this.reviewingTypeScript ? this.reviewJavascript : this.sourceEditor.getValue();
     const handlers = this.reviewingTypeScript ? this.reviewHandlers : this.sourceHandlers(source);
     const writeHeaders = [
@@ -2291,7 +2362,11 @@ export class ScriptEditor extends WorkspaceElement {
     ];
     this.diffStale = false;
     this.diffVisible = true;
-    this.$flushUpdates();
+    const models = this.diffModels;
+    await this.$whenRendered();
+    if (!this.active || !this.isConnected || !this.diffVisible || this.diffModels !== models) {
+      return false;
+    }
     this.revisionDiff = this.monaco!.editor.createDiffEditor(this.scriptDiffEditor, {
       automaticLayout: true,
       accessibilitySupport: "on",
@@ -2453,7 +2528,8 @@ export class ScriptEditor extends WorkspaceElement {
   historyToggled(event: Event): void {
     this.historyOpen = (event.currentTarget as HTMLDetailsElement).open;
   }
-  restoreJavaScriptDraft(index: number): void {
+  async restoreJavaScriptDraft(index: number): Promise<void> {
+    const focus = captureFocus(this);
     const source = this.javascriptHistory[index];
     if (this.scriptBusy || this.reviewingTypeScript || source === undefined) {
       return;
@@ -2472,12 +2548,19 @@ export class ScriptEditor extends WorkspaceElement {
       this.replaceSource(source, "javascript");
       this.closeComparison();
       this.historyOpen = false;
-      this.$flushUpdates();
-      this.scriptEditor.scrollIntoView({ block: "nearest" });
-      this.focusEditor();
       this.feedback(
         "Previous JavaScript draft restored. Current JavaScript was retained. Save and apply to change live traffic.",
       );
+      const current = captureRenderScope(this, () => [
+        this.editVersion,
+        this.active,
+        this.language,
+      ]);
+      await this.$whenRendered();
+      if (current() && focus() && this.active) {
+        this.scriptEditor.scrollIntoView({ block: "nearest" });
+        this.focusEditor();
+      }
     } catch (error: unknown) {
       this.scriptFailure("Restore failed", error);
     }

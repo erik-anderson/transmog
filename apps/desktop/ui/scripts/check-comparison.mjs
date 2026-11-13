@@ -21,6 +21,32 @@ export async function checkComparison(page, root) {
   assert.match(await dialog.textContent(), /fixture-left.saz/);
   assert.match(await dialog.textContent(), /No source body retained/);
   assert.equal(await dialog.locator("script").count(), 0);
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.deferComparison = true;
+    delete globalThis.__workspaceFixture.releaseComparison;
+    globalThis.__olderPair = document.querySelector("app-shell").comparison.openPair({
+      left: "first",
+      right: "second",
+      reason: "Older pairing",
+    });
+  });
+  await page.waitForFunction(() => !!globalThis.__workspaceFixture.releaseComparison);
+  const pairing = await page.evaluate(async () => {
+    const c = document.querySelector("app-shell").comparison;
+    await c.openPair({ left: "first", right: "third", reason: "Current pairing" });
+    const expected = c.comparisonPairingNote;
+    globalThis.__workspaceFixture.releaseComparison();
+    delete globalThis.__workspaceFixture.releaseComparison;
+    await globalThis.__olderPair;
+    delete globalThis.__olderPair;
+    return { expected, actual: c.comparisonPairingNote };
+  });
+  assert.match(pairing.expected, /^Current pairing/);
+  assert.equal(
+    pairing.actual,
+    pairing.expected,
+    "An older pair with the same left request replaced the current pairing note",
+  );
   const fieldDetails = dialog.locator(".comparison-fields");
   await fieldDetails.locator("summary").click();
   await dialog.getByRole("combobox", { name: "Field comparison format" }).selectOption("msgpack");
@@ -362,9 +388,75 @@ export async function checkComparison(page, root) {
     retainedComparison,
   );
   assert.match(await dialog.textContent(), /source is no longer retained/);
-  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  for (const fails of [false, true]) {
+    const result = await page.evaluate(async (fails) => {
+      const shell = document.querySelector("app-shell"),
+        comparison = shell.comparison;
+      const original = window.__TAURI_INTERNALS__.invoke;
+      const selected = shell.traffic.selectedSessionId;
+      let entered, release;
+      const waiting = new Promise((resolve) => {
+        entered = resolve;
+      });
+      const gate = new Promise((resolve) => {
+        release = resolve;
+      });
+      window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+        if (command === "query_traffic_view" && args.query?.focusId === "first") {
+          const view = await original(command, args);
+          entered();
+          await gate;
+          if (fails) throw new Error("Older comparison source failed");
+          return view;
+        }
+        return original(command, args);
+      };
+      try {
+        const older = shell.onComparisonSource({ detail: "first", stopPropagation() {} });
+        await waiting;
+        await comparison.openPair({
+          left: "first",
+          right: "third",
+          reason: "New comparison during source lookup",
+        });
+        const current = comparison.comparisonResult,
+          status = comparison.comparisonStatus;
+        release();
+        await older;
+        return {
+          open: comparison.comparisonDialog.open,
+          same: comparison.comparisonResult === current,
+          status: comparison.comparisonStatus,
+          expectedStatus: status,
+          selected: shell.traffic.selectedSessionId,
+          expectedSelection: selected,
+        };
+      } finally {
+        release();
+        window.__TAURI_INTERNALS__.invoke = original;
+      }
+    }, fails);
+    assert.equal(result.open, true, "An old source lookup closed a newer comparison");
+    assert.equal(result.same, true, "An old source lookup replaced a newer comparison");
+    assert.equal(
+      result.status,
+      result.expectedStatus,
+      "An old source lookup changed newer comparison feedback",
+    );
+    assert.equal(
+      result.selected,
+      result.expectedSelection,
+      "An obsolete source lookup changed Traffic selection",
+    );
+  }
+  await dialog.getByRole("button", { name: "Open left source", exact: true }).click();
   await page.waitForFunction(
     () => document.querySelector("app-shell").comparison.subjects === null,
+  );
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").traffic.selectedSessionId),
+    "first",
+    "Current comparison source did not open in Traffic",
   );
   await page.evaluate(async () =>
     document.querySelector("app-shell").traffic.compareCaptureScopes(),

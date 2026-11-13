@@ -1,4 +1,5 @@
 import { observable } from "@microsoft/webui-framework";
+import { captureFocus, captureRenderScope } from "../rendering.js";
 import { invoke } from "@tauri-apps/api/core";
 import { WorkspaceElement } from "../workspace-element.js";
 import { describeError } from "../utilities.js";
@@ -277,12 +278,20 @@ export class ComparisonWorkspace extends WorkspaceElement {
       this.comparisonStatus = result.complete
         ? "All applicable evidence compared."
         : "Coverage is limited; inspect unavailable, excluded and not-compared evidence.";
-      this.$flushUpdates();
-      if (!active) {
-        this.comparisonScroll.scrollTop = 0;
-      }
       if (previous) {
         void invoke("close_comparison", { id: previous }).catch(() => {});
+      }
+      const top = this.comparisonScroll.scrollTop;
+      await this.$whenRendered();
+      if (
+        !this.isConnected ||
+        revision !== this.revision ||
+        this.comparisonResult?.id !== result.id
+      ) {
+        return;
+      }
+      if (!active && this.comparisonScroll.scrollTop === top) {
+        this.comparisonScroll.scrollTop = 0;
       }
       this.monitorSource();
     } catch (error: unknown) {
@@ -524,6 +533,7 @@ export class ComparisonWorkspace extends WorkspaceElement {
     }
   }
   async change(direction: number): Promise<void> {
+    const focus = captureFocus(this);
     const changeRevision = ++this.changeRevision;
     const result = this.comparisonResult;
     if (!result) {
@@ -544,7 +554,16 @@ export class ComparisonWorkspace extends WorkspaceElement {
         this.comparisonActive = row.index;
         this.renderRows();
         this.comparisonChangePosition = `Change at evidence row ${row.index + 1} of ${result.totalRows}`;
-        this.$flushUpdates();
+        await this.$whenRendered();
+        if (
+          !this.isConnected ||
+          changeRevision !== this.changeRevision ||
+          this.comparisonResult?.id !== result.id ||
+          this.comparisonActive !== row.index ||
+          !focus()
+        ) {
+          return;
+        }
         const root = this.getRootNode() as ShadowRoot;
         const target = root.getElementById("comparison-change-" + row.index);
         target?.focus({ preventScroll: true });
@@ -575,6 +594,15 @@ export class ComparisonWorkspace extends WorkspaceElement {
       this.comparisonStatus = "Opening original source…";
       this.$emit("comparison-source-request", id);
     }
+  }
+  sourceNavigationScope(): () => boolean {
+    return captureRenderScope(this, () => [
+      this.revision,
+      this.captureRevision,
+      this.comparisonResult,
+      this.comparisonDialog.open,
+      this.captureDialog.open,
+    ]);
   }
   sourceOpened(): void {
     this.returnFocus = null;
@@ -745,11 +773,18 @@ export class ComparisonWorkspace extends WorkspaceElement {
       return;
     }
     const options = this.captureResult?.options;
-    await this.open({
+    const opening = this.open({
       left: { kind: "exchange", id: row.left },
       right: { kind: "exchange", id: row.right },
     });
-    if (this.subjects?.left.kind !== "exchange" || this.subjects.left.id !== row.left) {
+    const revision = this.revision;
+    await opening;
+    if (
+      revision !== this.revision ||
+      !this.isConnected ||
+      !this.comparisonDialog.open ||
+      this.cancellationRequested
+    ) {
       return;
     }
     this.comparisonPairingNote =
@@ -765,13 +800,30 @@ export class ComparisonWorkspace extends WorkspaceElement {
     void this.capturePage(0, "unmatched", row.left, row.right);
   }
   async chooseCounterpart(row: PairingRow): Promise<void> {
+    const focus = captureFocus(this);
     this.counterpartRow = row;
     this.counterpartSide = row.left ? "right" : "left";
-    this.$flushUpdates();
+    const current = captureRenderScope(this, () => [
+      this.choiceRevision,
+      this.captureResult?.id,
+      this.counterpartRow,
+    ]);
+    await this.$whenRendered();
+    if (!current()) {
+      return;
+    }
     this.counterpartSearch.value = "";
     this.counterpartOffset = 0;
-    await this.loadCounterparts(0);
-    this.counterpartSearch.focus();
+    const pending = this.loadCounterparts(0),
+      loaded = captureRenderScope(this, () => [
+        this.choiceRevision,
+        this.captureResult?.id,
+        this.counterpartRow,
+      ]);
+    await pending;
+    if (loaded() && focus()) {
+      this.counterpartSearch.focus();
+    }
   }
   async loadCounterparts(direction: number): Promise<void> {
     const id = this.captureResult?.id;

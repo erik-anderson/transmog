@@ -60,7 +60,7 @@ fn compile_webui(ui_dir: &Path) {
         css: CssStrategy::Link,
         plugin: Some(Plugin::WebUI),
         css_file_name_template: "[name]-[hash].[ext]".to_owned(),
-        css_public_base: Some("/".to_owned()),
+        asset_base: Some("/".to_owned()),
         projection_manifests: vec![ProjectionManifestSource::Path(projection_manifest)],
         ..BuildOptions::default()
     })

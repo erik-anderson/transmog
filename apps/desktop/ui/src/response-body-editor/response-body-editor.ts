@@ -1,4 +1,5 @@
 import { WebUIElement, attr, observable } from "@microsoft/webui-framework";
+import { renderPresentation } from "../rendering.js";
 import type * as Monaco from "monaco-editor/editor/editor.api";
 import { loadMonaco, waitForStyles } from "../editor-runtime.js";
 import { describeError } from "../utilities.js";
@@ -130,13 +131,13 @@ export class ResponseBodyEditor extends WebUIElement {
     this.highContrast.addEventListener("change", this.themeListener);
     this.surface.addEventListener("keydown", this.dismissEditorPopup, true);
   }
-  open(
+  async open(
     value: string,
     language: BodyLanguage,
     canSave: boolean,
     opener: HTMLElement,
     options: BodyEditorOptions = {},
-  ): void {
+  ): Promise<void> {
     this.disposeEditor();
     const generation = ++this.generation;
     this.opener = opener;
@@ -158,7 +159,13 @@ export class ResponseBodyEditor extends WebUIElement {
       "Apply to the draft, then save the rule from its properties.";
     this.bodyValueLabel = this.valueLabel();
     this.bodyEditorStatus = "Loading body editor…";
-    this.$flushUpdates();
+    const current = await renderPresentation(this, () => [this.generation]);
+    if (!current() || generation !== this.generation) {
+      if (generation === this.generation) {
+        this.opener = null;
+      }
+      return;
+    }
     this.fallbackInput.value = value;
     this.languageSelect.value = language;
     this.modeSelect.value = this.bodyMode;
@@ -183,7 +190,7 @@ export class ResponseBodyEditor extends WebUIElement {
         return;
       }
       this.bodyEditorLoaded = true;
-      this.$flushUpdates();
+      await this.$whenRendered();
       await waitForStyles(this.bodyEditorStyles);
       if (generation !== this.generation || !this.isConnected || !this.surface.open) {
         return;
@@ -206,7 +213,10 @@ export class ResponseBodyEditor extends WebUIElement {
       this.viewBytes = bytes;
       this.viewValue = this.model.getValue();
       this.bodyEditorReady = true;
-      this.$flushUpdates();
+      await this.$whenRendered();
+      if (generation !== this.generation || !this.isConnected || !this.surface.open) {
+        return;
+      }
       this.editor = this.monaco.editor.create(this.editorHost, {
         model: this.model,
         readOnly: this.bodyBusy,
@@ -223,7 +233,12 @@ export class ResponseBodyEditor extends WebUIElement {
       });
       this.contentListener = this.model.onDidChangeContent(() => this.updateByteStatus());
       this.updateEditorStatus();
-      if (focusFallback) {
+      if (
+        focusFallback &&
+        (this.getRootNode() instanceof ShadowRoot
+          ? (this.getRootNode() as ShadowRoot).activeElement === this.fallbackInput
+          : document.activeElement === this.fallbackInput)
+      ) {
         this.editor.focus();
       }
     } catch (error: unknown) {
@@ -237,7 +252,7 @@ export class ResponseBodyEditor extends WebUIElement {
           ? "Syntax editor could not load. You can still edit hex bytes."
           : "Syntax editor could not load. You can still edit plain text.";
       this.bodyError = describeError(error);
-      this.$flushUpdates();
+      await this.$whenRendered();
     }
   }
   changeLanguage(event: Event): void {
@@ -410,8 +425,11 @@ export class ResponseBodyEditor extends WebUIElement {
     }
   }
   close(): void {
+    this.generation++;
     if (this.surface.open) {
       this.surface.close();
+    } else {
+      this.disposeEditor();
     }
   }
   closed(): void {

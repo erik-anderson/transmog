@@ -1,3 +1,4 @@
+import { captureFocus, captureRenderScope } from "../rendering.js";
 import initialState from "../initial-state.json";
 import { attr, observable } from "@microsoft/webui-framework";
 import { invoke } from "@tauri-apps/api/core";
@@ -125,8 +126,6 @@ export class CaptureWorkspace extends WorkspaceElement {
     this.exportExtension = extension;
   }
   protected hydratedCallback(): void {
-    // Lifecycle can change while this workspace is still waiting to hydrate.
-    this.$update("lifecycle");
     void this.refreshCapture();
     void this.loadRecordingDefaults();
   }
@@ -371,7 +370,8 @@ export class CaptureWorkspace extends WorkspaceElement {
       this.$emit("trace-import-request", { paths: [input.value] } satisfies TraceImportIntent);
     }
   }
-  useInspectedForExport(): void {
+  async useInspectedForExport(): Promise<void> {
+    const focus = captureFocus(this);
     if (!this.canExportInspected) {
       return;
     }
@@ -383,7 +383,11 @@ export class CaptureWorkspace extends WorkspaceElement {
     this.exportExtension = "tmcap";
     this.exportCanEncrypt = true;
     this.showCaptureTask("convert");
-    this.$flushUpdates();
+    const current = captureRenderScope(this, () => [this.captureTask, this.view]);
+    await this.$whenRendered();
+    if (!current() || !focus()) {
+      return;
+    }
     (this.exportForm.elements.namedItem("source") as HTMLInputElement).focus();
   }
   async exportCapture(event: Event): Promise<void> {

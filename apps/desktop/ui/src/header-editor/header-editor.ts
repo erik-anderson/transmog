@@ -1,3 +1,4 @@
+import { captureFocus, captureRenderScope } from "../rendering.js";
 import { attr, observable, WebUIElement } from "@microsoft/webui-framework";
 import {
   enabledHeaderFields,
@@ -79,7 +80,8 @@ export class HeaderEditor extends WebUIElement {
   }
 
   /** Authoritative load/reset; unlike a binding echo, equal text replaces row boundaries. */
-  replaceValue(value: string): void {
+  async replaceValue(value: string): Promise<void> {
+    const focus = captureFocus(this);
     this.draft = value;
     this.pendingDraft = null;
     if (this.ready) {
@@ -95,8 +97,9 @@ export class HeaderEditor extends WebUIElement {
         focusedRow >= 0 && this.headerEditorRows[focusedRow]!.enabledId === active?.id;
       this.loadDraft();
       if (focusedRow >= 0 && active) {
-        this.$flushUpdates();
-        if (active.isConnected || (root.activeElement && root.activeElement !== document.body)) {
+        const current = this.renderScope();
+        await this.$whenRendered();
+        if (!current() || active.isConnected || !focus()) {
           return;
         }
         if (this.headerEditorMode === "text") {
@@ -256,12 +259,31 @@ export class HeaderEditor extends WebUIElement {
     };
   }
 
-  reportValidity(): boolean {
+  checkValidity(): boolean {
+    return this.validate().valid;
+  }
+
+  private renderScope(): () => boolean {
+    return captureRenderScope(this, () => [
+      this.headerEditorRows,
+      this.headerEditorMode,
+      this.draft,
+      this.disabled,
+      this.readOnly,
+    ]);
+  }
+
+  async reportValidity(): Promise<boolean> {
+    const focus = captureFocus(this);
     const result = this.validate();
     if (result.valid) {
       return true;
     }
-    this.$flushUpdates();
+    const current = this.renderScope();
+    await this.$whenRendered();
+    if (!current() || !focus()) {
+      return false;
+    }
     if (this.headerEditorMode === "text") {
       this.focusRawError();
     } else {
@@ -332,18 +354,24 @@ export class HeaderEditor extends WebUIElement {
     this.$emit("header-change", this.validate());
   }
 
-  addHeader(): void {
+  async addHeader(): Promise<void> {
+    const focus = captureFocus(this);
     if (this.readOnly || this.disabled) {
       return;
     }
     const row = this.row({ name: "", value: "" });
     this.headerEditorRows = [...this.headerEditorRows, row];
     this.changed(formatHeaderText(this.fields()));
-    this.$flushUpdates();
+    const current = this.renderScope();
+    await this.$whenRendered();
+    if (!current() || !focus()) {
+      return;
+    }
     this.focusField(row.nameId);
   }
 
-  removeHeader(id: string): void {
+  async removeHeader(id: string): Promise<void> {
+    const focus = captureFocus(this);
     if (this.readOnly || this.disabled) {
       return;
     }
@@ -356,7 +384,11 @@ export class HeaderEditor extends WebUIElement {
     this.headerEditorCanUndo = true;
     this.headerEditorRows = this.headerEditorRows.filter((item) => item.id !== id);
     this.changed(formatHeaderText(this.fields()));
-    this.$flushUpdates();
+    const current = this.renderScope();
+    await this.$whenRendered();
+    if (!current() || !focus()) {
+      return;
+    }
     const next = this.headerEditorRows[Math.min(index, this.headerEditorRows.length - 1)];
     if (next) {
       this.focusField(next.nameId);
@@ -365,7 +397,8 @@ export class HeaderEditor extends WebUIElement {
     }
   }
 
-  undoRemove(): void {
+  async undoRemove(): Promise<void> {
+    const focus = captureFocus(this);
     if (!this.removed || this.readOnly || this.disabled) {
       return;
     }
@@ -376,11 +409,16 @@ export class HeaderEditor extends WebUIElement {
     this.removed = null;
     this.headerEditorCanUndo = false;
     this.changed(formatHeaderText(this.fields()));
-    this.$flushUpdates();
+    const current = this.renderScope();
+    await this.$whenRendered();
+    if (!current() || !focus()) {
+      return;
+    }
     this.focusField(row.nameId);
   }
 
-  toggleMode(): void {
+  async toggleMode(): Promise<void> {
+    const focus = captureFocus(this);
     if (this.disabled) {
       return;
     }
@@ -388,12 +426,16 @@ export class HeaderEditor extends WebUIElement {
       try {
         validateHeaderDraftRows(this.headerEditorRows);
       } catch {
-        this.reportValidity();
+        await this.reportValidity();
         return;
       }
       this.headerEditorMode = "text";
       this.validate();
-      this.$flushUpdates();
+      const current = this.renderScope();
+      await this.$whenRendered();
+      if (!current() || !focus()) {
+        return;
+      }
       this.rawInput.focus();
       return;
     }
@@ -403,12 +445,16 @@ export class HeaderEditor extends WebUIElement {
         parseHeaderText(this.draft),
       ).map((header) => this.row(header));
     } catch {
-      this.reportValidity();
+      await this.reportValidity();
       return;
     }
     this.headerEditorMode = "rows";
     this.validate();
-    this.$flushUpdates();
+    const current = this.renderScope();
+    await this.$whenRendered();
+    if (!current() || !focus()) {
+      return;
+    }
     const first = this.headerEditorRows[0];
     if (first) {
       this.focusField(first.nameId);

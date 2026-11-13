@@ -1,3 +1,4 @@
+import { renderPresentation } from "../rendering.js";
 import { observable } from "@microsoft/webui-framework";
 import { WorkspaceElement } from "../workspace-element.js";
 import type { QueryCondition, UrlCondition } from "../models.js";
@@ -28,7 +29,6 @@ export class MatchEditor extends WorkspaceElement {
     this.matchMode = draft.mode;
     this.queryMode = draft.queryMode;
     this.regexScope = draft.scope;
-    this.$flushUpdates();
     this.addressInput.value = draft.address;
     this.queryInput.value = draft.query;
     this.caseInput.checked = draft.caseSensitive;
@@ -266,7 +266,7 @@ export class MatchEditor extends WorkspaceElement {
     this.addressInput.focus();
     this.changed();
   }
-  openAnnotation(): void {
+  async openAnnotation(): Promise<void> {
     const selected = this.selection;
     if (!selected?.token) {
       return;
@@ -283,7 +283,15 @@ export class MatchEditor extends WorkspaceElement {
     const rect = this.addressInput.getBoundingClientRect();
     this.annotationX = Math.max(10, Math.min(rect.left, window.innerWidth - 420)) + "px";
     this.annotationY = Math.max(50, Math.min(rect.bottom + 4, window.innerHeight - 300)) + "px";
-    this.$flushUpdates();
+    const current = await renderPresentation(this, () => [
+      this.condition,
+      this.selection,
+      this.addressInput.value,
+      this.matchMode,
+    ]);
+    if (!current()) {
+      return;
+    }
     this.annotationPopover.showPopover();
     this.annotationInput.focus();
   }

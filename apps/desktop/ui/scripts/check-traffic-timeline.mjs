@@ -234,6 +234,60 @@ export async function checkTrafficTimeline(page, root) {
       await traffic.locator(".selected-url").textContent(),
       "https://example.test/scenario/fast",
     );
+    assert.equal(
+      await timeline.evaluate(async (t) => {
+        const reveal = t.reveal;
+        let release;
+        const rendered = new Promise((resolve) => (release = resolve));
+        t.reveal = () => rendered;
+        const pending = t.rowKey("tl-slow", new KeyboardEvent("keydown", { key: "ArrowDown" }));
+        try {
+          t.inspect("tl-long");
+          release();
+          await pending;
+          return document.querySelector("app-shell").traffic.selectedSessionId;
+        } finally {
+          release();
+          await pending;
+          t.reveal = reveal;
+        }
+      }),
+      "tl-long",
+      "An older keyboard reveal must not replace a newer timeline inspection",
+    );
+    assert.equal(
+      await timeline.evaluate(async (t) => {
+        const render = t.$whenRendered;
+        let release, reached;
+        const ready = new Promise((resolve) => (reached = resolve));
+        const rendered = new Promise((resolve) => (release = resolve));
+        t.$whenRendered = async () => {
+          await render.call(t);
+          reached();
+          await rendered;
+        };
+        const pending = t.reveal("tl-slow");
+        try {
+          await ready;
+          const traffic = document.querySelector("app-shell").traffic;
+          traffic.searchInput.focus();
+          t.inspect("tl-long");
+          release();
+          await pending;
+          return traffic.searchInput.getRootNode().activeElement === traffic.searchInput;
+        } finally {
+          release();
+          await pending;
+          t.$whenRendered = render;
+        }
+      }),
+      true,
+      "A completed timeline reveal must preserve newer focus",
+    );
+    await timeline.locator("#timeline-tl-fast").click();
+    await page.waitForFunction(
+      () => document.querySelector("app-shell").traffic.selectedDetail?.id === "tl-fast",
+    );
     // Inspector actions follow the inspected request without narrowing Timeline.
     await traffic
       .locator(".selection-actions")

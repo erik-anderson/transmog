@@ -64,6 +64,7 @@ export class TrafficTimeline extends WebUIElement {
   private rowHeight = 32;
   private lastViewport: { scroll: number; height: number; rowHeight: number } | null = null;
   private rebuildPending = false;
+  private revealRevision = 0;
   private drag: {
     pointer: number;
     target: Element;
@@ -77,42 +78,44 @@ export class TrafficTimeline extends WebUIElement {
     maximum: number;
   } | null = null;
 
-  protected hydratedCallback(): void {
-    this.observer = new ResizeObserver(() => this.resizeRows());
+  private ready = false;
+  protected async hydratedCallback(): Promise<void> {
+    this.ready = true;
+    this.observer = new ResizeObserver(async () => await this.resizeRows());
     this.observer.observe(this.viewport);
     this.observer.observe(this.rowMetric);
-    this.rebuild();
+    await this.rebuild();
   }
-  entriesChanged(): void {
+  async entriesChanged(): Promise<void> {
     if (this.drag) {
       this.rebuildPending = true;
     } else {
-      this.rebuild();
+      await this.rebuild();
     }
   }
-  chosenChanged(): void {
+  async chosenChanged(): Promise<void> {
     this.markerNavigation = false;
-    this.rebuild();
+    await this.rebuild();
   }
-  markerCurrentChanged(): void {
-    this.renderRange();
+  async markerCurrentChanged(): Promise<void> {
+    await this.renderRange();
   }
-  sourcesChanged(): void {
-    this.renderRows();
+  async sourcesChanged(): Promise<void> {
+    await this.renderRows();
   }
-  markersChanged(): void {
-    this.rebuild();
+  async markersChanged(): Promise<void> {
+    await this.rebuild();
   }
-  compactChanged(): void {
-    if (this.rowMetric) {
-      this.$flushUpdates();
-      this.renderRows();
+  async compactChanged(): Promise<void> {
+    if (this.ready) {
+      await this.$whenRendered();
+      await this.renderRows();
     }
   }
-  private rebuild(): void {
+  private async rebuild(): Promise<void> {
     // Deliberate scope changes cancel a gesture; live snapshots wait for its end.
     if (this.drag) {
-      this.cancelDrag();
+      await this.cancelDrag();
     }
     const selected = new Set(this.chosen);
     this.scoped = this.entries.filter(
@@ -140,19 +143,20 @@ export class TrafficTimeline extends WebUIElement {
       this.from = this.minimum;
       this.to = this.maximum;
     }
-    this.renderRange();
+    await this.renderRange();
   }
-  resetRange(): void {
+  async resetRange(): Promise<void> {
     this.$emit("timeline-range-change", undefined);
     this.markerNavigation = false;
     this.adjusted = false;
-    this.rebuild();
+    await this.rebuild();
   }
-  changeOrder(event: Event): void {
-    this.order = (event.currentTarget as HTMLSelectElement).value;
-    this.renderRange();
+  async changeOrder(event: Event): Promise<void> {
+    const eventTarget = event?.currentTarget;
+    this.order = (eventTarget as HTMLSelectElement).value;
+    await this.renderRange();
   }
-  private renderRange(): void {
+  private async renderRange(): Promise<void> {
     this.matching = this.scoped
       .filter((row) => overlaps(row, this.from, this.to))
       .sort((a, b) =>
@@ -239,12 +243,13 @@ export class TrafficTimeline extends WebUIElement {
       ...g,
       selected: g.markers.some((m) => m.key === this.markerCurrent),
     }));
-    this.renderRows();
+    await this.renderRows();
   }
   closeMarkerPicker(): void {
     this.markerPicker.close();
   }
-  chooseMarker(key: string, overview: boolean, event: Event): void {
+  async chooseMarker(key: string, overview: boolean, event: Event): Promise<void> {
+    const eventTarget = event?.currentTarget;
     event.stopPropagation();
     const group = (overview ? this.overviewMarkers : this.rangeMarkers).find((g) => g.key === key);
     if (!group) {
@@ -254,9 +259,9 @@ export class TrafficTimeline extends WebUIElement {
       this.$emit("timeline-marker", group.markers[0]!.key);
       return;
     }
-    this.markerReturn = event.currentTarget as HTMLElement;
+    this.markerReturn = eventTarget as HTMLElement;
     this.markerChoices = group.markers;
-    this.$flushUpdates();
+    await this.$whenRendered();
     this.markerPicker.showModal();
   }
   pickMarker(key: string): void {
@@ -269,10 +274,10 @@ export class TrafficTimeline extends WebUIElement {
     }
     this.markerReturn = null;
   }
-  markerKey(key: string, overview: boolean, event: KeyboardEvent): void {
+  async markerKey(key: string, overview: boolean, event: KeyboardEvent): Promise<void> {
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
-      this.chooseMarker(key, overview, event);
+      await this.chooseMarker(key, overview, event);
       return;
     }
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
@@ -298,7 +303,7 @@ export class TrafficTimeline extends WebUIElement {
         ?.focus({ preventScroll: true });
     }
   }
-  goToTime(time: number, id?: string, focus = false): void {
+  async goToTime(time: number, id?: string, focus = false): Promise<void> {
     this.markerNavigation = true;
     const width = Math.max(2000, Math.min(60000, this.to - this.from));
     this.from = time - width / 2;
@@ -309,19 +314,19 @@ export class TrafficTimeline extends WebUIElement {
       this.to = Math.max(this.to, (intervalEnd(request) ?? request.startMillis) + width / 2);
     }
     this.adjusted = true;
-    this.rebuild();
+    await this.rebuild();
     if (id) {
       const index = this.matching.findIndex((row) => row.id === id);
       if (index >= 0) {
         this.viewport.scrollTop = index * this.rowHeight;
-        this.renderRows();
+        await this.renderRows();
         if (focus) {
-          this.reveal(id);
+          await this.reveal(id);
         }
       }
     }
   }
-  private resizeRows(): void {
+  private async resizeRows(): Promise<void> {
     const root = this.getRootNode(),
       active = root instanceof ShadowRoot ? root.activeElement : document.activeElement,
       id =
@@ -336,12 +341,15 @@ export class TrafficTimeline extends WebUIElement {
       index >= 0 &&
       index * before.rowHeight >= before.scroll - 1 &&
       (index + 1) * before.rowHeight <= before.scroll + before.height + 1;
-    this.renderRows();
+    await this.renderRows();
     if (keepVisible && id) {
-      this.reveal(id);
+      await this.reveal(id);
     }
   }
-  renderRows(scroll = this.viewport?.scrollTop ?? 0): void {
+  async renderRows(scroll = this.viewport?.scrollTop ?? 0): Promise<void> {
+    if (!this.ready) {
+      return;
+    }
     // The CSS metric tracks rem-based density even when only text size changes.
     const measured = this.rowMetric?.getClientRects().length
       ? parseFloat(getComputedStyle(this.rowMetric).height)
@@ -413,7 +421,7 @@ export class TrafficTimeline extends WebUIElement {
       bottom: Math.max(0, this.matching.length - end) * rowHeight + "px",
     };
     if (resized) {
-      this.$flushUpdates();
+      await this.$whenRendered();
       if (this.viewport) {
         this.viewport.scrollTop = scroll;
       }
@@ -421,6 +429,7 @@ export class TrafficTimeline extends WebUIElement {
     this.lastViewport = { scroll: this.viewport?.scrollTop ?? scroll, height, rowHeight };
   }
   inspect(id: string): void {
+    this.revealRevision++;
     this.$emit("timeline-inspect", id);
   }
   clearSelection(): void {
@@ -485,7 +494,7 @@ export class TrafficTimeline extends WebUIElement {
     }
     this.helpClosing = false;
   }
-  timelineKey(event: KeyboardEvent): void {
+  async timelineKey(event: KeyboardEvent): Promise<void> {
     if (this.helpPanel.matches(":popover-open") && event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
@@ -515,14 +524,28 @@ export class TrafficTimeline extends WebUIElement {
       event.preventDefault();
       event.stopPropagation();
       if (this.drag) {
-        this.cancelDrag();
+        await this.cancelDrag();
       } else {
         this.clearSelection();
       }
     }
   }
-  reveal(id: string): void {
-    this.renderRows();
+  async reveal(id: string): Promise<void> {
+    const revision = ++this.revealRevision,
+      root = this.getRootNode() as Document | ShadowRoot,
+      focused = root.activeElement,
+      current = () =>
+        this.isConnected &&
+        revision === this.revealRevision &&
+        (root.activeElement === focused ||
+          (!focused?.isConnected &&
+            (!root.activeElement ||
+              root.activeElement === document.body ||
+              root.activeElement === this.viewport)));
+    await this.renderRows();
+    if (!current()) {
+      return;
+    }
     const index = this.matching.findIndex((row) => row.id === id);
     if (index < 0) {
       this.viewport.focus({ preventScroll: true });
@@ -534,13 +557,19 @@ export class TrafficTimeline extends WebUIElement {
     } else if (top + this.rowHeight > this.viewport.scrollTop + this.viewport.clientHeight) {
       this.viewport.scrollTop = top + this.rowHeight - this.viewport.clientHeight;
     }
-    this.renderRows();
-    this.$flushUpdates();
+    await this.renderRows();
+    if (!current()) {
+      return;
+    }
+    await this.$whenRendered();
+    if (!current()) {
+      return;
+    }
     (this.getRootNode() as ShadowRoot)
       .getElementById("timeline-" + id)
       ?.focus({ preventScroll: true });
   }
-  rowKey(id: string, event: KeyboardEvent): void {
+  async rowKey(id: string, event: KeyboardEvent): Promise<void> {
     if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
       return;
     }
@@ -560,10 +589,10 @@ export class TrafficTimeline extends WebUIElement {
     if (!row) {
       return;
     }
-    this.reveal(row.id);
     this.inspect(row.id);
+    await this.reveal(row.id);
   }
-  startDrag(event: PointerEvent): void {
+  async startDrag(event: PointerEvent): Promise<void> {
     if (
       event.button !== 0 ||
       (!this.scoped.some((row) => intervalEnd(row) != null) && !this.markers.length)
@@ -602,10 +631,10 @@ export class TrafficTimeline extends WebUIElement {
       );
       this.to = this.from + minimumWidth;
       this.adjusted = true;
-      this.renderRange();
+      await this.renderRange();
     }
   }
-  moveDrag(event: PointerEvent): void {
+  async moveDrag(event: PointerEvent): Promise<void> {
     const drag = this.drag;
     if (!drag || drag.pointer !== event.pointerId) {
       return;
@@ -630,14 +659,14 @@ export class TrafficTimeline extends WebUIElement {
       );
     }
     this.adjusted = true;
-    this.renderRange();
+    await this.renderRange();
   }
-  finishDrag(event: PointerEvent): void {
+  async finishDrag(event: PointerEvent): Promise<void> {
     if (this.drag?.pointer === event.pointerId) {
-      this.releaseDrag();
+      await this.releaseDrag();
     }
   }
-  cancelDrag(): void {
+  async cancelDrag(): Promise<void> {
     const drag = this.drag;
     if (!drag) {
       return;
@@ -645,25 +674,25 @@ export class TrafficTimeline extends WebUIElement {
     this.from = drag.from;
     this.to = drag.to;
     this.adjusted = drag.adjusted;
-    this.releaseDrag();
-    this.renderRange();
+    await this.releaseDrag();
+    await this.renderRange();
   }
-  private releaseDrag(): void {
+  private async releaseDrag(): Promise<void> {
     const drag = this.drag;
     this.drag = null;
     if (drag?.target.hasPointerCapture(drag.pointer)) {
       drag.target.releasePointerCapture(drag.pointer);
     }
-    if (this.rebuildPending) {
+    if (this.rebuildPending && this.isConnected) {
       this.rebuildPending = false;
-      this.rebuild();
+      await this.rebuild();
     }
   }
-  rangeKey(part: string, event: KeyboardEvent): void {
+  async rangeKey(part: string, event: KeyboardEvent): Promise<void> {
     if (event.key === "Escape" && this.drag) {
       event.preventDefault();
       event.stopPropagation();
-      this.cancelDrag();
+      await this.cancelDrag();
       return;
     }
     if (!["ArrowLeft", "ArrowRight", "Home", "End", "+", "-", "0"].includes(event.key)) {
@@ -672,7 +701,7 @@ export class TrafficTimeline extends WebUIElement {
     event.preventDefault();
     event.stopPropagation();
     if (event.key === "0") {
-      this.resetRange();
+      await this.resetRange();
       return;
     }
     this.$emit("timeline-range-change", undefined);
@@ -702,11 +731,12 @@ export class TrafficTimeline extends WebUIElement {
       );
     }
     this.adjusted = true;
-    this.renderRange();
+    await this.renderRange();
   }
   disconnectedCallback(): void {
+    this.revealRevision++;
     window.clearTimeout(this.helpCloseTimer);
-    this.releaseDrag();
+    void this.releaseDrag();
     this.observer?.disconnect();
     super.disconnectedCallback();
   }

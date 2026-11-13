@@ -435,7 +435,10 @@ try {
           headers: [],
         },
       },
-      { kind: "response-head", payload: { boundary: "client-response", status: 200, headers: [] } },
+      {
+        kind: "response-head",
+        payload: { boundary: "client-response", status: 200, headers: [] },
+      },
       {
         kind: "body-segment",
         payload: { boundary: "client-response", byte_count: 0, bytes: [], truncated: false },
@@ -459,7 +462,12 @@ try {
         chain_position: 0,
         effect_sequence: 1,
         header_edit: null,
-        response_snapshot: { status: 200, bodyBytes: 4, sha256: responseHash, contentCodings: [] },
+        response_snapshot: {
+          status: 200,
+          bodyBytes: 4,
+          sha256: responseHash,
+          contentCodings: [],
+        },
       },
     });
     fixture.splice(fixture.length - 1, 0, {
@@ -476,7 +484,11 @@ try {
           kind: "response",
           changes: {
             statusChanged: false,
-            headers: { added: ["X-Historical"], removed: ["Content-Security-Policy"], changed: [] },
+            headers: {
+              added: ["X-Historical"],
+              removed: ["Content-Security-Policy"],
+              changed: [],
+            },
           },
         },
         response_snapshot: null,
@@ -674,7 +686,12 @@ try {
       const bytes = byteChunk.slice(0, Math.min(byteChunk.length, byteLength - offset));
       byteRecords.push({
         kind: "body-segment",
-        payload: { boundary: "client-response", byte_count: bytes.length, bytes, truncated: false },
+        payload: {
+          boundary: "client-response",
+          byte_count: bytes.length,
+          bytes,
+          truncated: false,
+        },
       });
     }
     byteRecords.push({ kind: "completed", payload: null });
@@ -1393,7 +1410,7 @@ try {
         );
       }
       await second.evaluate(
-        `(()=>{const root=${traffic}.getRootNode();${traffic}.openFilterPicker('fetch-destination');root.getElementById('filter-option-text:document').click();root.getElementById('filter-option-text:style').click();root.querySelector('#traffic-filter-picker button[type=submit]').click();})()`,
+        `(async ()=>{const root=${traffic}.getRootNode();await ${traffic}.openFilterPicker('fetch-destination');root.getElementById('filter-option-text:document').click();root.getElementById('filter-option-text:style').click();root.querySelector('#traffic-filter-picker button[type=submit]').click();})()`,
       );
       await waitFor(
         () =>

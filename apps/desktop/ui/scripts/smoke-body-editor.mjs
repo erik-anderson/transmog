@@ -91,8 +91,8 @@ export async function smokeBodyEditor(call, evaluate, screenshotPath) {
       globalThis.__bodyEditorProbe.editorHidden=w.editorHidden;
       // The compact layout hides the properties pane when no rule is open.
       // Expose it for this direct dialog probe without resetting any draft.
-      w.showAutomationSection('responses');w.editorHidden=false;w.$flushUpdates();
-      editor.open('<svg><style>.shape { fill: #336699; }</style></svg>','svg',false,root.querySelector('a[data-view="automation"]'),{saveUnavailableReason:'Apply to draft, then save the new rule.'});
+      w.showAutomationSection('responses');w.editorHidden=false;await w.$whenRendered();
+      await editor.open('<svg><style>.shape { fill: #336699; }</style></svg>','svg',false,root.querySelector('a[data-view="automation"]'),{saveUnavailableReason:'Apply to draft, then save the new rule.'});
     })()`);
     await wait(`${widget}.bodyEditorReady`);
     const positions = [];
@@ -132,7 +132,7 @@ export async function smokeBodyEditor(call, evaluate, screenshotPath) {
     // Monaco shares one theme across the window. Use the shell preference so
     // other mounted editors receive the same forced-color transition.
     await evaluate(
-      `(()=>{const shell=document.querySelector('app-shell');shell.theme='dark';shell.$flushUpdates();shell.automation.$flushUpdates();})()`,
+      `(async ()=>{const shell=document.querySelector('app-shell');shell.theme='dark';await shell.$whenRendered();await shell.automation.$whenRendered();})()`,
     );
     await wait(
       `${widget}.theme==='dark'&&document.querySelector('app-shell').automation.scriptAuthoring.theme==='dark'&&${widget}.editorHost.querySelector('.vs-dark')`,
@@ -181,7 +181,9 @@ export async function smokeBodyEditor(call, evaluate, screenshotPath) {
       mobile: false,
     });
     for (const canSave of [false, true]) {
-      await evaluate(`(()=>{const w=${widget};w.bodyCanSave=${canSave};w.$flushUpdates();})()`);
+      await evaluate(
+        `(async ()=>{const w=${widget};w.bodyCanSave=${canSave};await w.$whenRendered();})()`,
+      );
       // Let the button color transition finish before checking hierarchy and
       // capturing the saved-rule footer: Save is primary, Apply is secondary.
       if (canSave)
@@ -228,7 +230,7 @@ export async function smokeBodyEditor(call, evaluate, screenshotPath) {
     await call("Emulation.clearDeviceMetricsOverride");
     await call("Emulation.setEmulatedMedia", { media: "screen", features: [] });
     await evaluate(
-      `(()=>{const probe=globalThis.__bodyEditorProbe;if(!probe)return;const shell=document.querySelector('app-shell'),root=shell.shadowRoot,editor=root.querySelector('automation-workspace response-body-editor'),workspace=root.querySelector('automation-workspace');shell.theme=probe.shellTheme??'system';shell.$flushUpdates();workspace.$flushUpdates();if(editor){editor.editor?.trigger('probe','editor.action.fontZoomReset',{});editor.theme=probe.theme??'system';editor.close();}if(probe.editorHidden!==undefined)workspace.editorHidden=probe.editorHidden;if(probe.section)workspace.showAutomationSection(probe.section);workspace.$flushUpdates();root.querySelector('a[data-view="'+probe.view+'"]').click();if(probe.focus?.isConnected&&probe.focus.getClientRects().length)probe.focus.focus();delete globalThis.__bodyEditorProbe;})()`,
+      `(async ()=>{const probe=globalThis.__bodyEditorProbe;if(!probe)return;const shell=document.querySelector('app-shell'),root=shell.shadowRoot,editor=root.querySelector('automation-workspace response-body-editor'),workspace=root.querySelector('automation-workspace');shell.theme=probe.shellTheme??'system';await shell.$whenRendered();await workspace.$whenRendered();if(editor){editor.editor?.trigger('probe','editor.action.fontZoomReset',{});editor.theme=probe.theme??'system';await editor.close();}if(probe.editorHidden!==undefined)workspace.editorHidden=probe.editorHidden;if(probe.section)workspace.showAutomationSection(probe.section);await workspace.$whenRendered();root.querySelector('a[data-view="'+probe.view+'"]').click();if(probe.focus?.isConnected&&probe.focus.getClientRects().length)probe.focus.focus();delete globalThis.__bodyEditorProbe;})()`,
     );
   }
 }

@@ -10,12 +10,12 @@ export async function smokeAutomationEditing(call, evaluate, screenshotPath, wai
     const shell=document.querySelector('app-shell'),invoke=window.__TAURI_INTERNALS__.invoke;
     const original=await invoke('automation_status');globalThis.__automationEditingProbe={original,view:shell.activeView};
     shell.shadowRoot.querySelector('a[data-view="automation"]').click();
-    const w=shell.shadowRoot.querySelector('automation-workspace');w.showAutomationSection('responses');w.$flushUpdates();await w.refreshAutomation();
+    const w=shell.shadowRoot.querySelector('automation-workspace');w.showAutomationSection('responses');await w.$whenRendered();await w.refreshAutomation();
     const asset=await invoke('create_response_asset',{input:{id:'native-hex-editing',revision:1,status:200,headers:[{name:[67,111,110,116,101,110,116,45,69,110,99,111,100,105,110,103],value:[103,122,105,112]}],body:${JSON.stringify(encoded)},mediaType:'application/octet-stream'}});
     const matcher={method:'GET',url:{kind:'exact',value:'https://example.test/hex'},scheme:null,host:null,port:null,pathPrefix:null,query:null,requestHeaders:[],responseHeaders:[],responseStatus:null,responseStatusClass:null,examples:[]};
     const rule={id:'native-hex-rule',displayName:'Native binary response',enabled:true,revision:1,priority:-3000000,matcher,request:{headers:[],replaceBody:null,discardBody:false,abortReason:null,responseAsset:asset.id+'@1',allowNonIdempotentBodyReplacement:false},response:{headers:[],replaceBody:null,discardBody:false,abortReason:null}};
     const candidate=await invoke('validate_automation',{document:{schemaVersion:2,generation:original.generation,autoresponsesEnabled:true,responseSets:original.responseSets,rules:[rule,...original.rules]}});await invoke('activate_automation',{candidateId:candidate.candidateId});
-    await w.refreshAutomation();await w.editAutoResponse(rule,true);w.$flushUpdates();
+    await w.refreshAutomation();await w.editAutoResponse(rule,true);await w.$whenRendered();
     if(w.bodyMode!=='hex'||w.bodyReadOnly||w.autoResponseBody.value!=='00 ff 80 0d 0a 2a')throw new Error('Native binary body did not open editable Hex');
     const before=asset.sha256;w.autoResponseStatus.value='201';
     if(!await w.saveAutoResponse(new Event('submit',{cancelable:true})))throw new Error(w.autoResponseError);
@@ -32,13 +32,13 @@ export async function smokeAutomationEditing(call, evaluate, screenshotPath, wai
     if(await leave||w.unsavedDialog.open||nameInput.getRootNode().activeElement!==nameInput)throw new Error('Native invalid-field recovery did not return focus to the editor');
     nameInput.value=savedName;nameInput.dispatchEvent(new Event('input',{bubbles:true}));await Promise.resolve();w.autoResponseForm.reportValidity();
     w.matchTestUrl.value='https://example.test/does-not-match';w.matchTestMethod.value='GET';await w.testMatcher();w.matchExpected='nonmatch';w.addMatchExample();
-    while(w.matcherTestBusy)await new Promise(resolve=>setTimeout(resolve,20));w.$flushUpdates();
+    while(w.matcherTestBusy)await new Promise(resolve=>setTimeout(resolve,20));await w.$whenRendered();
     if(w.matchCaseRows[0].expected!=='Does not match'||w.matchCaseRows[0].actual!=='Does not match'||w.matchCaseRows[0].result!=='Passed')throw new Error('Native negative expectation is ambiguous');
-    w.matchExpected='match';w.addMatchExample();while(w.matcherTestBusy)await new Promise(resolve=>setTimeout(resolve,20));w.$flushUpdates();
+    w.matchExpected='match';w.addMatchExample();while(w.matcherTestBusy)await new Promise(resolve=>setTimeout(resolve,20));await w.$whenRendered();
     if(w.matchCaseRows[0].result!=='Failed'||w.matchTestResult.test.matched)throw new Error('Native expectation changed actual match');
     w.draftDirty=false;await w.cancelAutoResponseEdit();
     const oldScripts=await invoke('script_status');if(oldScripts.active.length||oldScripts.saved.length)throw new Error('Script smoke requires an empty isolated profile');
-    w.showAutomationSection('scripts');w.$flushUpdates();const editor=w.querySelector('script-editor');
+    w.showAutomationSection('scripts');await w.$whenRendered();const editor=w.querySelector('script-editor');
     const end=Date.now()+20000;while(!editor.scriptReady&&Date.now()<end)await new Promise(resolve=>setTimeout(resolve,25));
     if(!editor.scriptReady)throw new Error('Native script editor did not hydrate: '+JSON.stringify({status:editor.scriptText,active:editor.active,view:w.view,section:w.automationSection,connected:editor.isConnected,tag:editor.tagName,type:editor.constructor.name}));
     if(!editor.sourceEditor.getValue().trim())await editor.chooseHandler('onRequestHead');
@@ -67,7 +67,7 @@ export async function smokeAutomationEditing(call, evaluate, screenshotPath, wai
     await editor.activateScript();
     await editor.editJavaScript();await editor.activateScript();
     status=await invoke('script_status');if(!status.saved[0].javascriptHistory.some(source=>source.includes('native JavaScript edits')))throw new Error('Native language switch lost previous JavaScript');
-    editor.restoreJavaScriptDraft(editor.historyEntries.find(item=>item.source.includes('native JavaScript edits')).index);await editor.activateScript();
+    await editor.restoreJavaScriptDraft(editor.historyEntries.find(item=>item.source.includes('native JavaScript edits')).index);await editor.activateScript();
     status=await invoke('script_status');const ready=structuredClone(status.active[0]);
     if(!status.runtimes[0].available)throw new Error('Native applied runtime is unavailable');
     editor.sourceEditor.setValue(editor.sourceEditor.getValue()+'\\nconst retryMustNotApply: number = "unfinished";');await editor.retryScript();
@@ -85,7 +85,7 @@ export async function smokeAutomationEditing(call, evaluate, screenshotPath, wai
     editor.sourceEditor.setValue(good.source+'\\nconst notApplied: number = "unfinished";');await editor.resumeScript();
     status=await invoke('script_status');if(status.active[0].javascript!==paused.javascript||!editor.sourceEditor.getValue().includes('notApplied'))throw new Error('Resume used or discarded the draft');
     editor.discardScript();await editor.disableScript();
-    editor.$flushUpdates();
+    await editor.$whenRendered();
   })()`);
   } finally {
     await evaluate(
@@ -109,7 +109,7 @@ export async function smokeAutomationEditing(call, evaluate, screenshotPath, wai
     const end=Date.now()+20000;while(!document.querySelector('app-shell')?.shadowRoot?.querySelector('a[data-view="automation"]')&&Date.now()<end)await new Promise(resolve=>setTimeout(resolve,25));
     const shell=document.querySelector('app-shell');shell.shadowRoot.querySelector('a[data-view="automation"]').click();
     while(typeof shell.shadowRoot.querySelector('automation-workspace')?.showAutomationSection!=='function'&&Date.now()<end)await new Promise(resolve=>setTimeout(resolve,25));
-    const w=shell.shadowRoot.querySelector('automation-workspace');w.showAutomationSection('scripts');w.$flushUpdates();
+    const w=shell.shadowRoot.querySelector('automation-workspace');w.showAutomationSection('scripts');await w.$whenRendered();
     while(!w.querySelector('script-editor')?.scriptReady&&Date.now()<end)await new Promise(resolve=>setTimeout(resolve,25));
     const editor=w.querySelector('script-editor');
     if(!editor?.sourceEditor?.getValue().includes('native edited version'))throw new Error('Reopened native script lost activated source');

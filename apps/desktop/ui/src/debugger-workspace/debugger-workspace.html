@@ -1,5 +1,5 @@
 <template shadowrootmode="open" @keydown="{keyboard(e)}">
-  <link w-ref="{sourceStyles}" rel="stylesheet" href="/monaco.css" />
+  <if condition="debuggerEditorLoaded"><link w-ref="{sourceStyles}" rel="stylesheet" href="/monaco.css" /></if>
   <section
     ?inert="{{debuggerTransition}}"
     class="workspace"

@@ -8,10 +8,10 @@ export async function smokeHexViewer(evaluate, call) {
       globalThis.__hexSmoke = { traffic,selectedId:traffic.selectedSessionId,side:traffic.inspectorSide,inspector, mode:inspector.mode, preview:inspector.hexPreview, text:inspector.bodyText,notice:inspector.bodyNotice,
         clipboard:Object.getOwnPropertyDescriptor(navigator,'clipboard') };
       Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>globalThis.__hexSmoke.copied=text}});
-      traffic.selectedSessionId='hex-smoke';traffic.inspectorSide='response';traffic.$flushUpdates();
+      traffic.selectedSessionId='hex-smoke';traffic.inspectorSide='response';await traffic.$whenRendered();
       inspector.mode='body'; inspector.bodyText='';inspector.bodyNotice='';
       inspector.hexPreview={key:'webview-hex-check',bytes:new Uint8Array([1,71,1,87,1,91,1,101]),offset:16,truncated:true};
-      inspector.$flushUpdates();
+      await inspector.$whenRendered();
       await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
       const viewer=inspector.querySelector('hex-viewer');
       globalThis.__hexSmoke.viewer=viewer;
@@ -20,7 +20,7 @@ export async function smokeHexViewer(evaluate, call) {
         if(performance.now()>deadline)throw new Error('Hex viewer styles did not become ready');
         await new Promise(resolve=>setTimeout(resolve,25));
       }
-      viewer.renderRows(true);viewer.$flushUpdates();
+      await viewer.renderRows(true);await viewer.$whenRendered();
       globalThis.__hexSmoke.events=[];
       globalThis.__hexSmoke.listener=event=>globalThis.__hexSmoke.events.push({type:event.type,id:event.pointerId,x:event.clientX,y:event.clientY,buttons:event.buttons});
       for(const type of ['pointerdown','pointermove','pointerup','lostpointercapture'])viewer.viewport.addEventListener(type,globalThis.__hexSmoke.listener);
@@ -118,7 +118,7 @@ export async function smokeHexViewer(evaluate, call) {
     const dragPoints = await evaluate(`(async () => {
       const viewer=globalThis.__hexSmoke.viewer;
       viewer.preview={key:'webview-hex-drag',bytes:Uint8Array.from({length:262144},(_,i)=>i%256),offset:0,truncated:false};
-      viewer.$flushUpdates();
+      await viewer.$whenRendered();
       await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
       const first=viewer.querySelector('[data-byte="0"][data-column="hex"]').getBoundingClientRect(),bounds=viewer.viewport.getBoundingClientRect();
       return {start:{x:first.left+first.width/2,y:first.top+first.height/2},bottom:{x:first.left+first.width/2,y:bounds.bottom-8}};
@@ -173,15 +173,15 @@ export async function smokeHexViewer(evaluate, call) {
       submenu: true,
     };
   } finally {
-    await evaluate(`(() => {
+    await evaluate(`(async () => {
       const saved=globalThis.__hexSmoke;
       if(!saved)return;
       saved.viewer?.cancelSelection();
       if(saved.viewer&&saved.listener)for(const type of ['pointerdown','pointermove','pointerup','lostpointercapture'])saved.viewer.viewport.removeEventListener(type,saved.listener);
       saved.viewer?.contextMenu.hidePopover();
       saved.inspector.hexPreview=saved.preview;saved.inspector.bodyText=saved.text;saved.inspector.bodyNotice=saved.notice;saved.inspector.mode=saved.mode;
-      saved.inspector.$flushUpdates();
-      saved.traffic.selectedSessionId=saved.selectedId;saved.traffic.inspectorSide=saved.side;saved.traffic.$flushUpdates();
+      await saved.inspector.$whenRendered();
+      saved.traffic.selectedSessionId=saved.selectedId;saved.traffic.inspectorSide=saved.side;await saved.traffic.$whenRendered();
       if(saved.clipboard)Object.defineProperty(navigator,'clipboard',saved.clipboard);else delete navigator.clipboard;
       delete globalThis.__hexSmoke;
     })()`);

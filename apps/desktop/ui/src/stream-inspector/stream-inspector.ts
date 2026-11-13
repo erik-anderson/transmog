@@ -1,4 +1,5 @@
 import { observable } from "@microsoft/webui-framework";
+import { captureFocus, captureRenderScope } from "../rendering.js";
 import { invoke } from "@tauri-apps/api/core";
 import { WorkspaceElement } from "../workspace-element.js";
 import type {
@@ -45,9 +46,19 @@ export class StreamInspector extends WorkspaceElement {
   @observable streamSearch = "";
   @observable streamSelected = 0;
   @observable streamReading = false;
-  showMessages(): void {
+  async showMessages(): Promise<void> {
+    const focus = captureFocus(this);
     this.streamReading = false;
-    this.$flushUpdates();
+    const current = captureRenderScope(this, () => [
+      this.generation,
+      this.sessionId,
+      this.streamReading,
+      this.streamSelected,
+    ]);
+    await this.$whenRendered();
+    if (!current() || !focus()) {
+      return;
+    }
     this.streamPanelScroller.scrollTop = 0;
     this.focusSelected();
   }
@@ -180,6 +191,7 @@ export class StreamInspector extends WorkspaceElement {
     this.loading = true;
     const generation = this.generation,
       id = this.sessionId;
+    const focus = captureFocus(this);
     try {
       const page = await invoke<StreamPage>("stream_page", {
         query: {
@@ -217,14 +229,23 @@ export class StreamInspector extends WorkspaceElement {
       this.streamBottom = Math.max(0, page.total - page.offset - page.rows.length) * 32 + "px";
       this.describe(page.summary);
       this.streamError = "";
-      this.$flushUpdates();
+      await this.$whenRendered();
+      if (!this.isConnected || generation !== this.generation || id !== this.sessionId) {
+        return;
+      }
       if (this.keyTarget !== null) {
         const row = this.streamRows[this.keyTarget - this.offset];
         this.keyTarget = null;
         if (row) {
           void this.select(row);
-          this.$flushUpdates();
-          this.focusSelected();
+          const payload = this.payloadGeneration;
+          await this.$whenRendered();
+          if (!this.isConnected || generation !== this.generation || id !== this.sessionId) {
+            return;
+          }
+          if (payload === this.payloadGeneration && focus()) {
+            this.focusSelected();
+          }
         }
       }
       if (this.streamFollow && this.streamScroller) {
@@ -291,6 +312,9 @@ export class StreamInspector extends WorkspaceElement {
     this.schedule();
   }
   async select(row: StreamRow): Promise<void> {
+    let focus = captureFocus(this);
+    const id = this.sessionId,
+      generation = ++this.payloadGeneration;
     this.streamReading = true;
     this.streamSelected = row.sequence;
     this.streamRows = this.streamRows.map((item) => ({
@@ -303,12 +327,14 @@ export class StreamInspector extends WorkspaceElement {
     this.streamHex = null;
     this.streamText = "Loading message…";
     this.streamFacts = "";
-    this.$flushUpdates();
-    if (this.streamScroller.clientHeight === 0) {
-      this.streamPayloadPane.focus({ preventScroll: true });
+    await this.$whenRendered();
+    if (generation !== this.payloadGeneration || id !== this.sessionId || !this.isConnected) {
+      return;
     }
-    const id = this.sessionId,
-      generation = ++this.payloadGeneration;
+    if (focus() && this.streamScroller.clientHeight === 0) {
+      this.streamPayloadPane.focus({ preventScroll: true });
+      focus = captureFocus(this);
+    }
     try {
       const message = await invoke<StreamMessage>("stream_message", { id, sequence: row.sequence });
       if (generation !== this.payloadGeneration || id !== this.sessionId || !this.isConnected) {
@@ -317,15 +343,21 @@ export class StreamInspector extends WorkspaceElement {
       this.streamPayload = message;
       this.streamView = message.kind === "binary" ? "hex" : "text";
       this.renderPayload();
-      this.$flushUpdates();
-      this.streamPayloadPane.scrollIntoView({ block: "nearest" });
+      const top = this.streamPanelScroller.scrollTop;
+      await this.$whenRendered();
+      if (generation !== this.payloadGeneration || id !== this.sessionId || !this.isConnected) {
+        return;
+      }
+      if (focus() && this.streamPanelScroller.scrollTop === top) {
+        this.streamPayloadPane.scrollIntoView({ block: "nearest" });
+      }
     } catch (error: unknown) {
       if (generation === this.payloadGeneration) {
         this.streamText = describeError(error);
       }
     }
   }
-  key(event: KeyboardEvent, row: StreamRow): void {
+  async key(event: KeyboardEvent, row: StreamRow): Promise<void> {
     if (copyGesture(event)) {
       this.messageContext(row, event);
       return;
@@ -346,9 +378,17 @@ export class StreamInspector extends WorkspaceElement {
             );
     const next = this.streamRows[target - this.offset];
     if (next) {
+      const focus = captureFocus(this);
       void this.select(next);
-      this.$flushUpdates();
-      this.focusSelected();
+      const current = captureRenderScope(this, () => [
+        this.generation,
+        this.sessionId,
+        this.payloadGeneration,
+      ]);
+      await this.$whenRendered();
+      if (current() && focus()) {
+        this.focusSelected();
+      }
     } else {
       this.keyTarget = target;
       this.streamFollow = false;

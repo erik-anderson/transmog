@@ -22,8 +22,14 @@ export async function smokeTrafficFollowing(call, evaluate, capture, screenshotP
   const wait = async (expression) => {
     const deadline = Date.now() + 15000;
     while (!(await evaluate(expression))) {
-      if (Date.now() > deadline)
-        throw new Error("Native traffic following timed out: " + expression);
+      if (Date.now() > deadline) {
+        const state = await evaluate(
+          `(()=>{const w=${t},s=w.sessionScroller;return {matched:w.totalMatched,follow:w.followLatest,pending:w.queryPending,loading:w.sessions.filter(row=>row.loading).length,top:s.scrollTop,height:s.clientHeight,total:s.scrollHeight,status:w.sessionText};})()`,
+        );
+        throw new Error(
+          "Native traffic following timed out: " + expression + " · " + JSON.stringify(state),
+        );
+      }
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
   };
@@ -51,7 +57,7 @@ export async function smokeTrafficFollowing(call, evaluate, capture, screenshotP
   };
   try {
     await evaluate(
-      `(async()=>{const shell=document.querySelector('app-shell');shell.shadowRoot.querySelector('a[data-view="traffic"]').click();const w=shell.traffic;w.filters=[];w.filterGroups=[];w.fetchDestinations=[];w.searchResultId=null;w.contentSearchActive=false;w.incidentWindow=null;w.liveFilter='/native-following/';w.queryRevision++;await w.resumeLatest();})()`,
+      `(async()=>{const shell=document.querySelector('app-shell');shell.shadowRoot.querySelector('a[data-view="traffic"]').click();await shell.$whenRendered();const w=shell.traffic;w.filters=[];w.filterGroups=[];w.fetchDestinations=[];w.searchResultId=null;w.contentSearchActive=false;w.incidentWindow=null;w.liveFilter='/native-following/';w.queryRevision++;await w.resumeLatest();})()`,
     );
     await Promise.all(
       Array.from({ length: 60 }, (_, index) => capture("/native-following/" + index)),
@@ -141,7 +147,7 @@ export async function smokeTrafficFollowing(call, evaluate, capture, screenshotP
               w.selectedStatusText=s.summary.status;w.selectedTone=s.summary.tone;
               w.$emit('selection-changed',null);
             }
-            w.renderFollowState();w.$flushUpdates();
+            w.renderFollowState();await w.$whenRendered();
             if(!s.follow)w.sessionScroller.scrollTop=s.top;
             w.sessionScroller.scrollLeft=s.left;
             shell.shadowRoot.querySelector('a[data-view="'+s.view+'"]').click();

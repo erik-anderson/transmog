@@ -1,6 +1,37 @@
 import assert from "node:assert/strict";
 
 export async function checkDebuggerConsole(page, workspace) {
+  assert.deepEqual(
+    await workspace.evaluate(async (element) => {
+      let finish;
+      const edit = new Promise((resolve) => (finish = resolve));
+      const command = globalThis.__debuggerWorkspaceCommand,
+        placements = [];
+      globalThis.__debuggerWorkspaceCommand = async (name, args) => {
+        if (name === "place_debugger") {
+          placements.push(args.placement);
+          return;
+        }
+        return command(name, args);
+      };
+      element.valueEditOperation = edit;
+      const moving = element.place("window");
+      try {
+        await element.place("closed");
+        finish();
+        await moving;
+        return placements;
+      } finally {
+        finish();
+        await moving;
+        element.valueEditOperation = null;
+        element.debuggerTransition = "";
+        globalThis.__debuggerWorkspaceCommand = command;
+      }
+    }),
+    ["closed"],
+    "Closing the debugger must supersede a move waiting for a value edit",
+  );
   const prompt = workspace.getByRole("textbox", { name: "Immediate expression", exact: true });
   await prompt.fill("draft during handoff");
   await page.evaluate(() => {

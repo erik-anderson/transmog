@@ -29,7 +29,7 @@ export async function smokeResponseSetCapture(options) {
         "Captured " + kind + " response",
       );
       await main.evaluate(
-        `(()=>{const a=${a};a.autoResponseEditBody.checked=true;a.updateAutoResponseBodyEditState();a.autoResponseBody.value=${JSON.stringify(edited)};a.autoResponseBody.dispatchEvent(new Event('input',{bubbles:true}));a.compareResponseDraft('source');})()`,
+        `(async ()=>{const a=${a};a.autoResponseEditBody.checked=true;a.updateAutoResponseBodyEditState();a.autoResponseBody.value=${JSON.stringify(edited)};a.autoResponseBody.dispatchEvent(new Event('input',{bubbles:true}));await a.compareResponseDraft('source');})()`,
       );
       await h.wait(`${shell}.comparison.comparisonResult&&!${shell}.comparison.comparisonBusy`);
       assert.equal(

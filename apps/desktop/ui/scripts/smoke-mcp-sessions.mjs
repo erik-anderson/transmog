@@ -180,7 +180,7 @@ export async function smokeMcpSessions(cli, invoke, key, grantId, instanceId, sc
     );
     await targetEvaluate(
       target,
-      `(async()=>{const review=document.querySelector('app-shell').shadowRoot.querySelector('session-review');review.open();await review.refresh();await review.headersEditor.selectRule(${JSON.stringify(rule.id)});const input=review.headersEditor.hrNameInput;input.value='Unsaved human private draft';input.dispatchEvent(new Event('input',{bubbles:true}));await review.dirty();})()`,
+      `(async()=>{const review=document.querySelector('app-shell').shadowRoot.querySelector('session-review');await review.open();await review.refresh();await review.headersEditor.selectRule(${JSON.stringify(rule.id)});const input=review.headersEditor.hrNameInput;input.value='Unsaved human private draft';input.dispatchEvent(new Event('input',{bubbles:true}));await review.dirty();})()`,
     );
     assert.equal((await cli(key, "transmog_session_close", input)).failed, true);
     await cli(key, "transmog_rule_prepare", {

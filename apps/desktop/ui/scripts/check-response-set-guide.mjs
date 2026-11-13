@@ -289,6 +289,13 @@ export async function checkResponseSetGuide(page, root) {
     assert.equal(await more.evaluate((node) => node.getRootNode().activeElement === node), true);
   }
   await start();
+  await manager.evaluate(async (workspace) => {
+    const moving = workspace.nextTourStep();
+    await workspace.endGuide();
+    await moving;
+  });
+  assert.equal(await panel.count(), 0, "Ending a pending step must keep the tour closed");
+  await start();
   await panel.getByRole("button", { name: "Next", exact: true }).click();
   await panel.getByRole("button", { name: "Back", exact: true }).click();
   await panel.getByText("1 of 4", { exact: true }).waitFor();

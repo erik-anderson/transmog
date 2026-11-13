@@ -37,7 +37,6 @@ export class ResponseSetPagePicker extends WebUIElement {
     this.cancel();
     const epoch = ++this.epoch;
     const active = (this.getRootNode() as ShadowRoot).activeElement;
-    let result: ExperimentPreviewPages;
     let canceled = false;
     const root = this.getRootNode(),
       cancel = (event: Event) => {
@@ -47,9 +46,48 @@ export class ResponseSetPagePicker extends WebUIElement {
       };
     root.addEventListener("keydown", cancel, true);
     try {
-      result = await invoke<ExperimentPreviewPages>("experiment_preview_pages", {
+      const result = await invoke<ExperimentPreviewPages>("experiment_preview_pages", {
         id,
         selectedId: selectedId || null,
+      });
+      if (
+        canceled ||
+        epoch !== this.epoch ||
+        !current() ||
+        (this.getRootNode() as ShadowRoot).activeElement !== active
+      ) {
+        return null;
+      }
+      if (preview && result.page && result.available) {
+        return { page: result.page, sourceLabel: result.sourceLabel };
+      }
+      this.setId = id;
+      this.revision = result.revision;
+      this.current = current;
+      this.returnFocus = active instanceof HTMLElement ? active : null;
+      this.pages = result.pages.map((page) => ({ ...page, identity: pageIdentity(page) }));
+      this.selectedId = "";
+      this.rememberedUrl = result.page?.url ?? "";
+      this.available = result.available;
+      this.more = result.more;
+      this.error = "";
+      this.pageSaved = false;
+      await this.$whenRendered();
+      if (
+        canceled ||
+        epoch !== this.epoch ||
+        !this.isConnected ||
+        !current() ||
+        (this.getRootNode() as ShadowRoot).activeElement !== active
+      ) {
+        if (epoch === this.epoch) {
+          this.returnFocus = null;
+        }
+        return null;
+      }
+      this.pageDialog.showModal();
+      return new Promise((resolve) => {
+        this.resolve = resolve;
       });
     } catch (error) {
       if (!canceled && epoch === this.epoch && current()) {
@@ -64,33 +102,6 @@ export class ResponseSetPagePicker extends WebUIElement {
     } finally {
       root.removeEventListener("keydown", cancel, true);
     }
-    if (
-      canceled ||
-      epoch !== this.epoch ||
-      !current() ||
-      (this.getRootNode() as ShadowRoot).activeElement !== active
-    ) {
-      return null;
-    }
-    if (preview && result.page && result.available) {
-      return { page: result.page, sourceLabel: result.sourceLabel };
-    }
-    this.setId = id;
-    this.revision = result.revision;
-    this.current = current;
-    this.returnFocus = active instanceof HTMLElement ? active : null;
-    this.pages = result.pages.map((page) => ({ ...page, identity: pageIdentity(page) }));
-    this.selectedId = "";
-    this.rememberedUrl = result.page?.url ?? "";
-    this.available = result.available;
-    this.more = result.more;
-    this.error = "";
-    this.pageSaved = false;
-    this.$flushUpdates();
-    this.pageDialog.showModal();
-    return new Promise((resolve) => {
-      this.resolve = resolve;
-    });
   }
   select(id: string): void {
     if (!this.saving && !this.pageSaved) {

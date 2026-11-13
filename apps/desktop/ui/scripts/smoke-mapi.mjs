@@ -60,7 +60,7 @@ export async function smokeMapi(call, evaluate, screenshotPath, tracePath) {
     if(!values.includes('9007199254740993')||!values.includes('Synthetic café Ω'))throw new Error('MAPI table context crossed origin/capture scope or lost its columns');
     const rowNode=fields(viewer.view.document).find(node=>node.value?.value==='9007199254740993');
     const rowParent=fields(viewer.view.document).find(node=>node.children.some(child=>child.id===rowNode.id));
-    viewer.selectNode(rowParent.id);
+    await viewer.selectNode(rowParent.id);
     const detailRoot=viewer.shadowRoot??viewer,structureMode=detailRoot.querySelector('select[aria-label="Structure view"]');
     structureMode.value='table';structureMode.dispatchEvent(new Event('change',{bubbles:true}));
     await wait(()=>!detailRoot.querySelector('.visualizer-table').hidden&&viewer.visualizerTable.rows.some(row=>row.id===rowNode.id));
@@ -73,10 +73,10 @@ export async function smokeMapi(call, evaluate, screenshotPath, tracePath) {
     viewer.showSpan(rowNode.spans[0]);
     await wait(()=>!!(viewer.shadowRoot??viewer).querySelector('hex-viewer')?.hasSelection);
     const otherRange=fields(viewer.view.document).find(node=>node.id!==rowNode.id&&node.spans?.[0]?.length!=='0'&&node.spans?.length);
-    viewer.selectNode(otherRange.id);
+    await viewer.selectNode(otherRange.id);
     await wait(()=>detailRoot.querySelector('hex-viewer')?.rangeStart===otherRange.spans[0].offset);
     if(viewer.visualizerMode!=='hex')throw new Error('Selecting a MAPI field closed source Hex');
-    viewer.selectNode(rowNode.id);
+    await viewer.selectNode(rowNode.id);
     await wait(()=>detailRoot.querySelector('hex-viewer')?.rangeStart===rowNode.spans[0].offset);
     const divider=detailRoot.querySelector('pane-divider');
     const separator=(divider.shadowRoot??divider).querySelector('[role="separator"]');
@@ -88,13 +88,13 @@ export async function smokeMapi(call, evaluate, screenshotPath, tracePath) {
     await wait(()=>!viewer.visualizerDetailsOpen);
     if(traffic.selectedSessionId!==response.detail.id)throw new Error('MAPI divider Escape lost the inspected request');
     if(tree!==tree.getRootNode().activeElement)throw new Error('MAPI divider Escape did not restore tree focus');
-    viewer.selectNode(rowNode.id);
+    await viewer.selectNode(rowNode.id);
     await wait(()=>viewer.visualizerDetailsOpen);
     detailRoot.querySelector('button[aria-label="Close structure details"]').click();
     await wait(()=>detailRoot.querySelector('.visualizer-node').hidden);
     const focusedTree=detailRoot.querySelector('.visualizer-tree');
     if(!detailRoot.querySelector('.visualizer-node').hidden||focusedTree!==focusedTree.getRootNode().activeElement)throw new Error('Closing MAPI details did not restore tree space and focus');
-    viewer.selectNode(rowNode.id);viewer.showSpan(rowNode.spans[0]);
+    await viewer.selectNode(rowNode.id);viewer.showSpan(rowNode.spans[0]);
     await wait(()=>!!(viewer.shadowRoot??viewer).querySelector('hex-viewer')?.hasSelection);
     const byteViewer=detailRoot.querySelector('hex-viewer'),byteGrid=(byteViewer.shadowRoot??byteViewer).querySelector('[role="grid"]');
     byteGrid.focus();byteGrid.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,composed:true,cancelable:true}));

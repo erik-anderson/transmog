@@ -1,3 +1,4 @@
+import { captureFocus, captureRenderScope } from "../rendering.js";
 import { DraftBaseline } from "../draft-state.js";
 import { sameRuleContent } from "../automation-state.js";
 import "../draft-status/draft-status.js";
@@ -360,12 +361,9 @@ export class HeaderRules extends WorkspaceElement {
     if (source) {
       this.selection = source;
     }
-    this.load(null);
-    if (phase) {
-      this.hrPhase = phase;
-    }
+    await this.load(null, true, phase);
   }
-  async selectRule(ruleId: string): Promise<void> {
+  async selectRule(ruleId: string, focus = true): Promise<void> {
     if (ruleId === this.hrId && !this.hrStale) {
       return;
     }
@@ -374,17 +372,22 @@ export class HeaderRules extends WorkspaceElement {
     }
     const rule = this.headerState?.rules.find((r) => r.id === ruleId);
     if (rule) {
-      this.load(rule);
+      await this.load(rule, focus);
     }
   }
-  private load(rule: AutomationRule | null, focus = true): void {
-    ++this.context;
+  private async load(
+    rule: AutomationRule | null,
+    focus = true,
+    phase: Phase = "response",
+  ): Promise<void> {
+    const context = ++this.context,
+      focused = captureFocus(this);
     this.invalidateTest();
     this.loaded = rule ? structuredClone(rule) : null;
     this.baseMatcher = rule ? structuredClone(rule.matcher) : null;
     this.hrId = rule?.id ?? "";
     this.hrName = rule?.displayName ?? "";
-    this.hrPhase = rule ? (this.phase(rule) ?? "response") : "response";
+    this.hrPhase = rule ? (this.phase(rule) ?? "response") : phase;
     this.hrMethod =
       rule?.matcher.method ??
       (rule
@@ -486,10 +489,14 @@ export class HeaderRules extends WorkspaceElement {
     this.hrError = "";
     this.hrMessage = "";
     this.headerStateChanged();
-    this.$flushUpdates();
-    this.baseline.capture(this.draftValues());
+    this.hrMatcher.condition = this.hrCondition;
+    this.baseline.capture(this.draftValues(this.hrCondition));
+    await this.$whenRendered();
+    if (context !== this.context || !this.isConnected) {
+      return;
+    }
     this.updateDirty();
-    if (focus && this.ready && this.hrActive) {
+    if (focus && this.ready && this.hrActive && focused()) {
       this.hrNameInput.focus({ preventScroll: true });
     }
   }
@@ -518,8 +525,9 @@ export class HeaderRules extends WorkspaceElement {
     this.hrEnabled = (event.currentTarget as HTMLInputElement).checked;
     this.dirty();
   }
-  setPhase(event: Event): void {
-    const phase = (event.currentTarget as HTMLSelectElement).value as Phase;
+  async setPhase(event: Event): Promise<void> {
+    const eventTarget = event?.currentTarget;
+    const phase = (eventTarget as HTMLSelectElement).value as Phase;
     if (
       phase === "request" &&
       (this.hrStatusFilter ||
@@ -528,15 +536,14 @@ export class HeaderRules extends WorkspaceElement {
     ) {
       this.hrError =
         "Remove response-only conditions before switching to Request. Your draft is preserved.";
-      this.$flushUpdates();
-      (event.currentTarget as HTMLSelectElement).value = this.hrPhase;
+      (eventTarget as HTMLSelectElement).value = this.hrPhase;
       return;
     }
     this.hrPhase = phase;
     this.dirty();
     this.headerStateChanged();
   }
-  private draftValues(): unknown {
+  private draftValues(matcher = this.hrMatcher.value): unknown {
     const rows = (items: Array<OperationRow | PredicateRow>) =>
       items.map(({ id: _id, encoding, value, ...row }) => {
         try {
@@ -549,7 +556,7 @@ export class HeaderRules extends WorkspaceElement {
       name: this.hrName,
       phase: this.hrPhase,
       method: this.hrMethod,
-      matcher: this.hrMatcher.value,
+      matcher,
       additional: this.hrAdditional,
       placement: this.hrPlacement,
       operations: rows(this.hrOperations),
@@ -612,8 +619,9 @@ export class HeaderRules extends WorkspaceElement {
     );
     this.dirty();
   }
-  changeEncoding(rowId: string, predicate: boolean, event: Event): void {
-    const encoding = (event.currentTarget as HTMLSelectElement).value as ValueEncoding;
+  async changeEncoding(rowId: string, predicate: boolean, event: Event): Promise<void> {
+    const eventTarget = event?.currentTarget;
+    const encoding = (eventTarget as HTMLSelectElement).value as ValueEncoding;
     try {
       if (predicate) {
         this.hrPredicates = this.hrPredicates.map((row) =>
@@ -654,12 +662,11 @@ export class HeaderRules extends WorkspaceElement {
     } catch {
       this.hrError =
         "These bytes cannot be represented as UTF-8 text. Keep Hex bytes to preserve them.";
-      this.$flushUpdates();
       const row = (predicate ? this.hrPredicates : this.hrOperations).find(
         (row) => row.id === rowId,
       );
       if (row) {
-        (event.currentTarget as HTMLSelectElement).value = row.encoding;
+        (eventTarget as HTMLSelectElement).value = row.encoding;
       }
     }
   }
@@ -825,7 +832,7 @@ export class HeaderRules extends WorkspaceElement {
         return true;
       }
       const saved = status.rules.find((r) => r.id === rule.id)!;
-      this.load(saved, false);
+      await this.load(saved, false);
       this.hrMessage = saved.enabled
         ? "Saved and enabled for new matching live requests."
         : "Saved disabled. Live participation is unchanged for this rule until explicitly enabled.";
@@ -863,9 +870,10 @@ export class HeaderRules extends WorkspaceElement {
       return;
     }
     const rule = this.headerState?.rules.find((r) => r.id === this.hrId);
-    this.load(rule ?? null);
+    await this.load(rule ?? null);
   }
   async remove(): Promise<void> {
+    const focus = captureFocus(this);
     if (this.hrBusy || !this.loaded || !this.headerState || !(await this.leave())) {
       return;
     }
@@ -887,8 +895,14 @@ export class HeaderRules extends WorkspaceElement {
       this.hrDirty = false;
       this.hrMessage = "Rule removed. Undo is available until another automation change.";
       this.headerStateChanged();
-      this.$flushUpdates();
-      if (this.hrActive) {
+      const current = captureRenderScope(this, () => [
+        this.context,
+        this.hrId,
+        this.hrEditor,
+        this.hrActive,
+      ]);
+      await this.$whenRendered();
+      if (current() && this.hrActive && focus()) {
         if (this.embedded) {
           this.$emit("rule-create-focus");
         } else {
@@ -921,7 +935,7 @@ export class HeaderRules extends WorkspaceElement {
       const restored = this.undo.rule.id;
       this.undo = null;
       this.accept(status);
-      this.load(
+      await this.load(
         status.rules.find((r) => r.id === restored)!,
         false,
       );
@@ -953,7 +967,7 @@ export class HeaderRules extends WorkspaceElement {
       if (this.loaded) {
         const updated = status.rules.find((r) => r.id === this.loaded!.id);
         if (updated) {
-          this.load(updated, false);
+          await this.load(updated, false);
         }
       }
       this.hrMessage = "Header rule order saved for new requests.";
@@ -1001,11 +1015,16 @@ export class HeaderRules extends WorkspaceElement {
     this.hrTestError = "";
     try {
       // Flush externally loaded fixture values before reading the child editors.
-      this.$flushUpdates();
-      if (
-        !this.hrSampleRequestEditor.reportValidity() ||
-        (this.hrPhase === "response" && !this.hrSampleResponseEditor.reportValidity())
-      ) {
+      await this.$whenRendered();
+      if (context !== this.context || revision !== this.testRevision || !this.isConnected) {
+        return;
+      }
+      if (!this.hrSampleRequestEditor.checkValidity()) {
+        await this.hrSampleRequestEditor.reportValidity();
+        throw new Error("Check the sample headers.");
+      }
+      if (this.hrPhase === "response" && !this.hrSampleResponseEditor.checkValidity()) {
+        await this.hrSampleResponseEditor.reportValidity();
         throw new Error("Check the sample headers.");
       }
       const input = {

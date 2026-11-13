@@ -17,7 +17,7 @@ export async function smokeScriptHelp(call, evaluate, screenshotPath) {
   );
   try {
     await evaluate(
-      `(async()=>{const shell=document.querySelector('app-shell');shell.shadowRoot.querySelector('a[data-view="automation"]').click();await shell.automation.showAutomationSection('scripts');shell.automation.$flushUpdates();})()`,
+      `(async()=>{const shell=document.querySelector('app-shell');shell.shadowRoot.querySelector('a[data-view="automation"]').click();await shell.automation.showAutomationSection('scripts');await shell.automation.$whenRendered();})()`,
     );
     await wait(`Boolean(${editor}?.scriptReady)`);
     const handlers = await smokeHandlerAuthoring(call, evaluate, editor, screenshotPath);
@@ -27,13 +27,13 @@ export async function smokeScriptHelp(call, evaluate, screenshotPath) {
       `(()=>{const e=${editor};if(!e.sourceEditor.getValue().trim())e.sourceEditor.setValue(e.allHelpSections.find(section=>section.id==='examples').examples[0].code);})()`,
     );
     const search = await evaluate(
-      `(()=>{const editor=${editor};editor.scriptHelpButton.click();const search=(value)=>{editor.scriptHelpSearch.value=value;editor.scriptHelpSearch.dispatchEvent(new Event('input',{bubbles:true}));editor.$flushUpdates();};search('Complete examples');editor.scriptHelpContent.scrollTop=editor.scriptHelpContent.scrollHeight;const scrolled=editor.scriptHelpContent.scrollTop>0;search('request body');return {scrolled,top:editor.scriptHelpContent.scrollTop,content:editor.scriptHelpContent.textContent};})()`,
+      `(async ()=>{const editor=${editor};editor.scriptHelpButton.focus();await editor.openScriptHelp();const search=async (value)=>{editor.scriptHelpSearch.value=value;editor.scriptHelpSearch.dispatchEvent(new Event('input',{bubbles:true}));await editor.$whenRendered();};await search('Complete examples');const context={modal:editor.scriptHelpDialog.open,active:editor.active,height:editor.scriptHelpContent.scrollHeight,clientHeight:editor.scriptHelpContent.clientHeight,sections:editor.helpSections.length,search:editor.helpSearch,view:document.querySelector('app-shell').activeView};editor.scriptHelpContent.scrollTop=editor.scriptHelpContent.scrollHeight;const scrolled=editor.scriptHelpContent.scrollTop>0;await search('request body');return {scrolled,context,top:editor.scriptHelpContent.scrollTop,content:editor.scriptHelpContent.textContent};})()`,
     );
-    assert.equal(search.scrolled, true);
+    assert.equal(search.scrolled, true, JSON.stringify(search.context));
     assert.equal(search.top, 0);
     assert.match(search.content, /Filters, buffering and limits/);
     const contract = await evaluate(
-      `(()=>{const editor=${editor};editor.scriptHelpButton.click();editor.scriptHelpSearch.value='onFailed';editor.scriptHelpSearch.dispatchEvent(new Event('input',{bubbles:true}));editor.$flushUpdates();return {revision:editor.apiRevision,failure:editor.scriptTestFailure.value,scope:editor.draftScope,modal:editor.scriptHelpDialog.matches(':modal'),content:editor.scriptHelpDialog.textContent};})()`,
+      `(async ()=>{const editor=${editor};editor.scriptHelpButton.focus();await editor.openScriptHelp();editor.scriptHelpSearch.value='onFailed';editor.scriptHelpSearch.dispatchEvent(new Event('input',{bubbles:true}));await editor.$whenRendered();return {revision:editor.apiRevision,failure:editor.scriptTestFailure.value,scope:editor.draftScope,modal:editor.scriptHelpDialog.matches(':modal'),content:editor.scriptHelpDialog.textContent};})()`,
     );
     assert.equal(contract.revision, 4);
     assert.equal(contract.failure, "Upstream");
@@ -62,7 +62,7 @@ export async function smokeScriptHelp(call, evaluate, screenshotPath) {
     let scenario;
     try {
       scenario = await evaluate(
-        `(async()=>{const editor=${editor};const mode=editor.querySelector('[aria-label="Test mode"]');mode.value='scenario';mode.dispatchEvent(new Event('change',{bubbles:true}));editor.querySelector('.script-test').open=true;editor.$flushUpdates();await editor.testScript();return {summary:editor.testResult,evidence:editor.testEvidence};})()`,
+        `(async()=>{const editor=${editor};const mode=editor.querySelector('[aria-label="Test mode"]');mode.value='scenario';mode.dispatchEvent(new Event('change',{bubbles:true}));editor.querySelector('.script-test').open=true;await editor.$whenRendered();await editor.testScript();return {summary:editor.testResult,evidence:editor.testEvidence};})()`,
       );
       assert.match(
         scenario.summary,
@@ -70,7 +70,7 @@ export async function smokeScriptHelp(call, evaluate, screenshotPath) {
       );
       assert.match(scenario.evidence, /onRequestHead: invoked/);
       const failure = await evaluate(
-        `(async()=>{const editor=${editor};editor.scriptTestResponseHeaders.value='invalid hidden header';editor.scriptScenarioOutcome.value='failure';editor.scriptScenarioOutcome.dispatchEvent(new Event('input',{bubbles:true}));editor.$flushUpdates();await editor.testScript();return {summary:editor.testResult,kind:editor.statusKind,text:editor.scriptText};})()`,
+        `(async()=>{const editor=${editor};editor.scriptTestResponseHeaders.value='invalid hidden header';editor.scriptScenarioOutcome.value='failure';editor.scriptScenarioOutcome.dispatchEvent(new Event('input',{bubbles:true}));await editor.$whenRendered();await editor.testScript();return {summary:editor.testResult,kind:editor.statusKind,text:editor.scriptText};})()`,
       );
       assert.match(failure.summary, /Scenario passed.*Exchange: failed/, failure.text);
       assert.equal(failure.kind, "success");
@@ -85,7 +85,7 @@ export async function smokeScriptHelp(call, evaluate, screenshotPath) {
         );
     } finally {
       await evaluate(
-        `(()=>{const editor=${editor};const prior=${JSON.stringify(fixtureBefore)};editor.querySelector('[aria-label="Test mode"]').value=prior.testMode;editor.scriptScenarioOutcome.value=prior.scenarioOutcome;editor.querySelector('.script-test').open=prior.open;editor.scriptTestResponseHeaders.value=prior.responseHeaders;delete prior.open;delete prior.responseHeaders;Object.assign(editor,prior);editor.$flushUpdates();})()`,
+        `(async ()=>{const editor=${editor};const prior=${JSON.stringify(fixtureBefore)};editor.querySelector('[aria-label="Test mode"]').value=prior.testMode;editor.scriptScenarioOutcome.value=prior.scenarioOutcome;editor.querySelector('.script-test').open=prior.open;editor.scriptTestResponseHeaders.value=prior.responseHeaders;delete prior.open;delete prior.responseHeaders;Object.assign(editor,prior);await editor.$whenRendered();})()`,
       );
     }
     return {

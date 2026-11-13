@@ -1,4 +1,11 @@
 import "../portable-case/portable-case.js";
+import {
+  captureFocus,
+  capturePresentationIntent,
+  captureRenderScope,
+  renderPresentation,
+  trackScrollInput,
+} from "../rendering.js";
 import "../script-diagnostics/script-diagnostics.js";
 import type { DeveloperEvidence } from "../script-diagnostics/models.js";
 import type { SavedDemo } from "../saved-demo-models.js";
@@ -52,7 +59,13 @@ import {
   clientResponseSource,
   autoResponseUnavailableReason,
 } from "../utilities.js";
-import { rangeKind, rangeUnits, inclusiveRange, localDateTime } from "../traffic-ranges.js";
+import {
+  rangeKind,
+  rangeUnits,
+  inclusiveRange,
+  localDateTime,
+  localDateTimeInput,
+} from "../traffic-ranges.js";
 import {
   extensionColumnKey,
   filterDimensions,
@@ -248,10 +261,12 @@ export class TrafficWorkspace extends WorkspaceElement {
         this.inspectorSide = origin.boundary.endsWith("request") ? "request" : "response";
         this.authReturn = null;
         this.authReturnAvailable = false;
-        this.$flushUpdates();
-        (this.inspectorSide === "request"
-          ? this.requestMessage
-          : this.responseMessage
+        await this.$whenRendered();
+        if (!current() || !focus.unchanged() || this.selectedSessionId !== origin.id) {
+          return;
+        }
+        await (
+          this.inspectorSide === "request" ? this.requestMessage : this.responseMessage
         ).showAuthBoundary(origin.boundary, origin.interpretation, origin.scrollTop);
       } else if (current() && focus.unchanged()) {
         this.diagnostic =
@@ -302,10 +317,12 @@ export class TrafficWorkspace extends WorkspaceElement {
         this.authReturnAvailable = !!this.authReturn;
         this.streamPanel = false;
         this.inspectorSide = boundary.endsWith("request") ? "request" : "response";
-        this.$flushUpdates();
-        (boundary.endsWith("request")
-          ? this.requestMessage
-          : this.responseMessage
+        await this.$whenRendered();
+        if (!current() || !focus.unchanged() || this.selectedSessionId !== id) {
+          return;
+        }
+        await (
+          boundary.endsWith("request") ? this.requestMessage : this.responseMessage
         ).showAuthBoundary(boundary);
       } else if (current() && focus.unchanged()) {
         this.diagnostic = "Related auth evidence is no longer retained.";
@@ -386,8 +403,15 @@ export class TrafficWorkspace extends WorkspaceElement {
       const marker = review.markers.at(-1);
       if (marker) {
         this.markerCurrent = review.traceId + ":" + marker.id;
-        this.$flushUpdates();
-        this.markerIntake.selectMarker(marker.id, false);
+        const current = captureRenderScope(this, () => [
+          this.markerCurrent,
+          this.markersTraceId,
+          this.markersOpen,
+        ]);
+        await this.$whenRendered();
+        if (current()) {
+          this.markerIntake.selectMarker(marker.id, false);
+        }
       }
     } catch (error: unknown) {
       this.flagStatus = "Marker could not be added: " + describeError(error);
@@ -410,6 +434,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   markerUnsaved!: HTMLDialogElement;
   private markerGeneration = 0;
   private markerNavigation = 0;
+  private markerSaveRevision = 0;
   private markerPendingAction: "close" | "clear" | null = null;
   async refreshMarkers(): Promise<void> {
     const generation = ++this.markerGeneration;
@@ -443,14 +468,14 @@ export class TrafficWorkspace extends WorkspaceElement {
   markersToggled(event: Event): void {
     this.markersOpen = (event.target as HTMLDetailsElement).open;
   }
-  reviewMetadataMarkers(): void {
+  async reviewMetadataMarkers(): Promise<void> {
     this.markersTraceId = this.metadataTraceId;
     this.closeMetadata();
-    this.reviewMarkers();
+    await this.reviewMarkers();
   }
-  reviewMarkers(): void {
+  async reviewMarkers(): Promise<void> {
     this.markersOpen = true;
-    this.$flushUpdates();
+    await this.$whenRendered();
   }
   async markersChanged(event: CustomEvent<{ traceId: string; deletedId: string }>): Promise<void> {
     event.stopPropagation();
@@ -473,9 +498,24 @@ export class TrafficWorkspace extends WorkspaceElement {
     void invoke("set_marker_draft_dirty", { dirty: event.detail }).catch(() => {});
   }
   async markerSave(): Promise<void> {
-    if (await this.markerIntake.applyPending()) {
-      await this.refreshMarkers();
-      this.showSaveTrace(this.markerPendingAction ? undefined : this.markersTraceId);
+    this.markerSaveRevision++;
+    const current = captureRenderScope(this, () => [
+        this.markerSaveRevision,
+        this.markerNavigation,
+        this.markersTraceId,
+        this.markerPendingAction,
+        this.view,
+      ]),
+      intent = capturePresentationIntent(this);
+    try {
+      if (await this.markerIntake.applyPending()) {
+        await this.refreshMarkers();
+        if (current() && this.view === "traffic" && intent.current()) {
+          this.showSaveTrace(this.markerPendingAction ? undefined : this.markersTraceId);
+        }
+      }
+    } finally {
+      intent.dispose();
     }
   }
   async markerTimeRequest(
@@ -525,7 +565,11 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.markersTraceId = traceId;
     this.markerCurrent = marker.key;
     this.markerStatus = "";
-    this.$flushUpdates();
+    await this.$whenRendered();
+    if (!current()) {
+      focus.dispose();
+      return;
+    }
     this.markerIntake.selectMarker(id, false);
     this.followLatest = false;
     let view: TrafficView | null = null;
@@ -587,7 +631,7 @@ export class TrafficWorkspace extends WorkspaceElement {
         if (!current() || !this.timelineMode || generation !== this.timelineGeneration) {
           return;
         }
-        this.timeline.goToTime(marker.unixMillis, nearest?.id, focus.unchanged());
+        await this.timeline.goToTime(marker.unixMillis, nearest?.id, focus.unchanged());
       } else if (nearest) {
         await this.revealCurrent(nearest.id, false, current);
       }
@@ -663,10 +707,11 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.timelineSelection = ids;
     }
   }
-  toggleTimeline(): void {
-    this.setTimeline(!this.timelineMode, false);
+  async toggleTimeline(): Promise<void> {
+    await this.setTimeline(!this.timelineMode, false);
   }
-  setTimeline(enabled: boolean, focusView = true): void {
+  async setTimeline(enabled: boolean, focusView = true): Promise<void> {
+    const focus = captureFocus(this);
     if (!enabled) {
       this.timeline?.closeHelp(false);
     }
@@ -675,8 +720,14 @@ export class TrafficWorkspace extends WorkspaceElement {
     if (enabled) {
       this.syncTimelineSelection();
       void this.refreshTimeline();
-      this.$flushUpdates();
-      if (focusView) {
+      await this.$whenRendered();
+      if (
+        focusView &&
+        focus() &&
+        this.isConnected &&
+        this.view === "traffic" &&
+        this.timelineMode === enabled
+      ) {
         this.querySelector<HTMLElement>(".timeline-overview svg")?.focus({ preventScroll: true });
       }
     } else {
@@ -684,10 +735,13 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.timelineBusy = false;
       window.clearTimeout(this.timelineTimer);
       this.timelineTimer = undefined;
-      this.$flushUpdates();
+      await this.$whenRendered();
+      if (!this.isConnected || this.view !== "traffic" || this.timelineMode !== enabled) {
+        return;
+      }
       this.scheduleViewport();
-      if (focusView) {
-        this.focusTraffic();
+      if (focusView && focus()) {
+        await this.focusTraffic();
       }
     }
   }
@@ -803,9 +857,9 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.trafficSelection.anchor = ids[0] ?? null;
     this.updateTrafficSelection();
   }
-  focusTraffic(): void {
+  async focusTraffic(): Promise<void> {
     if (this.timelineMode) {
-      this.timeline.reveal(this.selectedSessionId ?? "");
+      await this.timeline.reveal(this.selectedSessionId ?? "");
     } else {
       this.trafficTable.focus({ preventScroll: true });
     }
@@ -898,6 +952,8 @@ export class TrafficWorkspace extends WorkspaceElement {
     event: CustomEvent<{ window: IncidentWindow; label: string }>,
   ): Promise<void> {
     event.stopPropagation();
+    const focus = captureFocus(this);
+    this.markerNavigation++;
     if (!this.incidentReturn) {
       this.incidentReturn = {
         scroll: this.sessionScroller.scrollTop,
@@ -910,45 +966,80 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.incidentWindowLabel = event.detail.label;
     this.followLatest = false;
     this.queryRevision++;
+    const current = captureRenderScope(this, () => [
+      this.markerNavigation,
+      this.queryRevision,
+      this.trafficSelectionRevision,
+      this.inspectionGeneration,
+      this.view,
+    ]);
     await this.refreshSessions(undefined, true);
+    if (!current() || this.view !== "traffic" || !focus()) {
+      return;
+    }
     if (this.metadataDialog.open) {
       this.closeMetadata();
     }
     if (this.timingDialog.open) {
       this.closeTimings();
     }
-    this.focusTraffic();
+    await this.focusTraffic();
   }
   async clearIncidentWindow(all = false): Promise<void> {
-    const previous = this.incidentReturn;
+    const previous = this.incidentReturn,
+      focus = captureFocus(this),
+      scrolling = trackScrollInput(this.sessionScroller),
+      read = () => [
+        this.markerNavigation,
+        this.queryRevision,
+        this.trafficSelectionRevision,
+        this.inspectionGeneration,
+        this.view,
+      ];
+    this.markerNavigation++;
     this.incidentReturn = null;
     this.incidentWindow = null;
     this.incidentWindowLabel = "";
-    if (all) {
-      this.filters = [];
-      this.filterGroups = [];
-      this.fetchDestinations = [];
-      await this.clearContentSearch(false);
-    }
-    this.queryRevision++;
-    this.followLatest = previous?.follow ?? false;
-    this.scrollToLatest();
-    await this.refreshSessions(undefined, true);
-    if (previous && !all) {
-      this.trafficSelection = previous.selection;
-      for (const id of this.trafficSelection.ids) {
-        if (!this.virtualList.indexes.has(id)) {
-          this.trafficSelection.ids.delete(id);
+    try {
+      if (all) {
+        this.filters = [];
+        this.filterGroups = [];
+        this.fetchDestinations = [];
+        const clearing = this.clearContentSearch(false),
+          current = captureRenderScope(this, read);
+        await clearing;
+        if (!current()) {
+          return;
         }
       }
-      this.updateTrafficSelection();
-      if (!previous.follow) {
-        this.sessionScroller.scrollTop =
-          this.virtualList.restore(previous.anchor) ?? previous.scroll;
+      this.queryRevision++;
+      this.followLatest = previous?.follow ?? false;
+      this.scrollToLatest();
+      const current = captureRenderScope(this, read);
+      await this.refreshSessions(undefined, true);
+      if (!current() || this.view !== "traffic" || !scrolling.unchanged()) {
+        return;
       }
-      this.scheduleViewport();
+      if (previous && !all) {
+        this.trafficSelection = previous.selection;
+        for (const id of this.trafficSelection.ids) {
+          if (!this.virtualList.indexes.has(id)) {
+            this.trafficSelection.ids.delete(id);
+          }
+        }
+        this.updateTrafficSelection();
+        if (!previous.follow) {
+          this.sessionScroller.scrollTop =
+            this.virtualList.restore(previous.anchor) ?? previous.scroll;
+        }
+        this.scheduleViewport();
+      }
+      if (focus()) {
+        await this.focusTraffic();
+      }
+    } finally {
+      scrolling.dispose();
     }
-    this.focusTraffic();
   }
   @observable exportReviewId = "";
   @observable exportReviewBusy = false;
@@ -958,7 +1049,8 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable exportReviewFacts: Array<{ label: string; value: string }> = [];
   private exportReviewRevision = 0;
   async changeExportScope(event: Event): Promise<void> {
-    this.exportReviewScope = (event.currentTarget as HTMLSelectElement).value;
+    const eventTarget = event?.currentTarget;
+    this.exportReviewScope = (eventTarget as HTMLSelectElement).value;
     await this.reviewTraceExport();
   }
   async reviewTraceExport(): Promise<void> {
@@ -1251,7 +1343,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       void this.certificateInspector.inspect(this.timingId);
     }
   }
-  detailsTabKeydown(event: KeyboardEvent): void {
+  async detailsTabKeydown(event: KeyboardEvent): Promise<void> {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
       return;
     }
@@ -1270,7 +1362,16 @@ export class TrafficWorkspace extends WorkspaceElement {
             : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
     event.preventDefault();
     this.showDetailsTab(tabs[next]!);
-    this.$flushUpdates();
+    const focus = captureFocus(this),
+      current = captureRenderScope(this, () => [
+        this.detailsTab,
+        this.timingId,
+        this.timingDialog.open,
+      ]);
+    await this.$whenRendered();
+    if (!current() || !focus()) {
+      return;
+    }
     this.timingDialog.querySelector<HTMLButtonElement>('[role="tab"][data-selected]')?.focus();
   }
   @attr({ attribute: "viewer-mode", mode: "boolean" }) viewerMode = false;
@@ -1355,7 +1456,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.previewSavedDemo = null;
     this.previewSavedDemoName = "";
   }
-  showSavedDemoPreview(demo: SavedDemo): void {
+  async showSavedDemoPreview(demo: SavedDemo): Promise<void> {
     if (this.viewerMode || this.previewPageBusy) {
       return;
     }
@@ -1388,8 +1489,14 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.previewDraftDirty = false;
     this.previewDraftExcluded = false;
     this.previewPageScripts.checked = false;
-    this.$flushUpdates();
-    this.previewPageDialog.showModal();
+    const current = await renderPresentation(this, () => [
+      this.previewPageGeneration,
+      this.previewContextRevision,
+      this.view,
+    ]);
+    if (current()) {
+      this.previewPageDialog.showModal();
+    }
   }
   @observable previewReportAvailable = false;
   @observable previewReportSetId = "";
@@ -1590,6 +1697,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     }
   }
   @observable savingTrace = false;
+  private traceSaveOperation = 0;
   @observable saveTraceStatus = "";
   @observable saveTraceOpen = false;
   @observable saveTraceCompleted = 0;
@@ -1657,7 +1765,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   private extensionSelection: string[] | undefined;
   private classifications = new TrafficClassifications(
     () => this.preferences.extensionColumns ?? NO_EXTENSION_KEYS,
-    () => this.extensionCatalogChanged(),
+    async () => await this.extensionCatalogChanged(),
     () => this.refreshClassificationCells(),
   );
   extensionSettingsToggled(event: Event): void {
@@ -1712,7 +1820,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.sessions = rows;
     }
   }
-  private extensionCatalogChanged(): void {
+  private async extensionCatalogChanged(): Promise<void> {
     this.rebuildExtensionColumns();
     this.updateColumnMetrics();
     this.refreshClassificationCells();
@@ -1730,11 +1838,11 @@ export class TrafficWorkspace extends WorkspaceElement {
     // not rely on a successful Traffic query to replace an invalidated reply.
     if (this.pickerOpen && (hasExtensionFilters || extensionColumnKey(this.pickerDimension))) {
       if (!this.pickerFields.some((field) => field.id === this.pickerDimension)) {
-        this.closePicker();
+        await this.closePicker();
       } else {
         this.pickerGeneration++;
         this.pickerLoading = true;
-        this.rebuildPickerOptions();
+        await this.rebuildPickerOptions();
         void this.loadFacets();
       }
     }
@@ -1828,7 +1936,6 @@ export class TrafficWorkspace extends WorkspaceElement {
     (x, y) => {
       this.trafficMenuX = x;
       this.trafficMenuY = y;
-      this.$flushUpdates();
     },
   );
   trafficMenuToggled(event: ToggleEvent): void {
@@ -1888,7 +1995,8 @@ export class TrafficWorkspace extends WorkspaceElement {
     listLeft: number;
     scroll: Array<{ element: HTMLElement; top: number; left: number }>;
   } | null = null;
-  toggleInspector(): void {
+  async toggleInspector(): Promise<void> {
+    const focus = captureFocus(this);
     if (!this.selectedSessionId && !this.inspectorExpanded) {
       return;
     }
@@ -1910,14 +2018,31 @@ export class TrafficWorkspace extends WorkspaceElement {
       };
       this.expandedRequestSplit = this.preferences.requestSplit;
       this.inspectorExpanded = true;
-      this.$flushUpdates();
-      this.inspectorExpandButton.focus({ preventScroll: true });
+      const current = captureRenderScope(this, () => [
+        this.inspectorExpanded,
+        this.compactInspection,
+        this.selectedSessionId,
+        this.view,
+      ]);
+      await this.$whenRendered();
+      if (current() && focus()) {
+        this.inspectorExpandButton.focus({ preventScroll: true });
+      }
     } else {
       const previous = this.compactInspection;
       this.compactInspection = null;
       this.inspectorExpanded = false;
       this.requestShare = this.preferences.requestSplit + "%";
-      this.$flushUpdates();
+      const current = captureRenderScope(this, () => [
+        this.inspectorExpanded,
+        this.compactInspection,
+        this.selectedSessionId,
+        this.view,
+      ]);
+      await this.$whenRendered();
+      if (!current() || !focus()) {
+        return;
+      }
       if (previous) {
         this.sessionScroller.scrollTop =
           this.virtualList.restore(previous.listAnchor) ?? previous.listTop;
@@ -1932,7 +2057,7 @@ export class TrafficWorkspace extends WorkspaceElement {
         }
       }
       this.scheduleViewport();
-      this.focusTraffic();
+      await this.focusTraffic();
     }
   }
   showInspectorSide(side: string): void {
@@ -2020,8 +2145,8 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable pickerObservedLabel = "Observed values";
   @observable pickerLiteral = false;
   @observable pickerPastePlaceholder = "Enter values separated by commas or newlines";
-  filterPaste!: HTMLTextAreaElement;
-  favoriteSearch!: HTMLInputElement;
+  filterPaste?: HTMLTextAreaElement;
+  favoriteSearch?: HTMLInputElement;
   filterCombine!: HTMLElement;
   private pickerSavedValues: TrafficFilterValue[] = [];
   private favorites: TrafficFavorite[] = [];
@@ -2113,12 +2238,13 @@ export class TrafficWorkspace extends WorkspaceElement {
       ...overrides,
     };
   }
-  openFilters(event: Event): void {
-    this.openFilterPicker(this.pickerDimension, event);
+  async openFilters(event: Event): Promise<void> {
+    await this.openFilterPicker(this.pickerDimension, event);
   }
-  openFilterPicker(dimension: TrafficDimension, event?: Event): void {
+  async openFilterPicker(dimension: TrafficDimension, event?: Event): Promise<void> {
+    const eventTarget = event?.currentTarget;
     if (this.pickerOpen) {
-      this.rememberPickerDraft();
+      void this.rememberPickerDraft();
     }
     this.refreshPickerFields();
     if (!this.pickerFields.some((field) => field.id === dimension)) {
@@ -2129,19 +2255,35 @@ export class TrafficWorkspace extends WorkspaceElement {
         ? ((this.getRootNode() as ShadowRoot)
             .getElementById("header-" + dimension)
             ?.querySelector("button") ?? this.filterButton)
-        : ((event?.currentTarget as HTMLElement) ?? this.filterButton);
+        : ((eventTarget as HTMLElement) ?? this.filterButton);
     this.closeMenu();
     this.pickerOpen = true;
-    this.resetPicker(dimension);
-    this.$flushUpdates();
+    const reset = this.resetPicker(dimension),
+      session = this.pickerSession;
+    const [, current] = await Promise.all([
+      reset,
+      renderPresentation(this, () => [this.pickerSession, this.pickerOpen, this.view]),
+    ]);
+    if (
+      !current() ||
+      session !== this.pickerSession ||
+      !this.pickerOpen ||
+      this.pickerDimension !== dimension
+    ) {
+      if (session === this.pickerSession) {
+        this.pickerOpen = false;
+        this.pickerSession++;
+      }
+      return;
+    }
     this.filterPicker.showPopover();
     this.fitFilterPicker();
     this.filterField.focus({ preventScroll: true });
     void this.loadFacets();
     void this.loadFavorites();
   }
-  private resetPicker(dimension: TrafficDimension): void {
-    this.pickerSession++;
+  private async resetPicker(dimension: TrafficDimension): Promise<void> {
+    const session = ++this.pickerSession;
     this.pickerGeneration++;
     this.pickerDimension = dimension;
     this.pickerMembership = !extensionColumnKey(dimension);
@@ -2255,16 +2397,17 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.pickerScope = "Counts ignore this field’s filters.";
     this.pickerLoading = true;
     this.filterInput.value = "";
+    this.filterInput.setCustomValidity("");
+    this.filterOperator.value = field.numeric ? "equals" : "contains";
     if (this.filterPaste) {
       this.filterPaste.value = "";
     }
-    this.filterInput.setCustomValidity("");
-    this.filterOperator.value = field.numeric ? "equals" : "contains";
-    this.$flushUpdates();
     if (this.observedSearch) {
       this.observedSearch.value = "";
     }
-    this.favoriteSearch.value = "";
+    if (this.favoriteSearch) {
+      this.favoriteSearch.value = "";
+    }
     const bound = (operator: string) =>
       this.pickerConstraints.find((filter) => filter.operator === operator)?.value ?? "";
     this.pickerRangeNotice = "";
@@ -2276,8 +2419,10 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.pickerRangeNotice =
         "Existing time bounds are outside the calendar range. Use Additional requirements to preserve their exact Unix milliseconds.";
     }
-    this.filterFrom.value = this.pickerTime ? localDateTime(bound("minimum")) : bound("minimum");
-    this.filterTo.value = this.pickerTime ? localDateTime(bound("maximum")) : bound("maximum");
+    this.filterFrom.value = this.pickerTime
+      ? localDateTimeInput(bound("minimum"))
+      : bound("minimum");
+    this.filterTo.value = this.pickerTime ? localDateTimeInput(bound("maximum")) : bound("maximum");
     this.filterFrom.setCustomValidity("");
     this.filterTo.setCustomValidity("");
     this.pickerOriginalTimeBounds = this.pickerTime
@@ -2299,7 +2444,9 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.pickerAuthoredConditions = structuredClone(draft.authoredConditions);
       this.pickerMode = draft.mode;
       this.pickerPaste = draft.paste;
-      this.filterPaste.value = draft.paste;
+      if (this.filterPaste) {
+        this.filterPaste.value = draft.paste;
+      }
       this.filterInput.value = draft.input;
       this.filterOperator.value = draft.operator;
       this.pickerRangeUnit = draft.rangeUnit;
@@ -2309,7 +2456,9 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.pickerOriginalTimeBounds = structuredClone(draft.originalTimeBounds);
       this.pickerSearch = draft.search;
       this.pickerFavoriteSearch = draft.favoriteSearch;
-      this.favoriteSearch.value = draft.favoriteSearch;
+      if (this.favoriteSearch) {
+        this.favoriteSearch.value = draft.favoriteSearch;
+      }
       this.pickerAuthoringOpen = draft.authoringOpen;
       this.pickerAuthoringTouched = draft.authoringTouched;
       this.observedSearch.value = draft.search;
@@ -2328,8 +2477,11 @@ export class TrafficWorkspace extends WorkspaceElement {
       );
     }
     this.pickerApplyLabel = this.pickerPaste.trim() ? "Save and apply" : "Apply filter";
-    this.rememberPickerDraft();
-    this.rebuildPickerOptions();
+    await this.rememberPickerDraft();
+    if (session !== this.pickerSession || !this.isConnected) {
+      return;
+    }
+    await this.rebuildPickerOptions();
   }
   private pickerDraftKey(): string {
     const constraints = this.draftConstraints(this.pickerDimension, this.currentPickerDraft());
@@ -2371,8 +2523,8 @@ export class TrafficWorkspace extends WorkspaceElement {
       requirementsTouched: this.pickerRequirementsTouched,
     };
   }
-  private rememberPickerDraft(): void {
-    this.updatePickerMembership();
+  private async rememberPickerDraft(): Promise<void> {
+    const rendered = this.updatePickerMembership();
     this.pickerDirty = this.pickerDraftKey() !== this.pickerAppliedKey;
     if (this.pickerDirty) {
       this.pickerDrafts.set(this.pickerDimension, this.currentPickerDraft());
@@ -2383,6 +2535,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     if (this.pickerOpen) {
       this.updatePickerPreview();
     }
+    await rendered;
   }
   private updatePickerDraftState(): void {
     this.pickerDirty = this.pickerDrafts.has(this.pickerDimension);
@@ -2398,10 +2551,10 @@ export class TrafficWorkspace extends WorkspaceElement {
       pickerFieldChoice(field, field.filtered, this.pickerDrafts.has(field.id)),
     );
   }
-  discardPicker(): void {
+  async discardPicker(): Promise<void> {
     this.pickerDrafts.clear();
-    this.resetPicker(this.pickerDimension);
-    this.closePicker();
+    await this.resetPicker(this.pickerDimension);
+    await this.closePicker();
   }
   private fitFilterPicker(): void {
     if (!this.pickerOpen || !this.filterPicker.matches(":popover-open")) {
@@ -2411,11 +2564,12 @@ export class TrafficWorkspace extends WorkspaceElement {
       scale = bounds.width / Math.max(1, this.filterPicker.offsetWidth);
     this.pickerMaxHeight = Math.max(100, (window.innerHeight - bounds.top - 12) / scale) + "px";
   }
-  changePickerDimension(event: Event): void {
-    const dimension = (event.currentTarget as HTMLSelectElement).value as TrafficDimension;
-    this.rememberPickerDraft();
+  async changePickerDimension(event: Event): Promise<void> {
+    const eventTarget = event?.currentTarget;
+    const dimension = (eventTarget as HTMLSelectElement).value as TrafficDimension;
+    await this.rememberPickerDraft();
     this.refreshPickerFields();
-    this.resetPicker(
+    await this.resetPicker(
       this.pickerFields.some((field) => field.id === dimension) ? dimension : "traffic-type",
     );
     void this.loadFacets();
@@ -2431,7 +2585,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       (entry) => entry.value && filterValueKey(entry.value) === filterValueKey(value),
     );
   }
-  private rebuildSavedOptions(): void {
+  private async rebuildSavedOptions(): Promise<void> {
     for (const value of this.pickerSavedValues) {
       if (!this.isFavorite(value)) {
         this.pickerRetainedSavedValues.set(filterValueKey(value), value);
@@ -2512,9 +2666,10 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.pickerFavoriteSearchShown || this.pickerFavoriteCount > 8 || !!this.pickerFavoriteSearch;
     this.pickerSelectedOptions = options.filter((entry) => entry.value && !entry.favorite);
     this.pickerRequirements = options.filter((entry) => entry.condition);
-    this.updatePickerMembership();
+    await this.updatePickerMembership();
   }
-  private updatePickerMembership(): void {
+  private async updatePickerMembership(): Promise<void> {
+    const focus = captureFocus(this);
     const saved = this.previewSavedValues().length,
       observed = this.pickerValues.length,
       savedLabel = this.pickerSavedLabel,
@@ -2544,8 +2699,15 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.pickerCombineSummary = "No values selected. These groups add no restriction.";
     }
     if (restoreFocus) {
-      this.$flushUpdates();
-      (this.pickerObserved ? this.observedSearch : this.filterField).focus();
+      const current = captureRenderScope(this, () => [
+        this.pickerSession,
+        this.pickerOpen,
+        this.pickerShowCombine,
+      ]);
+      await this.$whenRendered();
+      if (current() && focus()) {
+        (this.pickerObserved ? this.observedSearch : this.filterField).focus();
+      }
     }
   }
   async loadFavorites(): Promise<void> {
@@ -2591,7 +2753,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.pickerLoading = true;
       void this.loadFacets();
       this.pickerLibraryError = "";
-      this.rebuildPickerOptions();
+      await this.rebuildPickerOptions();
     } catch (error: unknown) {
       if (generation === this.favoriteLoad && dimension === this.pickerDimension) {
         this.pickerLibraryError = describeError(error);
@@ -2691,17 +2853,18 @@ export class TrafficWorkspace extends WorkspaceElement {
       }
     }
   }
-  toggleSavedValue(key: string, event: Event): void {
+  async toggleSavedValue(key: string, event: Event): Promise<void> {
+    const eventTarget = event?.currentTarget;
     const row = [...this.pickerSavedOptions, ...this.pickerSelectedOptions].find(
       (row) => row.key === key,
     );
     if (!row?.value) {
       return;
     }
-    if ((event.currentTarget as HTMLInputElement).checked) {
+    if ((eventTarget as HTMLInputElement).checked) {
       if (this.pickerSavedValues.length + this.pickerValues.length >= 128) {
         this.pickerEntryError = "Choose at most 128 saved and picked values per field.";
-        this.rebuildPickerOptions();
+        await this.rebuildPickerOptions();
         return;
       }
       this.pickerSavedValues = [...this.pickerSavedValues, row.value];
@@ -2710,16 +2873,18 @@ export class TrafficWorkspace extends WorkspaceElement {
         (value) => filterValueKey(value) !== key,
       );
     }
-    this.rebuildPickerOptions();
-    this.draftChanged();
+    await this.rebuildPickerOptions();
+    await this.draftChanged();
   }
-  changePickerMode(event: Event): void {
-    this.pickerMode = (event.currentTarget as HTMLSelectElement).value as typeof this.pickerMode;
-    this.draftChanged();
+  async changePickerMode(event: Event): Promise<void> {
+    const eventTarget = event?.currentTarget;
+    this.pickerMode = (eventTarget as HTMLSelectElement).value as typeof this.pickerMode;
+    await this.draftChanged();
   }
-  favoriteSearchChanged(event: Event): void {
-    this.pickerFavoriteSearch = (event.currentTarget as HTMLInputElement).value;
-    this.rebuildSavedOptions();
+  async favoriteSearchChanged(event: Event): Promise<void> {
+    const eventTarget = event?.currentTarget;
+    this.pickerFavoriteSearch = (eventTarget as HTMLInputElement).value;
+    await this.rebuildSavedOptions();
   }
   authoringToggled(event: ToggleEvent): void {
     const open = (event.currentTarget as HTMLDetailsElement).open;
@@ -2728,14 +2893,15 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.pickerAuthoringOpen = open;
     }
   }
-  pasteChanged(event: Event): void {
-    this.pickerPaste = (event.currentTarget as HTMLTextAreaElement).value;
+  async pasteChanged(event: Event): Promise<void> {
+    const eventTarget = event?.currentTarget;
+    this.pickerPaste = (eventTarget as HTMLTextAreaElement).value;
     if (this.pickerPaste.trim()) {
       this.pickerSettingsOpen = true;
       this.pickerAuthoringOpen = true;
     }
     this.pickerApplyLabel = this.pickerPaste.trim() ? "Save and apply" : "Apply filter";
-    this.draftChanged();
+    await this.draftChanged();
   }
   private previewSavedValues(): TrafficFilterValue[] {
     try {
@@ -2832,8 +2998,8 @@ export class TrafficWorkspace extends WorkspaceElement {
     }
     return query;
   }
-  private draftChanged(): void {
-    this.rememberPickerDraft();
+  private async draftChanged(): Promise<void> {
+    await this.rememberPickerDraft();
     this.pickerEntryError = "";
     try {
       parseFilterValues(this.pickerDimension, this.pickerPaste);
@@ -2917,12 +3083,14 @@ export class TrafficWorkspace extends WorkspaceElement {
         this.pickerSavedValues = this.previewSavedValues();
       }
       this.pickerPaste = "";
-      this.filterPaste.value = "";
+      if (this.filterPaste) {
+        this.filterPaste.value = "";
+      }
       this.pickerApplyLabel = "Apply filter";
       this.pickerEntryError = "";
       this.pickerFavoriteStatus = `Saved ${values.length} ${values.length === 1 ? "value" : "values"} to Favorites.${select ? " Apply to update Traffic." : ""}`;
-      this.rebuildPickerOptions();
-      this.draftChanged();
+      await this.rebuildPickerOptions();
+      await this.draftChanged();
       return true;
     } finally {
       if (session === this.pickerSession) {
@@ -2963,7 +3131,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       return;
     }
     const condition = { column, operator, value };
-    if (!this.acceptsRequirement(condition)) {
+    if (!(await this.acceptsRequirement(condition))) {
       return;
     }
     const generation = this.pickerGeneration,
@@ -2977,20 +3145,22 @@ export class TrafficWorkspace extends WorkspaceElement {
       if (!result || generation !== this.pickerGeneration || !this.isCurrentPicker(session)) {
         return;
       }
-      this.enableRequirement(condition);
+      await this.enableRequirement(condition);
       if (this.filterInput.value === authoredValue && this.filterOperator.value === operator) {
         this.filterInput.value = "";
         this.filterInput.setCustomValidity("");
       }
-      this.rememberPickerDraft();
+      await this.rememberPickerDraft();
     } finally {
       if (session === this.pickerSession) {
         this.pickerSaving = false;
       }
     }
   }
-  private enableRequirement(condition: NonNullable<TrafficFavorite["condition"]>): void {
-    if (!this.acceptsRequirement(condition)) {
+  private async enableRequirement(
+    condition: NonNullable<TrafficFavorite["condition"]>,
+  ): Promise<void> {
+    if (!(await this.acceptsRequirement(condition))) {
       return;
     }
     if (
@@ -3006,11 +3176,15 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.pickerRangeUnit = this.pickerRangeUnits[0]!.value;
       const bound = (operator: string) =>
         this.pickerConstraints.find((filter) => filter.operator === operator)?.value ?? "";
-      this.filterFrom.value = this.pickerTime ? localDateTime(bound("minimum")) : bound("minimum");
-      this.filterTo.value = this.pickerTime ? localDateTime(bound("maximum")) : bound("maximum");
+      this.filterFrom.value = this.pickerTime
+        ? localDateTimeInput(bound("minimum"))
+        : bound("minimum");
+      this.filterTo.value = this.pickerTime
+        ? localDateTimeInput(bound("maximum"))
+        : bound("maximum");
     }
-    this.rebuildPickerOptions();
-    this.draftChanged();
+    await this.rebuildPickerOptions();
+    await this.draftChanged();
   }
   private requirementsWith(condition: NonNullable<TrafficFavorite["condition"]>): TrafficFilter[] {
     return [
@@ -3022,14 +3196,16 @@ export class TrafficWorkspace extends WorkspaceElement {
       { ...condition, label: "" },
     ];
   }
-  private acceptsRequirement(condition: NonNullable<TrafficFavorite["condition"]>): boolean {
+  private async acceptsRequirement(
+    condition: NonNullable<TrafficFavorite["condition"]>,
+  ): Promise<boolean> {
     if (
       this.filters.filter((filter) => filter.column !== condition.column).length +
         this.requirementsWith(condition).length >
       14
     ) {
       this.pickerEntryError = "Use at most 14 additional requirements.";
-      this.rebuildPickerOptions();
+      await this.rebuildPickerOptions();
       return false;
     }
     return true;
@@ -3062,13 +3238,14 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.pickerAuthoringOpen = !this.pickerAuthoringOpen;
     }
   }
-  toggleRequirement(key: string, event: Event): void {
+  async toggleRequirement(key: string, event: Event): Promise<void> {
+    const eventTarget = event?.currentTarget;
     const row = this.pickerRequirements.find((row) => row.key === key);
     if (!row?.condition) {
       return;
     }
-    if ((event.currentTarget as HTMLInputElement).checked) {
-      this.enableRequirement(row.condition);
+    if ((eventTarget as HTMLInputElement).checked) {
+      await this.enableRequirement(row.condition);
     } else {
       this.pickerEntryError = "";
       this.pickerConstraints = this.pickerConstraints.filter(
@@ -3081,11 +3258,13 @@ export class TrafficWorkspace extends WorkspaceElement {
       if (row.condition.operator === "maximum") {
         this.filterTo.value = "";
       }
-      this.rebuildPickerOptions();
-      this.draftChanged();
+      await this.rebuildPickerOptions();
+      await this.draftChanged();
     }
   }
-  private rebuildPickerOptions(): void {
+  private async rebuildPickerOptions(): Promise<void> {
+    const focus = captureFocus(this),
+      current = captureRenderScope(this, () => [this.pickerSession, this.pickerOpen]);
     const focused = (this.getRootNode() as ShadowRoot).activeElement as HTMLElement | null;
     const restore = focused?.matches(
       ".filter-options input, .filter-options button, .filter-saved input, .filter-saved button",
@@ -3163,8 +3342,11 @@ export class TrafficWorkspace extends WorkspaceElement {
     };
     this.pickerOptions = options.filter(primary);
     this.pickerMoreOptions = options.filter((option) => !primary(option));
-    this.rebuildSavedOptions();
-    this.$flushUpdates();
+    await this.rebuildSavedOptions();
+    await this.$whenRendered();
+    if (!current() || !focus()) {
+      return;
+    }
     if (restore && focused && !focused.isConnected) {
       const root = this.getRootNode() as ShadowRoot;
       const fallback = restore.startsWith("saved-")
@@ -3174,23 +3356,24 @@ export class TrafficWorkspace extends WorkspaceElement {
         preventScroll: true,
       });
     } else if (restore && focused && !focused.getClientRects().length) {
-      (this.favoriteSearch.getClientRects().length
+      (this.favoriteSearch?.getClientRects().length
         ? this.favoriteSearch
         : this.filterField
       ).focus();
     }
   }
-  togglePickerValue(key: string, event: Event): void {
+  async togglePickerValue(key: string, event: Event): Promise<void> {
+    const eventTarget = event?.currentTarget;
     const option = [...this.pickerOptions, ...this.pickerMoreOptions].find(
       (option) => option.key === key,
     );
     if (!option) {
       return;
     }
-    if ((event.currentTarget as HTMLInputElement).checked) {
+    if ((eventTarget as HTMLInputElement).checked) {
       if (this.pickerValues.length + this.pickerSavedValues.length >= 128) {
         this.pickerError = "Choose at most 128 values in one field.";
-        this.rebuildPickerOptions();
+        await this.rebuildPickerOptions();
         return;
       }
       this.pickerValues = [...this.pickerValues, option.value];
@@ -3198,14 +3381,16 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.pickerValues = this.pickerValues.filter((value) => filterValueKey(value) !== key);
     }
     // Preserve row placement and focus while changing the draft.
-    this.rebuildPickerOptions();
-    this.draftChanged();
+    await this.rebuildPickerOptions();
+    await this.draftChanged();
   }
-  clearPicker(): void {
+  async clearPicker(): Promise<void> {
     this.pickerValues = [];
     this.pickerSavedValues = [];
     this.pickerPaste = "";
-    this.filterPaste.value = "";
+    if (this.filterPaste) {
+      this.filterPaste.value = "";
+    }
     this.pickerApplyLabel = "Apply filter";
     this.pickerEntryError = "";
     this.pickerConstraints = [];
@@ -3214,8 +3399,8 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.filterFrom.value = "";
     this.filterTo.value = "";
     this.filterFrom.setCustomValidity("");
-    this.rebuildPickerOptions();
-    this.draftChanged();
+    await this.rebuildPickerOptions();
+    await this.draftChanged();
   }
   removePickerConstraint(operator: string): void {
     this.pickerConstraints = this.pickerConstraints.filter(
@@ -3239,16 +3424,17 @@ export class TrafficWorkspace extends WorkspaceElement {
       return;
     }
     const generation = this.pickerGeneration;
-    queueMicrotask(() => {
+    queueMicrotask(async () => {
       if (this.pickerOpen && generation === this.pickerGeneration) {
-        this.rebuildPickerOptions();
+        await this.rebuildPickerOptions();
       }
     });
   }
-  closePicker(): void {
-    this.endPicker();
+  async closePicker(): Promise<void> {
+    const ended = this.endPicker();
     this.filterPicker.hidePopover();
     this.restorePickerFocus();
+    await ended;
   }
   private isCurrentPicker(session: number): boolean {
     return (
@@ -3258,14 +3444,15 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.filterPicker.matches(":popover-open")
     );
   }
-  private endPicker(): void {
+  private async endPicker(): Promise<void> {
     if (this.pickerOpen) {
-      this.rememberPickerDraft();
+      const remembered = this.rememberPickerDraft();
       this.pickerOpen = false;
       this.pickerSession++;
       this.pickerGeneration++;
       this.pickerLoading = false;
       this.refreshPickerFields();
+      await remembered;
     }
   }
   private restorePickerFocus(): void {
@@ -3275,23 +3462,23 @@ export class TrafficWorkspace extends WorkspaceElement {
       preventScroll: true,
     });
   }
-  pickerToggled(event: ToggleEvent): void {
+  async pickerToggled(event: ToggleEvent): Promise<void> {
     if (event.newState === "closed" && !this.filterPicker.matches(":popover-open")) {
-      this.endPicker();
+      await this.endPicker();
       const active = (this.getRootNode() as ShadowRoot).activeElement;
       if (active && this.filterPicker.contains(active)) {
         this.restorePickerFocus();
       }
     }
   }
-  pickerKey(event: KeyboardEvent): void {
+  async pickerKey(event: KeyboardEvent): Promise<void> {
     if (event.key === "Enter" && event.target === this.favoriteSearch) {
       event.preventDefault();
     }
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
-      this.closePicker();
+      await this.closePicker();
     }
   }
   observedSearchKey(event: KeyboardEvent): void {
@@ -3301,8 +3488,9 @@ export class TrafficWorkspace extends WorkspaceElement {
       void this.loadFacets();
     }
   }
-  observedSearchChanged(event: Event): void {
-    this.pickerSearch = (event.currentTarget as HTMLInputElement).value;
+  async observedSearchChanged(event: Event): Promise<void> {
+    const eventTarget = event?.currentTarget;
+    this.pickerSearch = (eventTarget as HTMLInputElement).value;
     this.pickerGeneration++;
     this.pickerLoading = true;
     this.pickerCountOptions = [];
@@ -3310,11 +3498,11 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.pickerNextOffset = null;
     this.pickerObservedShown = 0;
     this.facetMore = false;
-    this.rebuildPickerOptions();
+    await this.rebuildPickerOptions();
     window.clearTimeout(this.facetSearchTimer);
     this.facetSearchTimer = window.setTimeout(() => void this.loadFacets(), 120);
   }
-  addObservedValue(): void {
+  async addObservedValue(): Promise<void> {
     let value = this.pickerSearch.trim().toLowerCase();
     if (this.pickerDimension === "content-type") {
       value = value.split(";")[0]!.trim();
@@ -3341,8 +3529,8 @@ export class TrafficWorkspace extends WorkspaceElement {
     // Explicit authoring must reveal the chosen row even when it previously
     // lived in collapsed More values. Checkbox edits retain their section.
     this.pickerOptionSections.set(key, true);
-    this.rebuildPickerOptions();
-    this.draftChanged();
+    await this.rebuildPickerOptions();
+    await this.draftChanged();
   }
   loadMoreFacets(): void {
     if (!this.pickerCanMore || this.pickerLoading) {
@@ -3352,25 +3540,28 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.pickerLoading = true;
     void this.loadFacets();
   }
-  rangeEdited(event?: Event): void {
+  async rangeEdited(event?: Event): Promise<void> {
+    const eventTarget = event?.currentTarget;
     this.filterFrom.setCustomValidity("");
     this.filterTo.setCustomValidity("");
-    if (event?.currentTarget === this.filterFrom) {
+    if (eventTarget === this.filterFrom) {
       delete this.pickerOriginalTimeBounds.from;
-    } else if (event?.currentTarget === this.filterTo) {
+    } else if (eventTarget === this.filterTo) {
       delete this.pickerOriginalTimeBounds.to;
     } else {
       this.pickerOriginalTimeBounds = {};
     }
-    this.draftChanged();
+    await this.draftChanged();
   }
-  changeRangeUnit(event: Event): void {
-    this.pickerRangeUnit = (event.currentTarget as HTMLSelectElement).value;
-    this.rangeEdited();
+  async changeRangeUnit(event: Event): Promise<void> {
+    const eventTarget = event?.currentTarget;
+    this.pickerRangeUnit = (eventTarget as HTMLSelectElement).value;
+    await this.rangeEdited();
   }
-  rangePreset(event: Event): void {
-    const value = (event.currentTarget as HTMLSelectElement).value;
-    this.rangeEdited();
+  async rangePreset(event: Event): Promise<void> {
+    const eventTarget = event?.currentTarget;
+    const value = (eventTarget as HTMLSelectElement).value;
+    await this.rangeEdited();
     this.filterTo.value = "";
     if (value === "second" || value === "ten-seconds") {
       this.pickerRangeUnit = "s";
@@ -3385,10 +3576,10 @@ export class TrafficWorkspace extends WorkspaceElement {
       } else {
         date.setTime(date.valueOf() - (value === "hour" ? 3600000 : 300000));
       }
-      this.filterFrom.value = localDateTime(String(date.valueOf()));
+      this.filterFrom.value = localDateTimeInput(String(date.valueOf()));
     }
-    (event.currentTarget as HTMLSelectElement).value = "";
-    this.draftChanged();
+    (eventTarget as HTMLSelectElement).value = "";
+    await this.draftChanged();
   }
   async loadFacets(): Promise<void> {
     this.facetAgain = true;
@@ -3414,7 +3605,7 @@ export class TrafficWorkspace extends WorkspaceElement {
           this.pickerReasons.clear();
           this.pickerScope = "Correct pending fields to load counts.";
           this.updatePickerPreview();
-          this.rebuildPickerOptions();
+          await this.rebuildPickerOptions();
           continue;
         }
         const append = observed && this.facetMore && this.pickerNextOffset !== null;
@@ -3548,14 +3739,14 @@ export class TrafficWorkspace extends WorkspaceElement {
                 ? " Other includes codes outside 100–599."
                 : " Other includes values outside the common choices; missing evidence is separate."
               : "");
-          this.rebuildPickerOptions();
+          await this.rebuildPickerOptions();
         } catch (error: unknown) {
           if (current()) {
             this.pickerLoading = false;
             this.pickerCountPreview = "After Apply · Count unavailable";
             this.updatePickerPreview();
             this.pickerError = "Counts unavailable: " + describeError(error);
-            this.rebuildPickerOptions();
+            await this.rebuildPickerOptions();
           }
         }
       }
@@ -3650,7 +3841,11 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.prepareInspectorContext(false);
     });
   }
-  openContextFilter(dimension: TrafficDimension, event: Event, inspector = false): void {
+  async openContextFilter(
+    dimension: TrafficDimension,
+    event: Event,
+    inspector = false,
+  ): Promise<void> {
     if (inspector && !this.inspectorContextReady) {
       return;
     }
@@ -3663,7 +3858,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     event.stopPropagation();
     this.trafficMenu.hidePopover();
     this.requestActionsMenu.hidePopover();
-    this.openFilterPicker(dimension);
+    await this.openFilterPicker(dimension);
     const text = option.value.kind === "text" ? option.value.value : "";
     if ([...text].length > 255 || /[\p{Cc}]/u.test(text)) {
       this.pickerValues = [];
@@ -3674,8 +3869,8 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.pickerValues = [option.value];
       this.pickerConstraints = [];
       this.pickerCounts.clear();
-      this.rebuildPickerOptions();
-      this.draftChanged();
+      await this.rebuildPickerOptions();
+      await this.draftChanged();
     }
     this.pickerReturn = inspector ? this.actionsButton : this.trafficTable;
   }
@@ -3704,7 +3899,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   async removeFilterDimension(dimension: TrafficDimension): Promise<void> {
     if (this.pickerOpen) {
-      this.closePicker();
+      await this.closePicker();
     }
     const focused = (this.getRootNode() as ShadowRoot).activeElement as HTMLElement | null;
     this.pickerDrafts.delete(dimension);
@@ -3712,8 +3907,10 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.queryRevision++;
     this.updatePickerDraftState();
     this.refreshPickerFields();
-    this.$flushUpdates();
-    if (focused?.matches(".filter-chip button") && !focused.isConnected) {
+    const focus = captureFocus(this),
+      current = captureRenderScope(this, () => [this.queryRevision, this.pickerSession]);
+    await this.$whenRendered();
+    if (current() && focus() && focused?.matches(".filter-chip button") && !focused.isConnected) {
       this.filterButton.focus({ preventScroll: true });
     }
     await this.refreshSessions(undefined, true);
@@ -3750,12 +3947,20 @@ export class TrafficWorkspace extends WorkspaceElement {
       })();
     }, 1000);
   }
-  openStreamDisclosure(row: SessionSummary, event: MouseEvent): void {
+  async openStreamDisclosure(row: SessionSummary, event: MouseEvent): Promise<void> {
+    const eventTarget = event?.currentTarget;
     event.stopPropagation();
     this.disclosedStream = row;
-    this.streamReturn = event.currentTarget as HTMLElement;
+    this.streamReturn = eventTarget as HTMLElement;
     this.describeStream(row);
-    this.$flushUpdates();
+    const current = await renderPresentation(this, () => [
+      this.streamDisclosureRevision,
+      this.disclosedStream?.id,
+      this.view,
+    ]);
+    if (!current()) {
+      return;
+    }
     this.streamDisclosure.showPopover();
     this.streamTypeButton.focus({ preventScroll: true });
   }
@@ -3775,7 +3980,9 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.streamTypeAction = "Filter " + this.streamDisclosureLabel;
     this.streamStateAction = "Filter " + stateText(row.terminal).toLowerCase();
   }
+  private streamDisclosureRevision = 0;
   closeStreamDisclosure(): void {
+    this.streamDisclosureRevision++;
     this.streamDisclosure.hidePopover();
     const target = this.streamReturn;
     this.streamReturn = null;
@@ -3921,7 +4128,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.fitFilterPicker();
     });
     this.layoutObserver.observe(this.sessionScroller);
-    this.rowObserver = new ResizeObserver((entries) => {
+    this.rowObserver = new ResizeObserver(async (entries) => {
       if (this.view !== "traffic" || !this.sessionScroller.clientHeight) {
         return;
       }
@@ -3939,7 +4146,18 @@ export class TrafficWorkspace extends WorkspaceElement {
       }
       if (changed) {
         this.updateSpacers();
-        this.$flushUpdates();
+        const revision = this.rowRevision,
+          scrollTop = this.sessionScroller.scrollTop;
+        await this.$whenRendered();
+        if (
+          !this.isConnected ||
+          this.view !== "traffic" ||
+          revision !== this.rowRevision ||
+          this.sessionScroller.scrollTop !== scrollTop
+        ) {
+          this.scheduleViewport();
+          return;
+        }
         const top = this.virtualList.restore(anchor);
         if (top !== null) {
           this.sessionScroller.scrollTop = top;
@@ -4233,7 +4451,8 @@ export class TrafficWorkspace extends WorkspaceElement {
     }
   }
   async showTimings(): Promise<void> {
-    this.trafficMenu.hidePopover();
+    this.closePopover(this.requestActionsMenu, this.actionsButton);
+    this.closePopover(this.trafficMenu, this.trafficTable);
     const id =
       this.trafficSelection.ids.size === 1
         ? [...this.trafficSelection.ids][0]
@@ -4267,7 +4486,14 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.headerEffectRows = [];
     this.bodyEditRows = [];
     this.timingSummary = "Loading measurements…";
-    this.$flushUpdates();
+    const current = await renderPresentation(this, () => [
+      this.timingPresentation,
+      this.timingId,
+      this.view,
+    ]);
+    if (!current()) {
+      return;
+    }
     this.timingDialog.showModal();
     await this.refreshTimings();
   }
@@ -4383,7 +4609,9 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.timingStatus = "Select the report text below and use Copy.";
     }
   }
+  private timingPresentation = 0;
   closeTimings(): void {
+    this.timingPresentation++;
     this.timingDialog.close();
   }
   timingsClosed(): void {
@@ -4413,7 +4641,7 @@ export class TrafficWorkspace extends WorkspaceElement {
         return;
       }
       this.traceMetadataRows = rows;
-      this.loadTraceMetadata(id);
+      await this.loadTraceMetadata(id);
     } catch (error: unknown) {
       if (generation === this.metadataGeneration) {
         this.metadataError = "Capture source unavailable: " + describeError(error);
@@ -4447,7 +4675,7 @@ export class TrafficWorkspace extends WorkspaceElement {
         return;
       }
       this.traceMetadataRows = rows.sort((a, b) => b.importedAt - a.importedAt);
-      this.loadTraceMetadata(id ?? rows[0]?.id ?? "");
+      await this.loadTraceMetadata(id ?? rows[0]?.id ?? "");
     } catch (error: unknown) {
       if (generation === this.metadataGeneration) {
         this.metadataError = "Trace metadata could not be loaded: " + describeError(error);
@@ -4458,7 +4686,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       }
     }
   }
-  loadTraceMetadata(id: string): void {
+  async loadTraceMetadata(id: string): Promise<void> {
     this.metadataTraceId = id;
     const generation = this.metadataGeneration;
     const trace = this.traceMetadataRows.find((trace) => trace.id === id);
@@ -4518,7 +4746,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       }
     }
     this.metadataNotes = trace?.notes.map((text, index) => ({ id: String(index), text })) ?? [];
-    this.$flushUpdates();
+    await this.$whenRendered();
     if (generation === this.metadataGeneration) {
       this.metadataSelector.value = id;
     }
@@ -4572,9 +4800,9 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.rebuildColumns();
     this.scheduleViewport();
   }
-  selectedSessionIdChanged(): void {
+  async selectedSessionIdChanged(): Promise<void> {
     if (!this.selectedSessionId && this.inspectorExpanded) {
-      this.toggleInspector();
+      await this.toggleInspector();
     }
     this.rebuildRows(this.sessions);
   }
@@ -4722,17 +4950,25 @@ export class TrafficWorkspace extends WorkspaceElement {
     if (!this.sessionScroller || this.renderFrame !== undefined) {
       return;
     }
-    this.renderFrame = requestAnimationFrame(() => {
+    this.renderFrame = requestAnimationFrame(async () => {
       this.renderFrame = undefined;
       if (this.isConnected) {
-        this.renderViewport();
+        await this.renderViewport();
       }
     });
   }
-  private renderViewport(): void {
+  private viewportRevision = 0;
+  private async renderViewport(): Promise<void> {
     if (!this.sessionScroller?.clientHeight || this.view !== "traffic") {
       return;
     }
+    const revision = ++this.viewportRevision,
+      rowsRevision = this.rowRevision;
+    const current = () =>
+      this.isConnected &&
+      this.view === "traffic" &&
+      revision === this.viewportRevision &&
+      rowsRevision === this.rowRevision;
     this.pauseFollowingForScroll();
     const font = parseFloat(getComputedStyle(this.sessionScroller).fontSize) || 13;
     const layout = [
@@ -4751,9 +4987,13 @@ export class TrafficWorkspace extends WorkspaceElement {
         true,
       );
       this.updateSpacers();
-      this.$flushUpdates();
+      const scrollTop = this.sessionScroller.scrollTop;
+      await this.$whenRendered();
+      if (!current()) {
+        return;
+      }
       const restored = this.virtualList.restore(anchor);
-      if (restored !== null) {
+      if (restored !== null && this.sessionScroller.scrollTop === scrollTop) {
         this.sessionScroller.scrollTop = restored;
       }
     }
@@ -4770,7 +5010,10 @@ export class TrafficWorkspace extends WorkspaceElement {
         active.closest<HTMLElement>("tr[data-session-id]")!.dataset.sessionId ?? "",
       );
       if (index === undefined || index < range.start || index >= range.end) {
-        this.focusTraffic();
+        await this.focusTraffic();
+        if (!current()) {
+          return;
+        }
       }
     }
     this.viewportStart = range.start;
@@ -4803,7 +5046,10 @@ export class TrafficWorkspace extends WorkspaceElement {
     );
     this.rebuildRows(rows);
     this.updateSpacers();
-    this.$flushUpdates();
+    await this.$whenRendered();
+    if (!current()) {
+      return;
+    }
     this.scrollToLatest();
     if (this.extensionTableColumns.length) {
       this.classifications.schedule(ids);
@@ -4864,7 +5110,9 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.rowRequests.set(key, request);
     return request;
   }
-  private applyView(view: TrafficView, resetScroll = false): void {
+  private async applyView(view: TrafficView, resetScroll = false): Promise<void> {
+    const scrollTop = this.sessionScroller.scrollTop,
+      navigation = this.scrollGeneration;
     const anchor = resetScroll ? null : this.virtualList.anchor(this.sessionScroller.scrollTop);
     this.releaseView(this.trafficView);
     this.trafficView = view;
@@ -4894,10 +5142,16 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.viewportStart = 0;
     this.viewportEnd = 0;
     this.updateSpacers();
-    this.$flushUpdates();
-    this.sessionScroller.scrollTop = resetScroll ? 0 : (this.virtualList.restore(anchor) ?? 0);
+    const revision = this.rowRevision;
+    await this.$whenRendered();
+    if (!this.isConnected || this.trafficView !== view || revision !== this.rowRevision) {
+      return;
+    }
+    if (this.sessionScroller.scrollTop === scrollTop && navigation === this.scrollGeneration) {
+      this.sessionScroller.scrollTop = resetScroll ? 0 : (this.virtualList.restore(anchor) ?? 0);
+    }
     this.scrollToLatest();
-    this.renderViewport();
+    await this.renderViewport();
   }
   private scrollToLatest(): void {
     if (
@@ -4935,7 +5189,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       } else if (bottom > this.sessionScroller.scrollTop + height) {
         this.sessionScroller.scrollTop = Math.max(0, bottom - height);
       }
-      this.renderViewport();
+      await this.renderViewport();
       if (!this.rowCache.has(id)) {
         await this.loadWindow(Math.floor(index / 100) * 100);
       }
@@ -4955,7 +5209,7 @@ export class TrafficWorkspace extends WorkspaceElement {
         }
         continue;
       }
-      this.renderViewport();
+      await this.renderViewport();
       const element = (this.getRootNode() as ShadowRoot).getElementById("session-" + id);
       element?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
       if (focus && !this.matchDialog.open) {
@@ -5046,13 +5300,14 @@ export class TrafficWorkspace extends WorkspaceElement {
       compactRows: true,
     });
   }
-  openColumnMenu(id: ColumnId, event: MouseEvent): void {
+  async openColumnMenu(id: ColumnId, event: MouseEvent): Promise<void> {
+    const eventTarget = event?.currentTarget;
     if (performance.now() < this.suppressMenuUntil) {
       event.preventDefault();
       return;
     }
     this.menuColumn = columnDefinitions.find((column) => column.id === id)!;
-    const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    const bounds = (eventTarget as HTMLElement).getBoundingClientRect();
     this.menuX = Math.max(12, Math.min(window.innerWidth - 300, bounds.left)) + "px";
     this.menuY = Math.min(window.innerHeight - 280, bounds.bottom + 5) + "px";
     this.ascendingLabel =
@@ -5078,7 +5333,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.pinLabel = this.preferences.columns.find((column) => column.id === id)!.pinned
       ? "Unpin column"
       : "Pin column";
-    this.$flushUpdates();
+    await this.$whenRendered();
   }
   private closeMenu(): void {
     if (this.columnMenu.matches(":popover-open")) {
@@ -5153,12 +5408,12 @@ export class TrafficWorkspace extends WorkspaceElement {
     }
     this.patchPreferences({ columns });
   }
-  clearFilterValidity(): void {
+  async clearFilterValidity(): Promise<void> {
     this.filterInput.setCustomValidity("");
     this.pickerEntryError = "";
-    this.rememberPickerDraft();
+    await this.rememberPickerDraft();
   }
-  private validatePickerComparison(): boolean {
+  private async validatePickerComparison(): Promise<boolean> {
     if (!this.filterInput.value.trim()) {
       return true;
     }
@@ -5166,9 +5421,17 @@ export class TrafficWorkspace extends WorkspaceElement {
       "Choose Add requirement to include this comparison, or clear its value.";
     this.pickerRequirementsOpen = true;
     this.pickerRequirementsTouched = true;
-    this.$flushUpdates();
+    const focus = captureFocus(this),
+      current = captureRenderScope(this, () => [
+        this.pickerSession,
+        this.pickerEntryError,
+        this.filterInput.value,
+      ]);
     this.filterInput.setCustomValidity(this.pickerEntryError);
-    this.filterInput.reportValidity();
+    await this.$whenRendered();
+    if (current() && focus()) {
+      this.filterInput.reportValidity();
+    }
     return false;
   }
   private editablePickerDrafts(): Map<TrafficDimension, PickerDraft> {
@@ -5176,19 +5439,31 @@ export class TrafficWorkspace extends WorkspaceElement {
     drafts.set(this.pickerDimension, this.currentPickerDraft());
     return drafts;
   }
-  private revealPickerDraft(dimension: TrafficDimension): void {
+  private async revealPickerDraft(dimension: TrafficDimension): Promise<boolean> {
     if (dimension !== this.pickerDimension) {
-      this.rememberPickerDraft();
-      this.resetPicker(dimension);
+      const previous = this.pickerSession;
+      await this.rememberPickerDraft();
+      if (previous !== this.pickerSession || !this.pickerOpen) {
+        return false;
+      }
+      const reset = this.resetPicker(dimension),
+        session = this.pickerSession;
+      await reset;
+      if (session !== this.pickerSession || !this.pickerOpen) {
+        return false;
+      }
       void this.loadFavorites();
       void this.loadFacets();
     }
+    return this.isConnected && this.pickerOpen && this.pickerDimension === dimension;
   }
-  private validatePickerDrafts(drafts: Map<TrafficDimension, PickerDraft>): boolean {
+  private async validatePickerDrafts(drafts: Map<TrafficDimension, PickerDraft>): Promise<boolean> {
     for (const [dimension, draft] of drafts) {
       if (draft.input.trim()) {
-        this.revealPickerDraft(dimension);
-        return this.validatePickerComparison();
+        if (!(await this.revealPickerDraft(dimension))) {
+          return false;
+        }
+        return await this.validatePickerComparison();
       }
       try {
         const saved = this.draftSavedValues(dimension, draft, true);
@@ -5198,18 +5473,35 @@ export class TrafficWorkspace extends WorkspaceElement {
           );
         }
       } catch (error) {
-        this.revealPickerDraft(dimension);
+        if (!(await this.revealPickerDraft(dimension)) || this.pickerPaste !== draft.paste) {
+          return false;
+        }
         this.pickerSettingsOpen = true;
         this.pickerAuthoringOpen = true;
         this.pickerEntryError = describeError(error);
-        this.$flushUpdates();
-        this.filterPaste.focus();
+        const focus = captureFocus(this),
+          current = captureRenderScope(this, () => [
+            this.pickerSession,
+            this.pickerOpen,
+            this.pickerPaste,
+            this.pickerEntryError,
+          ]);
+        await this.$whenRendered();
+        if (current() && focus()) {
+          this.filterPaste?.focus();
+        }
         return false;
       }
       try {
         this.draftConstraints(dimension, draft, true);
       } catch (error) {
-        this.revealPickerDraft(dimension);
+        if (
+          !(await this.revealPickerDraft(dimension)) ||
+          this.filterFrom.value !== draft.from ||
+          this.filterTo.value !== draft.to
+        ) {
+          return false;
+        }
         this.filterFrom.setCustomValidity(describeError(error));
         this.filterFrom.reportValidity();
         return false;
@@ -5268,38 +5560,46 @@ export class TrafficWorkspace extends WorkspaceElement {
       ]),
     );
   }
+  private pickerApplyOperation = 0;
   async applyFilter(event: Event): Promise<void> {
     event.preventDefault();
     const session = this.pickerSession;
     if (!this.isCurrentPicker(session) || this.pickerSaving) {
       return;
     }
-    this.rememberPickerDraft();
-    const drafts = this.editablePickerDrafts();
-    if (!this.validatePickerDrafts(drafts)) {
-      return;
-    }
-    const fingerprint = this.pickerDraftsFingerprint(drafts),
-      revision = this.queryRevision;
-    const query = this.queryWithPickerDrafts(drafts);
-    const entries = [...drafts].flatMap(([dimension, draft]) =>
-      parseFilterValues(dimension, draft.paste).map((value) => ({
-        dimension,
-        value,
-        condition: null,
-      })),
-    );
+    const operation = ++this.pickerApplyOperation;
     this.pickerSaving = true;
     try {
+      await this.rememberPickerDraft();
+      if (!this.isCurrentPicker(session) || operation !== this.pickerApplyOperation) {
+        return;
+      }
+      const drafts = this.editablePickerDrafts();
+      if (!(await this.validatePickerDrafts(drafts))) {
+        return;
+      }
+      if (!this.isCurrentPicker(session) || operation !== this.pickerApplyOperation) {
+        return;
+      }
+      const fingerprint = this.pickerDraftsFingerprint(drafts),
+        revision = this.queryRevision;
+      const query = this.queryWithPickerDrafts(drafts);
+      const entries = [...drafts].flatMap(([dimension, draft]) =>
+        parseFilterValues(dimension, draft.paste).map((value) => ({
+          dimension,
+          value,
+          condition: null,
+        })),
+      );
       if (entries.length && !(await this.changeFavorites({ action: "add", entries }))) {
         return;
       }
       if (!this.isCurrentPicker(session)) {
         return;
       }
-      this.rememberPickerDraft();
+      await this.rememberPickerDraft();
       const current = this.editablePickerDrafts();
-      if (!this.validatePickerDrafts(current)) {
+      if (!(await this.validatePickerDrafts(current))) {
         return;
       }
       if (
@@ -5332,18 +5632,20 @@ export class TrafficWorkspace extends WorkspaceElement {
         this.currentPickerDraft(),
       );
       this.pickerPaste = "";
-      this.filterPaste.value = "";
+      if (this.filterPaste) {
+        this.filterPaste.value = "";
+      }
       this.filterInput.value = "";
       this.pickerAppliedKey = this.pickerDraftKey();
       this.pickerDrafts.clear();
       this.pickerSaving = false;
-      this.closePicker();
+      await this.closePicker();
       await this.refreshSessions(undefined, true);
       if (entries.length && this.queryError) {
         this.diagnostic = "Favorites saved. " + this.queryError;
       }
     } finally {
-      if (session === this.pickerSession) {
+      if (operation === this.pickerApplyOperation) {
         this.pickerSaving = false;
       }
     }
@@ -5371,7 +5673,8 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.refreshChips();
   }
   async setFetchDestination(value: string, event: Event): Promise<void> {
-    this.fetchDestinations = (event.currentTarget as HTMLInputElement).checked
+    const eventTarget = event?.currentTarget;
+    this.fetchDestinations = (eventTarget as HTMLInputElement).checked
       ? [...new Set([...this.fetchDestinations, value])]
       : this.fetchDestinations.filter((destination) => destination !== value);
     this.queryRevision++;
@@ -5382,7 +5685,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   async clearFilters(): Promise<void> {
     if (this.pickerOpen) {
-      this.closePicker();
+      await this.closePicker();
     }
     this.pickerDrafts.clear();
     this.pickerDirty = false;
@@ -5404,14 +5707,15 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.searchTimer = window.setTimeout(() => void this.refreshSessions(undefined, true), 120);
   }
   async changeTrafficSearchKind(event: Event): Promise<void> {
-    await this.setTrafficSearchKind((event.currentTarget as HTMLSelectElement).value);
+    const eventTarget = event?.currentTarget;
+    await this.setTrafficSearchKind((eventTarget as HTMLSelectElement).value);
   }
   async focusSearch(contents = false): Promise<void> {
     for (const menu of this.querySelectorAll<HTMLElement>(":popover-open")) {
       menu.hidePopover();
     }
     if (this.inspectorExpanded) {
-      this.toggleInspector();
+      await this.toggleInspector();
     }
     this.searchInput.focus();
     this.searchInput.select();
@@ -5552,12 +5856,27 @@ export class TrafficWorkspace extends WorkspaceElement {
       } else {
         this.clearTrafficSelection();
       }
-      this.applyView(view, true);
+      const appliedRevision = this.matchRevision;
+      await this.applyView(view, true);
+      if (
+        !this.isConnected ||
+        this.searchOperation !== operationId ||
+        appliedRevision !== this.queryRevision
+      ) {
+        return;
+      }
       this.queryLoaded = true;
       this.queryError = "";
       this.renderSessionState();
       this.renderFollowState();
-      this.$flushUpdates();
+      await this.$whenRendered();
+      if (
+        !this.isConnected ||
+        this.searchOperation !== operationId ||
+        appliedRevision !== this.queryRevision
+      ) {
+        return;
+      }
       this.measurePinnedColumns();
       this.$emit("traffic-refreshed");
       if (this.selectSearchMatches) {
@@ -6068,7 +6387,10 @@ export class TrafficWorkspace extends WorkspaceElement {
         this.matchRevision = revision;
       }
       this.pauseFollowingForScroll();
-      this.applyView(view, this.followLatest);
+      await this.applyView(view, this.followLatest);
+      if (!this.isConnected || revision !== this.queryRevision) {
+        return;
+      }
       this.canCancelRequests = [...this.trafficSelection.ids].some((id) => {
         const row = this.rowCache.get(id);
         return !row || (row.terminal === "active" && !row.traceId);
@@ -6080,7 +6402,10 @@ export class TrafficWorkspace extends WorkspaceElement {
         this.diagnostic = this.sessionText;
       }
       this.renderFollowState();
-      this.$flushUpdates();
+      await this.$whenRendered();
+      if (!this.isConnected || revision !== this.queryRevision) {
+        return;
+      }
       this.measurePinnedColumns();
       if (this.pickerOpen) {
         void this.loadFacets();
@@ -6248,7 +6573,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     event.preventDefault();
     event.stopPropagation();
     if (!event.repeat) {
-      this.toggleInspector();
+      void this.toggleInspector();
     }
     return true;
   }
@@ -6283,10 +6608,10 @@ export class TrafficWorkspace extends WorkspaceElement {
     event.stopPropagation();
     this.selectTraffic(session, event);
   }
-  selectWithKeyboard(session: SessionSummary, event: KeyboardEvent): void {
-    this.handleTrafficKey(session.id, event);
+  async selectWithKeyboard(session: SessionSummary, event: KeyboardEvent): Promise<void> {
+    await this.handleTrafficKey(session.id, event);
   }
-  private handleTrafficKey(id: string, event: KeyboardEvent): void {
+  private async handleTrafficKey(id: string, event: KeyboardEvent): Promise<void> {
     if (event.defaultPrevented || isTextEditing(event)) {
       return;
     }
@@ -6360,7 +6685,6 @@ export class TrafficWorkspace extends WorkspaceElement {
       return;
     }
     this.updateTrafficSelection();
-    this.$flushUpdates();
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
       if (this.trafficSelection.ids.size) {
         this.followLatest = false;
@@ -6385,7 +6709,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       }
     }
   }
-  listKeyboard(event: KeyboardEvent): void {
+  async listKeyboard(event: KeyboardEvent): Promise<void> {
     if (event.defaultPrevented || isTextEditing(event)) {
       return;
     }
@@ -6410,7 +6734,7 @@ export class TrafficWorkspace extends WorkspaceElement {
         return;
       }
     }
-    this.handleTrafficKey(this.trafficSelection.focused ?? "", event);
+    await this.handleTrafficKey(this.trafficSelection.focused ?? "", event);
   }
   positionTrafficMenu(
     event: MouseEvent | KeyboardEvent,
@@ -6461,7 +6785,8 @@ export class TrafficWorkspace extends WorkspaceElement {
     if (!ids.length) {
       return;
     }
-    this.trafficMenu.hidePopover();
+    this.closePopover(this.requestActionsMenu, this.actionsButton);
+    this.closePopover(this.trafficMenu, this.trafficTable);
     this.$emit("response-set-intake-request", { source: "traffic", ids });
   }
   private pushTrafficUndo(
@@ -6514,7 +6839,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       navigation = this.scrollGeneration,
       following = this.followLatest;
     const scrollInput = this.trackListScrollInput();
-    this.beginTrafficRemoval();
+    await this.beginTrafficRemoval();
     try {
       const result = await invoke<{
         ids: string[];
@@ -6623,7 +6948,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     if (this.removingTraffic) {
       return;
     }
-    this.beginTrafficRemoval();
+    await this.beginTrafficRemoval();
     this.closePopover(this.trafficMenu, this.trafficTable);
     try {
       const removed = await invoke<string[]>("remove_unselected_traffic_entries", {
@@ -6661,7 +6986,10 @@ export class TrafficWorkspace extends WorkspaceElement {
       await this.removeTrafficEntries(action.ids, true);
     }
   }
-  private beginTrafficRemoval(): void {
+  private removalRevision = 0;
+  private async beginTrafficRemoval(): Promise<void> {
+    this.removalRevision++;
+    this.removingTraffic = true;
     const active = (this.getRootNode() as ShadowRoot).activeElement;
     // Disabling a focused button drops keyboard events outside Traffic. Keep
     // Escape and newer navigation available while its command is pending.
@@ -6670,15 +6998,15 @@ export class TrafficWorkspace extends WorkspaceElement {
       active === this.trafficUndoButton ||
       active === this.trafficRedoButton
     ) {
-      this.focusTraffic();
+      await this.focusTraffic();
     }
-    this.removingTraffic = true;
   }
   private async removeTrafficEntries(ids: string[], redo = false): Promise<void> {
     if (this.removingTraffic || !ids.length) {
       return;
     }
-    this.beginTrafficRemoval();
+    await this.beginTrafficRemoval();
+    const removal = this.removalRevision;
     const order = this.virtualList.ids;
     const index = this.virtualList.indexes.get(this.trafficSelection.focused ?? "") ?? 0;
     const selection = this.trafficSelectionRevision,
@@ -6752,7 +7080,7 @@ export class TrafficWorkspace extends WorkspaceElement {
           if (focused) {
             root.getElementById("session-" + focused)?.focus({ preventScroll: true });
           } else {
-            this.focusTraffic();
+            await this.focusTraffic();
           }
         }
         return;
@@ -6778,15 +7106,17 @@ export class TrafficWorkspace extends WorkspaceElement {
         this.selectedDetail = null;
         this.$emit("selection-changed", null);
         this.removingTraffic = false;
-        this.$flushUpdates();
-        if (restoreFocus) {
+        await this.$whenRendered();
+        if (restoreFocus && removal === this.removalRevision && mayRestoreFocus()) {
           this.trafficUndoButton.focus();
         }
       }
     } catch (error: unknown) {
       this.diagnostic = "Traffic removal failed: " + describeError(error);
     } finally {
-      this.removingTraffic = false;
+      if (removal === this.removalRevision) {
+        this.removingTraffic = false;
+      }
     }
   }
   async undoTrafficRemoval(): Promise<void> {
@@ -6797,7 +7127,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     if (!action || this.removingTraffic) {
       return;
     }
-    this.beginTrafficRemoval();
+    await this.beginTrafficRemoval();
     const active = (this.getRootNode() as ShadowRoot).activeElement;
     if (
       !this.timelineMode &&
@@ -6883,7 +7213,7 @@ export class TrafficWorkspace extends WorkspaceElement {
         }
         if (current() && this.inspectionGeneration === generation) {
           if (this.timelineMode) {
-            this.timeline.reveal(id);
+            await this.timeline.reveal(id);
           } else {
             (this.getRootNode() as ShadowRoot)
               .getElementById("session-" + id)
@@ -7081,6 +7411,8 @@ export class TrafficWorkspace extends WorkspaceElement {
     window.clearTimeout(this.searchTimer);
     const focus = this.trackNavigationFocus(),
       restoreFocus = () => focus.unchanged() && canFocus();
+    const inspection = this.inspectionGeneration,
+      selection = this.trafficSelectionRevision;
     let revision = ++this.queryRevision;
     try {
       const view = await invoke<TrafficView>("query_traffic_view", {
@@ -7116,12 +7448,30 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.searchInput.value = "";
       this.followLatest = false;
       this.closeMatches();
-      this.applyView(view);
+      await this.applyView(view);
+      if (
+        revision !== this.queryRevision ||
+        !this.isConnected ||
+        !canApply() ||
+        inspection !== this.inspectionGeneration ||
+        selection !== this.trafficSelectionRevision
+      ) {
+        return false;
+      }
       this.queryLoaded = true;
       this.queryError = "";
       this.renderSessionState();
       this.renderFollowState();
-      this.$flushUpdates();
+      await this.$whenRendered();
+      if (
+        revision !== this.queryRevision ||
+        !this.isConnected ||
+        !canApply() ||
+        inspection !== this.inspectionGeneration ||
+        selection !== this.trafficSelectionRevision
+      ) {
+        return false;
+      }
       this.measurePinnedColumns();
       if (this.timelineMode) {
         this.trafficSelection.replace(id);
@@ -7135,15 +7485,40 @@ export class TrafficWorkspace extends WorkspaceElement {
           return true;
         }
         if (this.timelineMode) {
-          this.$flushUpdates();
-          this.timeline.resetRange();
-          this.timeline.$flushUpdates();
-          if (restoreFocus()) {
-            this.timeline.reveal(id);
+          await this.$whenRendered();
+          if (
+            revision !== this.queryRevision ||
+            !this.isConnected ||
+            !canApply() ||
+            !this.timelineMode ||
+            this.selectedSessionId !== id
+          ) {
+            return true;
+          }
+          await this.timeline.resetRange();
+          await this.timeline.$whenRendered();
+          if (
+            revision === this.queryRevision &&
+            this.isConnected &&
+            canApply() &&
+            this.timelineMode &&
+            this.selectedSessionId === id &&
+            restoreFocus()
+          ) {
+            await this.timeline.reveal(id);
           }
         }
       } else {
         const row = await this.revealCurrent(id, false);
+        if (
+          revision !== this.queryRevision ||
+          !this.isConnected ||
+          !canApply() ||
+          inspection !== this.inspectionGeneration ||
+          selection !== this.trafficSelectionRevision
+        ) {
+          return false;
+        }
         if (!row) {
           throw new Error("Source no longer in Traffic.");
         }
@@ -7162,7 +7537,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       }
       return true;
     } catch (error: unknown) {
-      if (revision !== this.queryRevision || !this.isConnected) {
+      if (revision !== this.queryRevision || !this.isConnected || !canApply()) {
         return false;
       }
       this.showNotice("Source unavailable", describeError(error), null, null);
@@ -8167,23 +8542,28 @@ export class TrafficWorkspace extends WorkspaceElement {
       return;
     }
 
-    if (this.markerDraftDirty || this.markerIntake.editingMarkerId) {
-      if (!(await this.markerIntake.applyPending())) {
-        return;
-      }
-      await this.refreshMarkers();
-      await this.reviewTraceExport();
-      if (!this.exportReviewId) {
-        return;
-      }
-    }
-    const data = new FormData(this.saveTraceForm);
+    const data = new FormData(this.saveTraceForm),
+      operation = ++this.traceSaveOperation;
     this.savingTrace = true;
     this.saveTraceCompleted = 0;
     this.saveTraceTotal = 0;
     this.saveTraceStatus = "Choose a destination, then the trace will be saved…";
     let onProgress: Channel<{ phase: string; completed: number; total: number }> | undefined;
     try {
+      if (this.markerDraftDirty || this.markerIntake.editingMarkerId) {
+        this.saveTraceStatus = "Applying marker notes…";
+        if (!(await this.markerIntake.applyPending())) {
+          this.saveTraceStatus =
+            "Marker notes could not be applied. Close this dialog to review them.";
+          return;
+        }
+        await this.refreshMarkers();
+        await this.reviewTraceExport();
+        if (!this.exportReviewId || !this.isConnected) {
+          return;
+        }
+      }
+      this.saveTraceStatus = "Choose a destination, then the trace will be saved…";
       const password =
         data.get("encrypt") === "on"
           ? await this.promptTracePassword("Encrypt saved trace", true)
@@ -8194,7 +8574,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       }
       onProgress = new Channel<{ phase: string; completed: number; total: number }>();
       onProgress.onmessage = (progress) => {
-        if (!this.isConnected || !this.savingTrace) {
+        if (!this.isConnected || operation !== this.traceSaveOperation || !this.savingTrace) {
           return;
         }
         this.saveTraceCompleted = progress.completed;
@@ -8282,7 +8662,9 @@ export class TrafficWorkspace extends WorkspaceElement {
       if (onProgress) {
         onProgress.onmessage = () => {};
       }
-      this.savingTrace = false;
+      if (operation === this.traceSaveOperation) {
+        this.savingTrace = false;
+      }
       if (this.isConnected) {
         this.saveTraceStatus = "Trace could not be saved: " + describeError(error);
         await this.showError("Trace save failed", describeError(error));
@@ -8291,7 +8673,9 @@ export class TrafficWorkspace extends WorkspaceElement {
       if (onProgress) {
         onProgress.onmessage = () => {};
       }
-      this.savingTrace = false;
+      if (operation === this.traceSaveOperation) {
+        this.savingTrace = false;
+      }
     }
   }
   async exportLiveCapture(): Promise<void> {

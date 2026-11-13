@@ -117,6 +117,22 @@ export async function checkMcp(page, root) {
   const row = panel
     .locator("article")
     .filter({ hasText: "Work agent · shared rule collaboration" });
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.holdCommand = "mcp_configuration_key";
+    globalThis.__workspaceFixture.finishHeldCommand = null;
+  });
+  await row.getByRole("button", { name: "Configuration…", exact: true }).click();
+  await page.waitForFunction(() => globalThis.__workspaceFixture.finishHeldCommand);
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => globalThis.__workspaceFixture.finishHeldCommand());
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").settings.querySelector("mcp-settings").mcpBusy,
+  );
+  assert.equal(
+    await key.isVisible(),
+    false,
+    "Escape did not cancel a pending configuration dialog",
+  );
   await row.getByRole("button", { name: "Configuration…", exact: true }).click();
   await key.waitFor();
   assert.match(

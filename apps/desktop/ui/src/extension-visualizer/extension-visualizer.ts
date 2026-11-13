@@ -508,7 +508,7 @@ export class ExtensionVisualizer extends WebUIElement {
       if (automatic && view.document.status !== "complete") {
         throw new Error("Auto visualization requires a complete parse");
       }
-      this.accept(view);
+      await this.accept(view);
     } catch (error: unknown) {
       if (revision === this.revision) {
         if (automatic && !live) {
@@ -590,7 +590,6 @@ export class ExtensionVisualizer extends WebUIElement {
     this.pending = null;
     this.visualizerBusy = false;
     this.debugInfo = null;
-    this.$flushUpdates();
     await this.debugFresh();
   }
   async debugFresh(): Promise<void> {
@@ -649,7 +648,7 @@ export class ExtensionVisualizer extends WebUIElement {
       if (stoppedLive) {
         this.liveWanted = false;
       }
-      this.accept(view);
+      await this.accept(view);
       if (stoppedLive) {
         this.visualizerReloadNotice = "Reloaded. Live updates are off for this view.";
       }
@@ -744,7 +743,8 @@ export class ExtensionVisualizer extends WebUIElement {
     void this.start(true);
   }
   async setLive(event: Event): Promise<void> {
-    const target = event.currentTarget as HTMLInputElement;
+    const eventTarget = event?.currentTarget;
+    const target = eventTarget as HTMLInputElement;
     if (!this.view || !this.visualizerLiveAvailable || this.visualizerBusy) {
       target.checked = this.visualizerLive;
       return;
@@ -809,7 +809,7 @@ export class ExtensionVisualizer extends WebUIElement {
         return;
       }
       if (result.view) {
-        this.accept(result.view);
+        await this.accept(result.view);
       } else {
         this.liveStatus(result.status);
       }
@@ -819,7 +819,7 @@ export class ExtensionVisualizer extends WebUIElement {
       }
     }
   }
-  private accept(view: VisualizerView): void {
+  private async accept(view: VisualizerView): Promise<void> {
     this.lastGoodDetails = {
       label: `${view.instance.extensionId} · ${view.instance.visualizerId} · ${view.instance.digest}`,
       logs: view.logs,
@@ -908,7 +908,7 @@ export class ExtensionVisualizer extends WebUIElement {
       selectedWasVisible &&
       this.allRows.findIndex((row) => row.selected) !== previousIndex
     ) {
-      this.scrollSelectedRow();
+      await this.scrollSelectedRow();
     }
   }
   private acceptSnapshot(snapshot: StructuredSnapshot): void {
@@ -954,7 +954,7 @@ export class ExtensionVisualizer extends WebUIElement {
     this.visualizerActiveRow =
       this.visualizerRows.find((row) => row.id === this.selected)?.domId ?? "";
   }
-  selectNode(id: string, openDetails = true): void {
+  async selectNode(id: string, openDetails = true): Promise<void> {
     if (!this.nodes.has(id)) {
       return;
     }
@@ -963,14 +963,33 @@ export class ExtensionVisualizer extends WebUIElement {
     this.tableOffset = 0;
     this.updateRows(true);
     this.describeNode(this.visualizerMode === "hex");
-    this.scrollSelectedRow();
+    await this.scrollSelectedRow();
   }
-  private scrollSelectedRow(): void {
-    const index = this.allRows.findIndex((row) => row.selected);
+  private async scrollSelectedRow(): Promise<void> {
+    const selected = this.selected,
+      revision = this.revision,
+      view = this.view,
+      snapshot = this.snapshot,
+      scroll = this.treeViewport.scrollTop;
+    if (!selected) {
+      return;
+    }
+    await this.$whenRendered();
+    if (
+      !this.isConnected ||
+      !this.visible ||
+      selected !== this.selected ||
+      revision !== this.revision ||
+      view !== this.view ||
+      snapshot !== this.snapshot ||
+      scroll !== this.treeViewport.scrollTop
+    ) {
+      return;
+    }
+    const index = this.allRows.findIndex((row) => row.id === selected);
     if (index < 0) {
       return;
     }
-    this.$flushUpdates();
     const top = index * 26,
       bottom = top + 26;
     if (top < this.treeViewport.scrollTop) {
@@ -1021,9 +1040,21 @@ export class ExtensionVisualizer extends WebUIElement {
     event.stopPropagation();
     this.closeDetails();
   }
-  clickNode(id: string): void {
-    this.selectNode(id);
-    this.treeViewport.focus({ preventScroll: true });
+  async clickNode(id: string): Promise<void> {
+    const revision = this.revision,
+      root = this.getRootNode() as Document | ShadowRoot,
+      focused = root.activeElement;
+    await this.selectNode(id);
+    if (
+      this.isConnected &&
+      this.visible &&
+      revision === this.revision &&
+      id === this.selected &&
+      (root.activeElement === focused ||
+        (!focused?.isConnected && (!root.activeElement || root.activeElement === document.body)))
+    ) {
+      this.treeViewport.focus({ preventScroll: true });
+    }
   }
   private describeNode(preserveMode = false, retainHex = false): void {
     const node = this.nodes.get(this.selected);
@@ -1106,11 +1137,11 @@ export class ExtensionVisualizer extends WebUIElement {
         const retainSelection = nodeIndex(documentNode(view.document)).has(this.selected);
         const detailsOpen = this.visualizerDetailsOpen;
         this.expanded.add(id);
-        this.accept(view);
+        await this.accept(view);
         if (!retainSelection) {
           // Paged producers can unload the previous selection. Keep the user's
           // explicit expansion target visible instead of jumping to the root.
-          this.selectNode(id, detailsOpen);
+          await this.selectNode(id, detailsOpen);
         }
       } catch (error: unknown) {
         if (revision === this.revision) {
@@ -1126,7 +1157,7 @@ export class ExtensionVisualizer extends WebUIElement {
       this.updateRows();
     }
   }
-  treeKey(event: KeyboardEvent): void {
+  async treeKey(event: KeyboardEvent): Promise<void> {
     if (copyGesture(event)) {
       this.copyNode(this.selected, event);
       return;
@@ -1188,7 +1219,7 @@ export class ExtensionVisualizer extends WebUIElement {
         return;
     }
     event.preventDefault();
-    this.selectNode(this.allRows[target]!.id, this.visualizerDetailsOpen);
+    await this.selectNode(this.allRows[target]!.id, this.visualizerDetailsOpen);
   }
   changeMode(event: Event): void {
     this.visualizerMode = (event.currentTarget as HTMLSelectElement).value as Presentation;
@@ -1270,9 +1301,9 @@ export class ExtensionVisualizer extends WebUIElement {
           throw new CopyError("The inspection changed. Open the copy menu again.");
         }
         return tree
-          ? await visualizerCopyTree(id, view!, valid, (expanded) => {
+          ? await visualizerCopyTree(id, view!, valid, async (expanded) => {
               const top = this.treeViewport.scrollTop;
-              this.accept(expanded);
+              await this.accept(expanded);
               view = expanded;
               this.treeViewport.scrollTop = top;
               this.windowRows();

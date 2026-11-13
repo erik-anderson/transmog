@@ -1,0 +1,8 @@
+{
+  "package": "microsoft-webui-protocol",
+  "version": "3.1.1",
+  "commit": "30ca60aa4bdc1beab040dae32e1c10e195ec9113",
+  "sources": [
+    "https://raw.githubusercontent.com/microsoft/webui/30ca60aa4bdc1beab040dae32e1c10e195ec9113/LICENSE"
+  ]
+}

@@ -1,3 +1,4 @@
+import { captureFocus, captureRenderScope } from "../rendering.js";
 import initialState from "../initial-state.json";
 import "../network-profile-settings/network-profile-settings.js";
 import "../process-inspection-settings/process-inspection-settings.js";
@@ -163,24 +164,41 @@ export class SettingsWorkspace extends WorkspaceElement {
       this.certificateReturnVisible = false;
     }
   }
-  openInterceptionCertificate(event?: Event): void {
+  async openInterceptionCertificate(event?: Event): Promise<void> {
+    const focus = captureFocus(this);
+    const eventTarget = event?.currentTarget;
     this.certificateReturnFocus =
-      event?.currentTarget instanceof HTMLElement
-        ? event.currentTarget
-        : this.certificateSettingsButton;
+      eventTarget instanceof HTMLElement ? eventTarget : this.certificateSettingsButton;
     this.certificateReturnVisible = true;
     this.certificateDetailsOpen = true;
     this.settingsSection = "connection";
-    this.$flushUpdates();
+    const current = captureRenderScope(this, () => [
+      this.view,
+      this.settingsSection,
+      this.certificateDetailsOpen,
+    ]);
+    await this.$whenRendered();
+    if (!current() || !focus()) {
+      return;
+    }
     this.interceptionSummary.focus();
     this.interceptionSummary.scrollIntoView({ block: "nearest" });
   }
   certificateDisclosureChanged(event: Event): void {
     this.certificateDetailsOpen = (event.target as HTMLDetailsElement).open;
   }
-  backToPreferences(): void {
+  async backToPreferences(): Promise<void> {
+    const focus = captureFocus(this);
     this.showSettingsSection("preferences");
-    this.$flushUpdates();
+    const current = captureRenderScope(this, () => [
+      this.view,
+      this.settingsSection,
+      this.certificateReturnFocus,
+    ]);
+    await this.$whenRendered();
+    if (!current() || !focus()) {
+      return;
+    }
     const target = this.certificateReturnFocus;
     if (target?.isConnected && target.getClientRects().length) {
       target.focus();
@@ -570,7 +588,6 @@ export class SettingsWorkspace extends WorkspaceElement {
         this.certificatePath = bootstrap.caCertificatePath;
         this.privateKeyPath = bootstrap.caPrivateKeyPath;
         this.caSha256 = "";
-        this.$flushUpdates();
         const elements = this.proxyForm.elements;
         (elements.namedItem("certificate") as HTMLInputElement).value = this.certificatePath;
         (elements.namedItem("privateKey") as HTMLInputElement).value = this.privateKeyPath;
@@ -964,14 +981,17 @@ export class SettingsWorkspace extends WorkspaceElement {
   }
 
   async refreshStatus(): Promise<string | null> {
-    const revision = this.statusRevision;
+    const revision = ++this.statusRevision;
     try {
       const status = await invoke<AppStatus>("app_status");
-      if (revision === this.statusRevision) {
+      if (this.isConnected && revision === this.statusRevision) {
         this.acceptAppStatus(status);
       }
       return null;
     } catch (error: unknown) {
+      if (!this.isConnected || revision !== this.statusRevision) {
+        return null;
+      }
       const message = `Status unavailable: ${describeError(error)}`;
       this.diagnostic = message;
       return message;

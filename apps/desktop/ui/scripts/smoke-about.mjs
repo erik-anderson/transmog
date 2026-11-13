@@ -13,10 +13,10 @@ export async function smokeAbout(call, evaluate, screenshotPath) {
       if(!version.includes(status.currentVersion)||!status.currentVersion)throw new Error('About omitted installed version');
       if(about.querySelector('a').href!=='https://transmog.net/')throw new Error('About website link is incorrect');
       if(!status.version&&shell.updateToolbarVisible)throw new Error('Updates remain prominent without an update');
-      const button=about.querySelector('button');button.focus();await settings.showCredits();settings.$flushUpdates();
+      const button=about.querySelector('button');button.focus();await settings.showCredits();await settings.$whenRendered();
       if(!settings.creditsDialog.matches(':modal')||settings.credits.length<100)throw new Error('Credits licenses are unavailable');
       if(settings.creditsSummary.includes('Generated from the locked')||settings.creditsSummary.includes('Distributions must retain'))throw new Error('Developer credits copy remains visible');
-      settings.closeCredits();settings.$flushUpdates();
+      settings.closeCredits();await settings.$whenRendered();
       globalThis.__aboutProbe.automatic=status.automaticChecksEnabled;
       const automatic=settings.aboutUpdates.shadowRoot.querySelector('input[type="checkbox"]');
       automatic.checked=false;automatic.dispatchEvent(new Event('change',{bubbles:true}));

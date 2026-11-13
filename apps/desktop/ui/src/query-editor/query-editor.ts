@@ -1,3 +1,4 @@
+import { captureFocus, captureRenderScope } from "../rendering.js";
 import { attr, observable, WebUIElement } from "@microsoft/webui-framework";
 import {
   editQueryParameter,
@@ -48,7 +49,8 @@ export class QueryEditor extends WebUIElement {
     }
   }
 
-  replaceValue(value: string): void {
+  async replaceValue(value: string): Promise<void> {
+    const focus = captureFocus(this);
     const root = this.getRootNode() as Document | ShadowRoot;
     const active = root.activeElement;
     const focused = this.queryEditorRows.findIndex((row) =>
@@ -66,8 +68,9 @@ export class QueryEditor extends WebUIElement {
       this.loadRows();
     }
     if (this.ready && focused >= 0 && active) {
-      this.$flushUpdates();
-      if (!active.isConnected && (!root.activeElement || root.activeElement === document.body)) {
+      const current = this.renderScope();
+      await this.$whenRendered();
+      if (current() && !active.isConnected && focus()) {
         const row = this.queryEditorRows[Math.min(focused, this.queryEditorRows.length - 1)];
         if (row) {
           this.focusField(field === "equalsId" && row.value ? row.valueId : row[field], false);
@@ -168,18 +171,24 @@ export class QueryEditor extends WebUIElement {
     this.changed();
   }
 
-  addParameter(): void {
+  async addParameter(): Promise<void> {
+    const focus = captureFocus(this);
     if (this.disabled) {
       return;
     }
     const row = this.row(newQueryParameter());
     this.queryEditorRows = [...this.queryEditorRows, row];
     this.changed();
-    this.$flushUpdates();
+    const current = this.renderScope();
+    await this.$whenRendered();
+    if (!current() || !focus()) {
+      return;
+    }
     this.focusField(row.nameId);
   }
 
-  removeParameter(id: string): void {
+  async removeParameter(id: string): Promise<void> {
+    const focus = captureFocus(this);
     if (this.disabled) {
       return;
     }
@@ -192,7 +201,11 @@ export class QueryEditor extends WebUIElement {
     this.queryEditorCanUndo = true;
     this.queryEditorRows = this.queryEditorRows.filter((item) => item.id !== id);
     this.changed();
-    this.$flushUpdates();
+    const current = this.renderScope();
+    await this.$whenRendered();
+    if (!current() || !focus()) {
+      return;
+    }
     const next = this.queryEditorRows[Math.min(index, this.queryEditorRows.length - 1)];
     if (next) {
       this.focusField(next.nameId);
@@ -201,7 +214,8 @@ export class QueryEditor extends WebUIElement {
     }
   }
 
-  undoRemove(): void {
+  async undoRemove(): Promise<void> {
+    const focus = captureFocus(this);
     if (this.disabled || !this.removed) {
       return;
     }
@@ -212,8 +226,15 @@ export class QueryEditor extends WebUIElement {
     this.removed = null;
     this.queryEditorCanUndo = false;
     this.changed();
-    this.$flushUpdates();
+    const current = this.renderScope();
+    await this.$whenRendered();
+    if (!current() || !focus()) {
+      return;
+    }
     this.focusField(row.nameId);
+  }
+  private renderScope(): () => boolean {
+    return captureRenderScope(this, () => [this.queryEditorRows, this.draft, this.disabled]);
   }
 
   private focusField(id: string, reveal = true): void {

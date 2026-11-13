@@ -544,23 +544,23 @@ export async function checkResponseSetIntakeMove(page, root) {
     await editor
       .getByLabel("Matching address", { exact: true })
       .fill("https://move.invalid/move-edited?phase=one");
-    await page.evaluate((open) => {
+    await page.evaluate(async (open) => {
       const workspace = document.querySelector("app-shell").automation;
       workspace.requestHeadersOpen = open;
-      workspace.$flushUpdates();
+      await workspace.$whenRendered();
     }, headersInitiallyOpen);
     const headers = editor.locator('[name="requestHeaders"]');
     assert.equal(await headers.isVisible(), headersInitiallyOpen);
     // A refresh can run before the browser delivers the queued toggle event.
-    const disclosureChoices = await headers.evaluate((input) => {
+    const disclosureChoices = await headers.evaluate(async (input) => {
       const w = document.querySelector("app-shell").automation,
         details = input.closest("details"),
         choices = [];
       for (let click = 0; click < 2; click++) {
         details.querySelector("summary").click();
         const clicked = details.open;
-        w.$update();
-        w.$flushUpdates();
+        w.autoresponseState = { ...w.autoresponseState };
+        await w.$whenRendered();
         choices.push({ clicked, refreshed: details.open });
       }
       return choices;
@@ -573,10 +573,10 @@ export async function checkResponseSetIntakeMove(page, root) {
     for (const key of ["Space", "Enter"]) {
       for (const open of [!headersInitiallyOpen, headersInitiallyOpen]) {
         await headerSummary.press(key);
-        await page.evaluate(() => {
+        await page.evaluate(async () => {
           const w = document.querySelector("app-shell").automation;
-          w.$update();
-          w.$flushUpdates();
+          w.autoresponseState = { ...w.autoresponseState };
+          await w.$whenRendered();
         });
         assert.equal(await headers.isVisible(), open);
       }
@@ -589,14 +589,14 @@ export async function checkResponseSetIntakeMove(page, root) {
       "Request headers should be available for editing",
     );
     // Reproduce fill()'s focus/selection followed by native protocol text input,
-    // with a full refresh in between. A closed disclosure silently drops the text.
-    const focusedHeader = await headers.evaluate((input) => {
+    // with a state refresh in between. A closed disclosure silently drops the text.
+    const focusedHeader = await headers.evaluate(async (input) => {
       const w = document.querySelector("app-shell").automation;
       input.focus();
       input.selectionStart = 0;
       input.selectionEnd = input.value.length;
-      w.$update();
-      w.$flushUpdates();
+      w.autoresponseState = { ...w.autoresponseState };
+      await w.$whenRendered();
       return {
         open: input.closest("details").open,
         focused: input.getRootNode().activeElement === input,

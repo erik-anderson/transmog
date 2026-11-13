@@ -231,6 +231,82 @@ export async function checkIncidents(page, root) {
     ["cached"],
   );
 
+  // Clearing a filter cannot replace a selection made while its query finishes.
+  await applyFilter.click();
+  await page.waitForFunction(() => document.querySelector("app-shell").traffic.totalMatched === 2);
+  await page.evaluate(() => {
+    const traffic = document.querySelector("app-shell").traffic,
+      refresh = traffic.refreshSessions;
+    let release,
+      paused = false;
+    const gate = new Promise((resolve) => (release = resolve));
+    traffic.refreshSessions = async (...args) => {
+      await refresh.apply(traffic, args);
+      if (!paused) {
+        paused = true;
+        globalThis.__releaseIncidentClear = release;
+        await gate;
+      }
+    };
+    globalThis.__incidentClear = traffic.clearIncidentWindow().finally(() => {
+      traffic.refreshSessions = refresh;
+    });
+  });
+  await page.waitForFunction(() => !!globalThis.__releaseIncidentClear);
+  await page.locator('tr[data-session-id="first"]').click();
+  const clearedSelection = await page.evaluate(async () => {
+    globalThis.__releaseIncidentClear();
+    await globalThis.__incidentClear;
+    delete globalThis.__releaseIncidentClear;
+    delete globalThis.__incidentClear;
+    return [...document.querySelector("app-shell").traffic.trafficSelection.ids];
+  });
+  assert.deepEqual(
+    clearedSelection,
+    ["first"],
+    "Clearing an incident filter restored an older selection",
+  );
+  await page.evaluate(async () => {
+    const traffic = document.querySelector("app-shell").traffic;
+    await traffic.revealSession("cached");
+    traffic.trafficSelection.replace("cached");
+    traffic.updateTrafficSelection();
+  });
+
+  await page.evaluate(() => {
+    const traffic = document.querySelector("app-shell").traffic,
+      manager = traffic.markerIntake,
+      apply = manager.applyPending;
+    let release;
+    const gate = new Promise((resolve) => (release = resolve));
+    manager.applyPending = async () => {
+      await gate;
+      return true;
+    };
+    globalThis.__releaseMarkerSave = release;
+    globalThis.__markerSave = traffic.markerSave().finally(() => {
+      manager.applyPending = apply;
+    });
+  });
+  await page.keyboard.press("Escape");
+  const reopened = await page.evaluate(async () => {
+    globalThis.__releaseMarkerSave();
+    await globalThis.__markerSave;
+    delete globalThis.__releaseMarkerSave;
+    delete globalThis.__markerSave;
+    const traffic = document.querySelector("app-shell").traffic,
+      open = traffic.saveTraceDialog.open;
+    if (open) traffic.closeSaveTrace();
+    return open;
+  });
+  assert.equal(reopened, false, "Escape during marker preparation reopened export options");
+  await page.evaluate(async () => {
+    const traffic = document.querySelector("app-shell").traffic;
+    await traffic.revealSession("cached");
+    traffic.trafficSelection.replace("cached");
+    traffic.updateTrafficSelection();
+  });
+
   // Timeline markers navigate without changing request selection or applying a filter.
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.evaluate(async () => {

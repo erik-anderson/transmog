@@ -19,7 +19,7 @@
         <button type="button" class="secondary" ?disabled="{{updateBusy}}" @click="{remind()}">Remind me in 30 days</button>
       </if>
       <if condition="updateState.phase == 'ready'"><button type="button" ?disabled="{{updateBusy}}" @click="{installReady()}">Install and reopen</button></if>
-      <if condition="updateState.phase == 'downloading' || updateState.phase == 'ready'"><button type="button" class="secondary" @click="{cancel()}">Cancel update</button></if>
+      <if condition="updateState.phase == 'downloading' || updateState.phase == 'ready'"><button type="button" class="secondary" ?disabled="{{updateCancelBusy}}" @click="{cancel()}">Cancel update</button></if>
       <button type="button" class="secondary" ?disabled="{{updateBusy || updateState.scheduled}}" @click="{check(true)}">Check for updates</button>
     </div>
     <p class="help" ?hidden="{{!updateState.version}}">Updating closes Transmog after stopping capture and restoring Windows proxy settings. A deferred update runs when you quit the app.</p>

@@ -208,6 +208,30 @@ export async function checkStreams(page, root) {
   const selectedText = await inspector.locator("pre").textContent();
   await page.evaluate(() => globalThis.__workspaceFixture.releaseStream());
   assert.equal(await inspector.locator("pre").textContent(), selectedText);
+  const cancelledSelection = await inspector.evaluate(async (stream) => {
+    const detail = stream.detail;
+    try {
+      const selecting = stream.select(stream.streamRows[0]);
+      stream.detail = null;
+      await selecting;
+      return {
+        payload: stream.streamPayload,
+        selected: stream.streamSelected,
+        text: stream.streamText,
+      };
+    } finally {
+      stream.detail = detail;
+    }
+  });
+  assert.deepEqual(
+    cancelledSelection,
+    {
+      payload: null,
+      selected: 0,
+      text: "Select a message to inspect its payload.",
+    },
+    "A selection cancelled during rendering must not fetch a message from the replacement session",
+  );
   await page.getByRole("button", { name: "HTTP handshake", exact: true }).click();
   assert.equal(await inspector.isVisible(), false);
   await page.getByRole("button", { name: "Messages / Events", exact: true }).click();

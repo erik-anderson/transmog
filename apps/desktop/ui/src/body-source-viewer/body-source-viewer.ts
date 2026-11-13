@@ -170,7 +170,7 @@ export class BodySourceViewer extends WebUIElement {
         this.sourceStatus = [this.sourceStatus, largePreviewNotice].filter(Boolean).join("\n");
       }
       if (this.pendingReveal) {
-        this.queueFallbackReveal();
+        void this.revealFallbackAfterRender();
       }
       return;
     }
@@ -313,7 +313,7 @@ export class BodySourceViewer extends WebUIElement {
       this.fallback.scrollLeft += rect.left - viewport.left;
     }
   }
-  private queueFallbackReveal(): void {
+  private async revealFallbackAfterRender(): Promise<void> {
     const revision = ++this.fallbackRevealRevision,
       generation = this.generation,
       preview = this.preview,
@@ -327,18 +327,13 @@ export class BodySourceViewer extends WebUIElement {
       this.active &&
       this.visible &&
       this.isConnected;
-    // WebUI Changed callbacks precede the setter's DOM update notification.
-    // Flush after the setter completes so the source is visible before focus,
-    // range measurement and horizontal/vertical scrolling consume the intent.
-    queueMicrotask(() => {
-      if (!current()) {
-        return;
-      }
-      this.$flushUpdates();
-      if (current()) {
-        this.revealFallback();
-      }
-    });
+    if (!current()) {
+      return;
+    }
+    await this.$whenRendered();
+    if (current()) {
+      this.revealFallback();
+    }
   }
   private async ensureEditor(): Promise<void> {
     const generation = ++this.generation;
@@ -356,7 +351,7 @@ export class BodySourceViewer extends WebUIElement {
       }
       this.monaco = runtime.monaco;
       this.sourceEditorLoaded = true;
-      this.$flushUpdates();
+      await this.$whenRendered();
       await waitForStyles(this.sourceStyles);
       if (!current()) {
         return;
@@ -394,7 +389,10 @@ export class BodySourceViewer extends WebUIElement {
       // Monaco normalizes model line endings. Whole-preview copies use the source
       // string, while selections read the model's plain-text range.
       this.sourceEditorReady = true;
-      this.$flushUpdates();
+      await this.$whenRendered();
+      if (!current()) {
+        return;
+      }
       this.editor = this.monaco.editor.create(this.editorHost, {
         model: this.model,
         readOnly: true,
@@ -446,9 +444,9 @@ export class BodySourceViewer extends WebUIElement {
         this.sourceEditorLoaded = false;
         this.sourceStatus = syntaxFailureNotice;
         this.mapDisplay();
-        this.$flushUpdates();
+        await this.$whenRendered();
         if (this.pendingReveal) {
-          this.queueFallbackReveal();
+          void this.revealFallbackAfterRender();
         }
       }
     } finally {

@@ -2,6 +2,79 @@ import assert from "node:assert/strict";
 import { resolve } from "node:path";
 
 export async function checkTraceSave(page, root, dialog) {
+  const duplicate = await page.evaluate(async () => {
+    const state = globalThis.__workspaceFixture,
+      traffic = document.querySelector("app-shell").traffic,
+      manager = traffic.markerIntake,
+      apply = manager.applyPending,
+      dirty = traffic.markerDraftDirty,
+      markers = traffic.saveTraceForm.elements.namedItem("markers"),
+      originalMarkers = markers.checked,
+      calls = state.calls.save_traffic_trace ?? 0;
+    let release;
+    const gate = new Promise((resolve) => (release = resolve));
+    manager.applyPending = async () => {
+      await gate;
+      return true;
+    };
+    traffic.markerDraftDirty = true;
+    markers.checked = true;
+    const expectedMarkers = !markers.matches(":disabled");
+    state.cancelTraceSave = true;
+    try {
+      const first = traffic.saveTrafficTrace(new Event("submit", { cancelable: true })),
+        second = traffic.saveTrafficTrace(new Event("submit", { cancelable: true })),
+        busy = traffic.savingTrace;
+      release();
+      await Promise.all([first, second]);
+      const result = {
+        busy,
+        calls: (state.calls.save_traffic_trace ?? 0) - calls,
+        includeMarkers: state.savedTraceArgs.options.includeMarkers,
+        expectedMarkers,
+      };
+      manager.applyPending = async () => false;
+      traffic.markerDraftDirty = true;
+      await traffic.saveTrafficTrace(new Event("submit", { cancelable: true }));
+      return {
+        ...result,
+        failureReleased: !traffic.savingTrace,
+        finalCalls: (state.calls.save_traffic_trace ?? 0) - calls,
+        failureStatus: traffic.saveTraceStatus,
+      };
+    } finally {
+      release();
+      manager.applyPending = apply;
+      traffic.markerDraftDirty = dirty;
+      markers.checked = originalMarkers;
+      state.cancelTraceSave = false;
+    }
+  });
+  assert.equal(duplicate.busy, true, "Marker preparation did not claim its save before yielding");
+  assert.equal(duplicate.calls, 1, "Marker preparation admitted duplicate trace saves");
+  assert.equal(
+    duplicate.includeMarkers,
+    duplicate.expectedMarkers,
+    "Disabling the form lost authored save options",
+  );
+  assert.equal(duplicate.failureReleased, true, "A failed marker edit left saving locked");
+  assert.equal(duplicate.finalCalls, 1, "A failed marker edit still saved the trace");
+  assert.match(duplicate.failureStatus, /Marker notes could not be applied/);
+  await dialog.getByText(duplicate.failureStatus, { exact: true }).waitFor();
+  const viewport = page.viewportSize();
+  try {
+    await page.setViewportSize({ width: 800, height: 600 });
+    const close = await dialog.getByRole("button", { name: "Close", exact: true }).boundingBox();
+    assert.ok(
+      close && close.y >= 0 && close.y + close.height <= 600,
+      "Marker failure feedback hid Close in a compact window",
+    );
+    await page.screenshot({
+      path: resolve(root, "../../../target/ui-check/trace-save-marker-failure.png"),
+    });
+  } finally {
+    await page.setViewportSize(viewport);
+  }
   const before = await page.evaluate(() => {
     const state = globalThis.__workspaceFixture;
     state.deferTraceSave = true;

@@ -48,7 +48,7 @@ export async function smokeIncidentRecording(main, viewer, traffic, path, screen
     await waitFor(
       () =>
         main.evaluate(
-          "(()=>{const w=document.querySelector('app-shell').shadowRoot.querySelector('capture-workspace');w.$flushUpdates();return w.captureActive&&Boolean(w.incidentNote);})()",
+          "(async ()=>{const w=document.querySelector('app-shell').shadowRoot.querySelector('capture-workspace');await w.$whenRendered();return w.captureActive&&Boolean(w.incidentNote);})()",
         ),
       "Recording marker did not hydrate",
     );
@@ -62,7 +62,7 @@ export async function smokeIncidentRecording(main, viewer, traffic, path, screen
       /Issue marker recorded/,
     );
     await main.evaluate(
-      `(async()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('capture-workspace');workspace.$emit('status-changed',await window.__TAURI_INTERNALS__.invoke('app_status'));workspace.$flushUpdates();workspace.querySelector('[aria-label="Incident marker"] button').scrollIntoView({block:'center'});})()`,
+      `(async()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('capture-workspace');workspace.$emit('status-changed',await window.__TAURI_INTERNALS__.invoke('app_status'));await workspace.$whenRendered();workspace.querySelector('[aria-label="Incident marker"] button').scrollIntoView({block:'center'});})()`,
     );
     assert.ok(
       await main.evaluate(
@@ -119,7 +119,7 @@ export async function smokeIncidentIntake(viewer, traffic, traceId, screenshot) 
   );
   assert.equal(intake.markers[0].note, "Native issue <img src=x>");
   await viewer.evaluate(
-    `(async()=>{const w=${traffic};await w.refreshMarkers();w.markersTraceId=${JSON.stringify(traceId)};w.reviewMarkers();await w.markerIntake.load();})()`,
+    `(async()=>{const w=${traffic};await w.refreshMarkers();w.markersTraceId=${JSON.stringify(traceId)};await w.reviewMarkers();await w.markerIntake.load();})()`,
   );
   assert.equal(
     await viewer.evaluate(`${traffic}.markerIntake.querySelectorAll('img,script').length`),
@@ -145,7 +145,7 @@ export async function smokeIncidentIntake(viewer, traffic, traceId, screenshot) 
 export async function smokeMarkerReview(client, traffic, screenshot) {
   const ready = (count) =>
     client.evaluate(
-      `(async()=>{const w=${traffic};w.$flushUpdates();for(let i=0;i<100;i++){const intake=w.markerIntake,review=w.markerReviews.find(r=>r.traceId===intake.traceId);if(w.markerCount===${count}&&!intake.intakeBusy&&review?.revision===intake.markerRevision)return true;await new Promise(resolve=>setTimeout(resolve,30));}return false;})()`,
+      `(async()=>{const w=${traffic};await w.$whenRendered();for(let i=0;i<100;i++){const intake=w.markerIntake,review=w.markerReviews.find(r=>r.traceId===intake.traceId);if(w.markerCount===${count}&&!intake.intakeBusy&&review?.revision===intake.markerRevision)return true;await new Promise(resolve=>setTimeout(resolve,30));}return false;})()`,
     );
   const result = await client.evaluate(
     `(async()=>{const w=${traffic};await w.revealSession(w.sessions[0].id);w.flagMessage('response',true);w.flagNote.value='Native reviewer response';await w.addMarker(new Event('submit'));await w.markerIntake.load();return {status:w.flagStatus,count:w.markerCount,review:w.markerReviews.find(r=>r.dirty)};})()`,
@@ -167,7 +167,7 @@ export async function smokeMarkerReview(client, traffic, screenshot) {
         mobile: false,
       });
       await client.evaluate(
-        `(async()=>{const w=${traffic};w.markersOpen=true;w.setTimeline(true,false);await w.refreshTimeline();w.$flushUpdates();})()`,
+        `(async()=>{const w=${traffic};w.markersOpen=true;await w.setTimeline(true,false);await w.refreshTimeline();await w.$whenRendered();})()`,
       );
       const point = await client.evaluate(
         `(()=>{const w=${traffic},flag=w.timeline.querySelector('.timeline-overview .timeline-marker'),b=flag.getBoundingClientRect();return {x:b.x+b.width/2,y:b.y+b.height/2,width:b.width,height:b.height};})()`,
@@ -188,7 +188,7 @@ export async function smokeMarkerReview(client, traffic, screenshot) {
         clickCount: 1,
       });
       const layout = await client.evaluate(
-        `(async()=>{const w=${traffic};await w.refreshTimeline();w.$flushUpdates();const deadline=Date.now()+10000;let source;while(Date.now()<deadline){source=w.querySelector('message-inspector[side=response] body-source-viewer');if(source?.sourceEditorReady&&source.editor&&source.editorHost.getClientRects().length)break;await new Promise(resolve=>setTimeout(resolve,25));}const panel=w.querySelector('.trace-markers-panel').getBoundingClientRect(),list=w.querySelector('.session-list-pane').getBoundingClientRect(),preview=w.querySelector('.details-pane').getBoundingClientRect(),body=source?.editorHost.getBoundingClientRect();return {bodyVisible:!!source?.editor&&!!body&&body.width>20&&body.height>20&&body.top+20<=innerHeight,markers:panel.height,list:list.height,preview:preview.height,visible:preview.top<innerHeight&&preview.bottom<=innerHeight+1,current:w.markerCurrent,side:w.inspectorSide};})()`,
+        `(async()=>{const w=${traffic};await w.refreshTimeline();await w.$whenRendered();const deadline=Date.now()+10000;let source;while(Date.now()<deadline){source=w.querySelector('message-inspector[side=response] body-source-viewer');if(source?.sourceEditorReady&&source.editor&&source.editorHost.getClientRects().length)break;await new Promise(resolve=>setTimeout(resolve,25));}const panel=w.querySelector('.trace-markers-panel').getBoundingClientRect(),list=w.querySelector('.session-list-pane').getBoundingClientRect(),preview=w.querySelector('.details-pane').getBoundingClientRect(),body=source?.editorHost.getBoundingClientRect();return {bodyVisible:!!source?.editor&&!!body&&body.width>20&&body.height>20&&body.top+20<=innerHeight,markers:panel.height,list:list.height,preview:preview.height,visible:preview.top<innerHeight&&preview.bottom<=innerHeight+1,current:w.markerCurrent,side:w.inspectorSide};})()`,
       );
       if (screenshot) {
         const image = await client.call("Page.captureScreenshot", { format: "png" });
@@ -207,7 +207,7 @@ export async function smokeMarkerReview(client, traffic, screenshot) {
       );
       assert.equal(layout.side, "response");
       const refreshing = await client.evaluate(
-        `(async()=>{const w=${traffic};const bounds=()=>{const b=w.timeline.getBoundingClientRect();return {top:b.top,height:b.height};};const before=bounds(),refresh=w.refreshTimeline();w.$flushUpdates();const during=bounds();await refresh;w.$flushUpdates();return {before,during,after:bounds()};})()`,
+        `(async()=>{const w=${traffic};const bounds=()=>{const b=w.timeline.getBoundingClientRect();return {top:b.top,height:b.height};};const before=bounds(),refresh=w.refreshTimeline();await w.$whenRendered();const during=bounds();await refresh;await w.$whenRendered();return {before,during,after:bounds()};})()`,
       );
       assert.deepEqual(
         refreshing.during,
@@ -216,7 +216,7 @@ export async function smokeMarkerReview(client, traffic, screenshot) {
       );
       assert.deepEqual(refreshing.after, refreshing.before, "Native timeline moved after refresh");
       const distant = await client.evaluate(
-        `(async()=>{const w=${traffic},original=w.markerItems,marker=original.find(m=>m.id===${JSON.stringify(id)});try{w.markerItems=original.map(m=>m===marker?{...m,unixMillis:m.unixMillis+300000}:m);await w.markerTimeRequest(new CustomEvent('marker-time-request',{detail:{traceId:marker.traceId,markerId:marker.id,highlight:true}}));w.$flushUpdates();const row=w.getRootNode().getElementById('timeline-'+marker.entryId),bounds=row?.getBoundingClientRect(),viewport=w.timeline.viewport.getBoundingClientRect();return {selected:[...w.trafficSelection.ids],visible:!!bounds&&bounds.height>0&&bounds.top>=viewport.top-1&&bounds.top+Math.min(20,bounds.height)<=viewport.bottom+1};}finally{w.markerItems=original;await w.markerTimeRequest(new CustomEvent('marker-time-request',{detail:{traceId:marker.traceId,markerId:marker.id,highlight:true}}));}})()`,
+        `(async()=>{const w=${traffic},original=w.markerItems,marker=original.find(m=>m.id===${JSON.stringify(id)});try{w.markerItems=original.map(m=>m===marker?{...m,unixMillis:m.unixMillis+300000}:m);await w.markerTimeRequest(new CustomEvent('marker-time-request',{detail:{traceId:marker.traceId,markerId:marker.id,highlight:true}}));await w.$whenRendered();const row=w.getRootNode().getElementById('timeline-'+marker.entryId),bounds=row?.getBoundingClientRect(),viewport=w.timeline.viewport.getBoundingClientRect();return {selected:[...w.trafficSelection.ids],visible:!!bounds&&bounds.height>0&&bounds.top>=viewport.top-1&&bounds.top+Math.min(20,bounds.height)<=viewport.bottom+1};}finally{w.markerItems=original;await w.markerTimeRequest(new CustomEvent('marker-time-request',{detail:{traceId:marker.traceId,markerId:marker.id,highlight:true}}));}})()`,
       );
       assert.deepEqual(distant.selected, [result.review.markerEntries[id]]);
       assert.equal(
@@ -234,7 +234,7 @@ export async function smokeMarkerReview(client, traffic, screenshot) {
       );
     }
     await client.evaluate(
-      `(async()=>{const w=${traffic},intake=w.markerIntake;intake.editMarker(${JSON.stringify(id)});intake.markerEditor.value='Edited native reviewer note';intake.markerEditor.dispatchEvent(new Event('input',{bubbles:true}));await intake.applyPending();await w.refreshMarkers();})()`,
+      `(async()=>{const w=${traffic},intake=w.markerIntake;await intake.editMarker(${JSON.stringify(id)});intake.markerEditor.value='Edited native reviewer note';intake.markerEditor.dispatchEvent(new Event('input',{bubbles:true}));await intake.applyPending();await w.refreshMarkers();})()`,
     );
     assert.equal(
       await client.evaluate(`${traffic}.markerReviews.find(r=>r.dirty).markers[0].note`),
@@ -277,7 +277,7 @@ export async function smokeMarkerReview(client, traffic, screenshot) {
     await client.evaluate(`${traffic}.resolveMarkerUnsaved('stay')`);
   } finally {
     await client.evaluate(
-      `(async()=>{const w=${traffic};await window.__TAURI_INTERNALS__.invoke('discard_marker_changes');w.markerIntake.discardDrafts();await w.refreshMarkers();w.markersOpen=false;w.setTimeline(false,false);})()`,
+      `(async()=>{const w=${traffic};await window.__TAURI_INTERNALS__.invoke('discard_marker_changes');w.markerIntake.discardDrafts();await w.refreshMarkers();w.markersOpen=false;await w.setTimeline(false,false);})()`,
     );
     await client.call("Emulation.clearDeviceMetricsOverride");
   }

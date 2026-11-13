@@ -1,3 +1,4 @@
+import { renderPresentation } from "../rendering.js";
 import initialState from "../initial-state.json";
 import { observable } from "@microsoft/webui-framework";
 import { invoke } from "@tauri-apps/api/core";
@@ -66,6 +67,7 @@ export class NetworkProfileSettingsPanel extends WorkspaceElement {
   @observable networkCanUse = false;
   @observable networkDirty = false;
   @observable networkEditorOpen = false;
+  private editorEpoch = 0;
   @observable networkDraft: NetworkProfileSnapshot = structuredClone(webview2);
   @observable networkValidation = "";
   @observable networkOsRoots = false;
@@ -159,12 +161,12 @@ export class NetworkProfileSettingsPanel extends WorkspaceElement {
       this.differences(s);
     }
   }
-  choose(event: Event): void {
+  async choose(event: Event): Promise<void> {
     event.stopPropagation();
     const id = (event.target as HTMLSelectElement).value;
     if (id === "create") {
       this.networkSelector.value = this.networkSelectedId;
-      this.customize(true);
+      await this.customize(true);
       return;
     }
     this.networkSelectedId = id;
@@ -174,13 +176,13 @@ export class NetworkProfileSettingsPanel extends WorkspaceElement {
   private closeMenu(): void {
     this.networkMenu.hidePopover();
   }
-  customize(copy = false): void {
+  async customize(copy = false): Promise<void> {
     this.closeMenu();
     if (!this.networkLoaded || this.networkBusy) {
       return;
     }
     if (this.networkDirty) {
-      this.openEditor();
+      await this.openEditor();
       return;
     }
     const source = this.selected();
@@ -201,7 +203,7 @@ export class NetworkProfileSettingsPanel extends WorkspaceElement {
     this.editorSource = isNew ? null : structuredClone(source);
     this.networkDirty = isNew;
     this.networkValidation = "";
-    this.openEditor();
+    await this.openEditor();
   }
   private uniqueName(preferred: string): string {
     const stem = preferred.slice(0, 70).replace(/[\uD800-\uDBFF]$/, "");
@@ -212,10 +214,22 @@ export class NetworkProfileSettingsPanel extends WorkspaceElement {
     }
     return name;
   }
-  private openEditor(): void {
+  private async openEditor(): Promise<void> {
+    const epoch = ++this.editorEpoch;
     this.networkEditorOpen = true;
     this.differences(this.networkDraft.settings);
-    this.$flushUpdates();
+    const current = await renderPresentation(this, () => [this.editorEpoch, this.networkDraft.id]);
+    if (
+      epoch !== this.editorEpoch ||
+      !current() ||
+      !this.networkEditorOpen ||
+      !this.networkSelector.getClientRects().length
+    ) {
+      if (epoch === this.editorEpoch) {
+        this.networkEditorOpen = false;
+      }
+      return;
+    }
     this.populate();
     this.networkEditor.showModal();
     (this.networkForm.elements.namedItem("name") as HTMLInputElement).focus();
@@ -291,12 +305,15 @@ export class NetworkProfileSettingsPanel extends WorkspaceElement {
   }
   closeEditor(): void {
     if (!this.networkBusy) {
-      this.networkEditor.close();
+      this.finishEditor();
     }
   }
   editorCancelled(event: Event): void {
     if (this.networkBusy) {
       event.preventDefault();
+    } else {
+      this.editorEpoch++;
+      this.networkEditorOpen = false;
     }
   }
   editorKeyboard(event: KeyboardEvent): void {
@@ -307,14 +324,21 @@ export class NetworkProfileSettingsPanel extends WorkspaceElement {
     }
   }
   editorClosed(): void {
-    this.networkEditorOpen = false;
+    if (this.networkEditor.open || this.networkEditorOpen) {
+      return;
+    }
     this.renderPreview();
     this.networkSelector.focus();
+  }
+  private finishEditor(): void {
+    this.editorEpoch++;
+    this.networkEditorOpen = false;
+    this.networkEditor.close();
   }
   discard(): void {
     this.networkDirty = false;
     this.editorSource = null;
-    this.networkEditor.close();
+    this.finishEditor();
   }
   async saveEditor(event: Event, use: boolean): Promise<void> {
     event.preventDefault();
@@ -329,7 +353,7 @@ export class NetworkProfileSettingsPanel extends WorkspaceElement {
       this.networkDirty = false;
       this.editorSource = null;
       this.networkSelectedId = profile.id;
-      this.networkEditor.close();
+      this.finishEditor();
       this.renderPreview();
     }
   }

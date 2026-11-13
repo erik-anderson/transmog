@@ -522,9 +522,9 @@ dependencies = [
 
 [[package]]
 name = "brotli"
-version = "9.0.0"
+version = "9.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8b851b75c23ca7873623d612fe49bd1989aeb03d08fb9432187eb253d3d4c6b"
+checksum = "627b7cfb0578f0eafce087a90fcd40add1231900b69e4d4de2d456260a4f5d81"
 dependencies = [
  "alloc-no-stdlib",
  "alloc-stdlib",
@@ -533,9 +533,9 @@ dependencies = [
 
 [[package]]
 name = "brotli-decompressor"
-version = "6.0.1"
+version = "6.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "941cd9bd4ddab83cb46fa5a2d428f1c857b24ac78cb876cf7beb710840934bd7"
+checksum = "75c74c9c51b9140663e196b5fb88bc94c334d7a497c8311cb759d8557874747f"
 dependencies = [
  "alloc-no-stdlib",
  "alloc-stdlib",
@@ -3011,10 +3011,11 @@ dependencies = [
 
 [[package]]
 name = "microsoft-webui"
-version = "3.0.4"
+version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ed160f67dd7d89e1c6f8350e2a4ff8446e1c10f83c7346ded4c061bc2ce2172"
+checksum = "85ed433df4cc799abb88ed29c0b46bc71b4adbe492618ed89605a23504a00ae1"
 dependencies = [
+ "brotli",
  "bytes",
  "crc32fast",
  "crossbeam-queue",
@@ -3035,9 +3036,9 @@ dependencies = [
 
 [[package]]
 name = "microsoft-webui-discovery"
-version = "3.0.4"
+version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3364f2ca51ca4dddfd4562d1ad1660abe2406f8f75e05b3f76c5f6028b16b6c"
+checksum = "59b0ab32514b2a864cb05bbae57efb22a80a2ce3ecf3c79ff09c92c30524b386"
 dependencies = [
  "anyhow",
  "expand-tilde",
@@ -3048,9 +3049,9 @@ dependencies = [
 
 [[package]]
 name = "microsoft-webui-expressions"
-version = "3.0.4"
+version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b2b12a6ba01bd50cdf2cdaa9bff4f0e88f230c2640be6fef4bfb70129e3106a"
+checksum = "19f68d0a6578aab2fcfb43ba06b5709819abebcb9ec3953a841d2ae7ad3500f1"
 dependencies = [
  "microsoft-webui-protocol",
  "microsoft-webui-state",
@@ -3060,9 +3061,9 @@ dependencies = [
 
 [[package]]
 name = "microsoft-webui-handler"
-version = "3.0.4"
+version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d6242aa510fb8887f507805a57c7190f6ccbfa47fef36e521071f99bba340a9"
+checksum = "71377700f6c20856172dacd413b904f592756611507bf08d39d02bb17fd9eaff"
 dependencies = [
  "memchr",
  "microsoft-webui-expressions",
@@ -3070,14 +3071,15 @@ dependencies = [
  "microsoft-webui-state",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "microsoft-webui-parser"
-version = "3.0.4"
+version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ae961cda8c02e0e2a709f6889d86e3153bcc6061f2158102a9fbeb8145dccb0"
+checksum = "9988d3a742fe9bd0fafc535ea84c00ef0c2678a87c77fe7e6fc1ca1c7a7efb6f"
 dependencies = [
  "html-escape",
  "microsoft-webui-protocol",
@@ -3089,9 +3091,9 @@ dependencies = [
 
 [[package]]
 name = "microsoft-webui-protocol"
-version = "3.0.4"
+version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec336b76afd0d985bd8ddebb03e69ef56e5c3e17d3c80b1ca5ed28eac892620f"
+checksum = "bcd15f6d5fc5136a3efa4ac83415c5577785caf5bc1be34d357dbeb6ea4e92c5"
 dependencies = [
  "prost",
  "serde",
@@ -3102,18 +3104,18 @@ dependencies = [
 
 [[package]]
 name = "microsoft-webui-state"
-version = "3.0.4"
+version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d0b53524d534a7a1e22c3bd31104c6539868d6cf5580043d497d8eb8eff4968"
+checksum = "50c142d2e54927ad2a6e0ebbf4ec50e6105a2647afe8216a12aebb7389829515"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "microsoft-webui-tokens"
-version = "3.0.4"
+version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "272122b4bb812cef342db078c12b6f34fef12f4f10541604832d107af9844980"
+checksum = "a0f47a881929aaa9492126421bf2dacef89e81ffd40b6ff698e907252c864e74"
 dependencies = [
  "serde_json",
  "thiserror 2.0.21",

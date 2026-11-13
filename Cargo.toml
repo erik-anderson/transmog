@@ -67,7 +67,7 @@ base64 = "0.22.1"
 boring = { version = "=5.3.0", features = ["credential"] }
 boring-sys = "=5.3.0"
 foreign-types = "=0.5.0"
-brotli = "=9.0.0"
+brotli = "=9.1.1"
 bytes = { version = "1.11.1", features = ["serde"] }
 stacker = "=0.1.25"
 swc_common = { version = "=26.0.0", features = ["sourcemap"] }

@@ -1,17 +1,24 @@
 import { WebUIElement, observable } from "@microsoft/webui-framework";
 import type { TrafficWorkspace } from "../traffic-workspace/traffic-workspace.js";
 
+/** Replacing this input publishes the controller's latest presentation state. */
+export interface CapturedPreviewState {
+  readonly controller: TrafficWorkspace;
+}
+
 /** Shared window-level surface over the existing frozen-preview controller. */
 export class CapturedPreview extends WebUIElement {
-  @observable controller: TrafficWorkspace | null = null;
+  @observable state: CapturedPreviewState | null = null;
+  private get controller(): TrafficWorkspace | null {
+    return this.state?.controller ?? null;
+  }
   previewPageDialog!: HTMLDialogElement;
   previewPageScripts!: HTMLInputElement;
   previewReportDialog!: HTMLDialogElement;
   protected hydratedCallback(): void {
-    this.controllerChanged();
+    this.stateChanged();
   }
-  controllerChanged(): void {
-    this.$flushUpdates();
+  stateChanged(): void {
     if (!this.controller || !this.previewPageDialog) {
       return;
     }

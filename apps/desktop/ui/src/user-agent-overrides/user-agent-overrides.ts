@@ -1,4 +1,5 @@
 import { DraftBaseline } from "../draft-state.js";
+import { captureFocus, captureRenderScope } from "../rendering.js";
 import { sameRuleContent } from "../automation-state.js";
 import "../draft-status/draft-status.js";
 import "../rule-activation/rule-activation.js";
@@ -96,6 +97,7 @@ export class UserAgentOverrides extends WorkspaceElement {
   private confirmResolve: ((replace: boolean) => void) | null = null;
   private undoRule: { rule: AutomationRule; nextId: string | null } | null = null;
   private loadedRevision = 0;
+  private context = 0;
 
   protected hydratedCallback(): void {
     this.ready = true;
@@ -178,6 +180,7 @@ export class UserAgentOverrides extends WorkspaceElement {
     }));
   }
   private load(rule: AutomationRule | null): void {
+    this.context++;
     this.loadedRule = rule ? structuredClone(rule) : null;
     this.loadedRevision = rule?.revision ?? 0;
     const policy = rule?.request.userAgent;
@@ -230,8 +233,12 @@ export class UserAgentOverrides extends WorkspaceElement {
     }
     this.load(null);
     this.updateDirty();
-    this.$flushUpdates();
-    this.uaNameInput.focus();
+    const focus = captureFocus(this),
+      current = captureRenderScope(this, () => [this.context, this.uaSelectedId, this.uaDirty]);
+    await this.$whenRendered();
+    if (current() && focus()) {
+      this.uaNameInput.focus();
+    }
   }
   async addFromSource(source: SelectedResponse): Promise<void> {
     if (this.uaBusy || !(await this.leaveDraft())) {
@@ -247,8 +254,12 @@ export class UserAgentOverrides extends WorkspaceElement {
       this.uaPath = "";
     }
     this.updateDirty();
-    this.$flushUpdates();
-    this.uaNameInput.focus();
+    const focus = captureFocus(this),
+      current = captureRenderScope(this, () => [this.context, this.uaSelectedId, this.uaDirty]);
+    await this.$whenRendered();
+    if (current() && focus()) {
+      this.uaNameInput.focus();
+    }
   }
   private async leaveDraft(): Promise<boolean> {
     if (this.uaBusy || this.leaveResolve) {
@@ -532,9 +543,19 @@ export class UserAgentOverrides extends WorkspaceElement {
     } finally {
       if (operation === this.operation) {
         this.uaBusy = false;
-        this.$flushUpdates();
+        const focus = captureFocus(this),
+          context = this.context;
+        await this.$whenRendered();
         const active = (this.getRootNode() as ShadowRoot).activeElement;
-        if (this.uaSaveButton?.getClientRects().length && active && this.contains(active)) {
+        if (
+          this.isConnected &&
+          operation === this.operation &&
+          context === this.context &&
+          focus() &&
+          this.uaSaveButton?.getClientRects().length &&
+          active &&
+          this.contains(active)
+        ) {
           this.uaSaveButton.focus({ preventScroll: true });
         }
       }

@@ -367,6 +367,32 @@ export function onFailed() { return pass(); }
   assert.deepEqual(await scripts.evaluate((editor) => editor.scriptTestHeaders.getHeaders()), [
     { name: "X", value: "a: b" },
   ]);
+  assert.equal(
+    await scripts.evaluate(async (editor) => {
+      const headers = editor.scriptTestHeaders;
+      const replace = headers.replaceValue;
+      let release;
+      const rendered = new Promise((resolve) => (release = resolve));
+      headers.replaceValue = function (value) {
+        const completion = replace.call(this, value);
+        return rendered.then(() => completion);
+      };
+      const pending = editor.useSelectedTestRequest();
+      try {
+        editor.scriptTestBody.value = "Newer sandbox body";
+        editor.markTestChanged();
+        release();
+        await pending;
+        return editor.scriptTestBody.value;
+      } finally {
+        release();
+        await pending;
+        headers.replaceValue = replace;
+      }
+    }),
+    "Newer sandbox body",
+    "Completing a request-header render must preserve newer sandbox body input",
+  );
   await scripts.evaluate((editor) => {
     const before = globalThis.__scriptInputBeforeHeaderReload;
     editor.selection = before.selection;

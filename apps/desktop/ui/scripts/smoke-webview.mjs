@@ -121,9 +121,9 @@ try {
         globalThis.__transmogCspViolations.push({
           blockedURI: event.blockedURI,
           directive: event.effectiveDirective
-        });
       });
-    `,
+      });
+  `,
   });
 
   const loaded = waitForEvent("Page.loadEventFired", 10_000);
@@ -134,6 +134,10 @@ try {
     (async () => {
       await customElements.whenDefined('app-shell');
       const element = document.querySelector('app-shell');
+      const waitFor=async(predicate,message)=>{
+        const end=performance.now()+10_000;
+      while(!predicate()){if(performance.now()>=end)throw new Error(message+': '+element.automation?.automationText);await new Promise(resolve=>setTimeout(resolve,25));}
+      };
       const button = [...(element?.shadowRoot?.querySelectorAll('#proxy-status-tools button') ?? [])]
         .find((candidate) => candidate.textContent?.trim() === 'Refresh status');
       const output = element?.shadowRoot?.querySelector('.global-diagnostics');
@@ -149,12 +153,12 @@ try {
       while (!sessionOutput.textContent?.includes('Start the proxy to capture traffic.')) {
         if (performance.now() >= initializationDeadline) {
           throw new Error('automatic live-watch initialization timed out with: ' + sessionOutput.textContent);
-        }
+      }
         await new Promise((resolve) => setTimeout(resolve, 25));
       }
       element.shadowRoot.querySelector('button[popovertarget="proxy-status-tools"]')?.click();
       element.diagnosticText = 'Checking status…';
-      element.$flushUpdates();
+      await element.$whenRendered();
       button.click();
       const deadline = performance.now() + 10_000;
       while (output.textContent !== 'Proxy stopped') {
@@ -164,13 +168,13 @@ try {
       const statusText = output.textContent;
       const trafficWorkspace = element.shadowRoot.querySelector('traffic-workspace');
       trafficWorkspace.sessionText = 'Submitting session query…';
-      trafficWorkspace.$flushUpdates();
+      await trafficWorkspace.$whenRendered();
       filter.requestSubmit();
       const submissionDeadline = performance.now() + 10_000;
       while (!sessionOutput.textContent?.includes('Start the proxy to capture traffic.')) {
         if (performance.now() >= submissionDeadline) {
           throw new Error('WebUI form submission timed out with: ' + sessionOutput.textContent);
-        }
+      }
         await new Promise((resolve) => setTimeout(resolve, 25));
       }
       const settingsLink = element.shadowRoot.querySelector('a[data-view="settings"]');
@@ -179,11 +183,11 @@ try {
         throw new Error('application navigation was not found');
       }
       settingsLink.click();
-      await Promise.resolve();
+      await element.$whenRendered();
       const settingsVisible = !element.shadowRoot.querySelector('#settings').hidden
         && element.shadowRoot.querySelector('#traffic').hidden;
       trafficLink.click();
-      await Promise.resolve();
+      await element.$whenRendered();
       const rootLayout = {
         documentClientHeight: document.documentElement.clientHeight,
         documentScrollHeight: document.documentElement.scrollHeight,
@@ -204,7 +208,7 @@ try {
       }
       element.shadowRoot.querySelector('a[data-view="automation"]').click();
       const automationDeadline = performance.now() + 10_000;
-      while (element.shadowRoot.querySelector('#automation').hidden) {
+    while (!element.shadowRoot.querySelector('#automation') || element.shadowRoot.querySelector('#automation').hidden) {
         if (performance.now() >= automationDeadline) throw new Error('lazy Automation workspace timed out');
         await new Promise((resolve) => setTimeout(resolve, 25));
       }
@@ -216,7 +220,7 @@ try {
       automation.querySelector('[popovertarget="rule-kind-menu"]').click();
       await Promise.resolve();
       scratchButton?.click();
-      await Promise.resolve();
+    await waitFor(()=>automation.querySelector('.auto-response-editor')?.hidden===false,'Scratch response editor did not open');
       const autoResponseEditor = automation?.querySelector('.auto-response-editor');
       const autoResponseMethod = autoResponseEditor?.querySelector('select[name="method"]');
       const requestHeaders = autoResponseEditor?.querySelector('textarea[name="requestHeaders"]')?.closest('label');
@@ -227,7 +231,7 @@ try {
       if (autoResponseMethod instanceof HTMLSelectElement) {
         autoResponseMethod.value = 'POST';
         autoResponseMethod.dispatchEvent(new Event('change', { bubbles: true }));
-        await Promise.resolve();
+      await Promise.resolve();
       }
       const postHeaderFilterVisible = requestHeaders instanceof HTMLElement && !requestHeaders.hidden;
       const cancelEditor = [...(autoResponseEditor?.querySelectorAll('button') ?? [])]
@@ -235,10 +239,6 @@ try {
       cancelEditor?.click();
       await Promise.resolve();
       const workspace=element.shadowRoot.querySelector('automation-workspace');
-      const waitFor=async(predicate,message)=>{
-        const end=performance.now()+10_000;
-        while(!predicate()){if(performance.now()>=end)throw new Error(message+': '+workspace.automationText);await new Promise(resolve=>setTimeout(resolve,25));}
-      };
       const unsavedDialog=workspace.unsavedDialog;
       if(!(unsavedDialog instanceof HTMLDialogElement))throw new Error('Automation unsaved-changes dialog was not initialized');
       await waitFor(()=>unsavedDialog.matches(':modal'),'Unsaved rule dialog did not open');
@@ -355,13 +355,13 @@ try {
               && icon.getAttribute('src') === '/transmog-icon.svg'
               && icon.complete
               && icon.naturalWidth > 0;
-          })()
+    })()
         },
         themePreference: element.dataset.theme,
         startupMs: performance.getEntriesByType('navigation')[0]?.domContentLoadedEventEnd ?? 0
       };
     })()
-  `);
+`);
 
   assert(result.text === "Proxy stopped", `typed status command failed: ${result.text}`);
   assert(
@@ -482,7 +482,7 @@ try {
       const bootstrap = await window.__TAURI_INTERNALS__.invoke('desktop_bootstrap');
       if (!bootstrap.caKeyError?.includes('DPAPI') || !bootstrap.caKeyError.includes('unlikely to be recoverable')) throw new Error('The native DPAPI error did not explain recovery');
       await settings.setupCa();
-      shell.$flushUpdates();settings.$flushUpdates();
+      await shell.$whenRendered();await settings.$whenRendered();
       const notice = shell.shadowRoot.querySelector('.notice');
       const action = [...notice.querySelectorAll('button')].find(button=>button.textContent.trim()==='Reset certificate and set up again');
       if (!notice.textContent.includes('unlikely to be recoverable') || !action || settings.certificateReady || !settings.certificateRecovery) throw new Error('The inaccessible root did not offer explicit reset');
@@ -519,13 +519,13 @@ try {
     const before = await window.__TAURI_INTERNALS__.invoke('app_status');
     try {
       settings.acceptAppStatus({...before, lifecycle: 'draining', summary: 'Finishing 2 active requests'});
-      settings.$flushUpdates(); shell.$flushUpdates();
-      const toggle = shell.shadowRoot.querySelector('proxy-toggle'); toggle.$flushUpdates();
+      await settings.$whenRendered(); await shell.$whenRendered();
+      const toggle = shell.shadowRoot.querySelector('proxy-toggle'); await toggle.$whenRendered();
       const button = toggle.querySelector('button');
       if (button.disabled || button.textContent.trim() !== 'Start proxy') throw new Error('Cannot resume from drain');
       if (!shell.shadowRoot.querySelector('.listener-status').textContent.includes('Finishing 2 active requests')) throw new Error('Drain progress is missing');
       return {resumeEnabled: true, activeWorkExplained: true};
-    } finally {settings.acceptAppStatus(before); settings.$flushUpdates(); shell.$flushUpdates();}
+    } finally {settings.acceptAppStatus(before); await settings.$whenRendered(); await shell.$whenRendered();}
   })()`);
 
   result.stoppedProxyBreakpoints = await evaluate(`(async () => {
@@ -535,21 +535,21 @@ try {
     if (before.lifecycle !== 'stopped') throw new Error('breakpoint regression requires a stopped proxy');
     root.querySelector('a[data-view="breakpoints"]').click();
     await customElements.whenDefined('breakpoint-workspace');
+    const readyDeadline = performance.now() + 10_000;
+  while (!root.querySelector('#breakpoints') || root.querySelector('#breakpoints').hidden || root.querySelector('breakpoint-workspace').refreshPending) {
+      if (performance.now() >= readyDeadline) throw new Error('breakpoint workspace did not become ready');
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
     const workspace = root.querySelector('breakpoint-workspace');
     const waitForState = async (enabled) => {
       const deadline = performance.now() + 10_000;
       while (workspace.controllerEnabled !== enabled || workspace.decisionBusy) {
         if (workspace.breakpointError) throw new Error(workspace.breakpointError);
         if (performance.now() >= deadline) throw new Error('stopped-proxy breakpoint toggle timed out');
-        await new Promise((resolve) => setTimeout(resolve, 25));
-      }
-      workspace.$flushUpdates();
-    };
-    const readyDeadline = performance.now() + 10_000;
-    while (root.querySelector('#breakpoints').hidden || workspace.refreshPending) {
-      if (performance.now() >= readyDeadline) throw new Error('breakpoint workspace did not become ready');
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
+      await workspace.$whenRendered();
+    };
     for (let cycle = 0; cycle < 2; cycle += 1) {
       workspace.querySelector('.workspace-header .actions button').click();
       await waitForState(true);
@@ -569,6 +569,11 @@ try {
   result.recordingDefaults = await evaluate(`(async()=>{
     const shell=document.querySelector('app-shell');shell.shadowRoot.querySelector('a[data-view="captures"]').click();
     await customElements.whenDefined('capture-workspace');
+  const mountDeadline=performance.now()+10_000;
+  while(!shell.shadowRoot.querySelector('capture-workspace')?.captureForm){
+    if(performance.now()>=mountDeadline)throw new Error('Capture workspace did not mount');
+    await new Promise(resolve=>setTimeout(resolve,25));
+  }
     const workspace=shell.shadowRoot.querySelector('capture-workspace');await workspace.loadRecordingDefaults();
     const preference=await window.__TAURI_INTERNALS__.invoke('product_state');
     const input=workspace.captureForm.elements.namedItem('bodies');
@@ -576,7 +581,7 @@ try {
     if(workspace.captureForm.elements.namedItem('quotaAmount')!==null)throw new Error('Recording still exposes an implicit quota');
     const before=input.value;const next=before==='bodies'?'headers':'bodies';const touched=workspace.bodyChoiceTouched;
     try {input.value=next;input.dispatchEvent(new Event('change',{bubbles:true}));await workspace.loadRecordingDefaults();if(input.value!==next)throw new Error('Recording defaults overwrote a draft');}
-    finally {input.value=before;workspace.recordingContent=before;workspace.bodyChoiceTouched=touched;workspace.$flushUpdates();}
+    finally {input.value=before;workspace.recordingContent=before;workspace.bodyChoiceTouched=touched;await workspace.$whenRendered();}
     shell.shadowRoot.querySelector('a[data-view="traffic"]').click();
     return {savedDefault:true,draftPreserved:true};
   })()`);
@@ -590,20 +595,20 @@ try {
     }
     const workspace=root.querySelector('capture-workspace');
     const task=name=>Array.from(workspace.querySelectorAll('.capture-tabs button')).find(button=>button.textContent===name);
-    task('Convert').click();workspace.$flushUpdates();
+    task('Convert').click();await workspace.$whenRendered();
     const source=workspace.exportForm.elements.namedItem('source'),destination=workspace.exportForm.elements.namedItem('destination');
     if(source.value||destination.value)throw new Error('Conversion starts with a fictional path');
     workspace.exportForm.querySelector('button[type="submit"]').click();
     if(!source.validity.valueMissing||root.activeElement!==source||workspace.captureBusy)throw new Error('Empty conversion was not blocked at the source: '+JSON.stringify({missing:source.validity.valueMissing,focused:root.activeElement===source,busy:workspace.captureBusy,visible:source.getClientRects().length>0}));
-    task('Export').click();workspace.$flushUpdates();
+    task('Export').click();await workspace.$whenRendered();
     if(source.getClientRects().length)throw new Error('Export still displays file conversion');
     const open=Array.from(workspace.querySelectorAll('button')).find(button=>button.textContent==='Open Traffic Files');
     const previousError=workspace.captureError;
     try {
-      workspace.captureError='Capture status unavailable: native focus probe';workspace.$flushUpdates();
+      workspace.captureError='Capture status unavailable: native focus probe';await workspace.$whenRendered();
       workspace.querySelector('[aria-label="Dismiss capture error"]').click();
       if(root.activeElement!==open)throw new Error('Dismissing an Export error left focus hidden');
-    } finally {workspace.captureError=previousError;workspace.$flushUpdates();}
+    } finally {workspace.captureError=previousError;await workspace.$whenRendered();}
     open.click();
     const deadline=Date.now()+5000;
     while(shell.activeView!=='traffic'||!shell.traffic.filesMenu.matches(':popover-open')){
@@ -625,26 +630,26 @@ try {
       const shell=document.querySelector('app-shell');
       shell.shadowRoot.querySelector('a[data-view="settings"]').click();
       const settings=shell.shadowRoot.querySelector('settings-workspace');
-      settings.showSettingsSection('preferences');settings.$flushUpdates();
+      settings.showSettingsSection('preferences');await settings.$whenRendered();
       const entryChoice=settings.settingsForm.elements.namedItem('limitEntries');
       const entryMaximum=settings.settingsForm.elements.namedItem('maxEntries');
       const originalEntryChoice=entryChoice.checked;
-      entryChoice.checked=true;entryChoice.dispatchEvent(new Event('change',{bubbles:true}));settings.$flushUpdates();
+      entryChoice.checked=true;entryChoice.dispatchEvent(new Event('change',{bubbles:true}));await settings.$whenRendered();
       entryMaximum.scrollIntoView({block:'center'});entryMaximum.focus();
       const entryRect=entryMaximum.getBoundingClientRect();
       if(entryMaximum.disabled||settings.getRootNode().activeElement!==entryMaximum||settings.getRootNode().elementFromPoint(entryRect.x+entryRect.width/2,entryRect.y+entryRect.height/2)!==entryMaximum)throw new Error('Live-entry control was not reachable');
-      entryChoice.checked=originalEntryChoice;entryChoice.dispatchEvent(new Event('change',{bubbles:true}));settings.$flushUpdates();
+      entryChoice.checked=originalEntryChoice;entryChoice.dispatchEvent(new Event('change',{bubbles:true}));await settings.$whenRendered();
       const select=settings.settingsForm.elements.namedItem('bufferMode');
       const size=settings.settingsForm.elements.namedItem('bufferSize');
       const original=select.value;
-      select.value='custom';select.dispatchEvent(new Event('change',{bubbles:true}));settings.$flushUpdates();
+      select.value='custom';select.dispatchEvent(new Event('change',{bubbles:true}));await settings.$whenRendered();
       size.scrollIntoView({block:'center'});
       const rect=size.getBoundingClientRect();
       const reachable=settings.getRootNode().elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2)===size;
       const status=await window.__TAURI_INTERNALS__.invoke('buffer_status');
       if(!reachable||status.storage!=='memory'||status.maxBytes!==Math.floor(status.installedRam/2))throw new Error('Memory buffer configuration or reachability failed');
       size.focus();if(settings.getRootNode().activeElement!==size)throw new Error('Buffer input focus failed');
-      select.value=original;select.dispatchEvent(new Event('change',{bubbles:true}));settings.$flushUpdates();
+      select.value=original;select.dispatchEvent(new Event('change',{bubbles:true}));await settings.$whenRendered();
       await settings.loadSettings();
       settings.querySelector('.settings-content').scrollTop=0;
       return {reachable,storage:status.storage,maxBytes:status.maxBytes,installedRam:status.installedRam};
@@ -660,13 +665,13 @@ try {
     await evaluate(
       `document.querySelector('app-shell').shadowRoot.querySelector('a[data-view="traffic"]').click()`,
     );
-    result.passwordControls = await evaluate(`(() => {
+    result.passwordControls = await evaluate(`(async () => {
       const shell=document.querySelector('app-shell');const traffic=shell.traffic;
       traffic.showSaveTrace();globalThis.__passwordProbe=traffic.promptTracePassword('Encrypt saved trace',true);
-      shell.$flushUpdates();
+      await shell.$whenRendered();
       const password=shell.passwordForm.elements.namedItem('password');
       const confirm=shell.passwordForm.elements.namedItem('confirmPassword');
-      password.value='test-password';confirm.value='different';shell.passwordForm.requestSubmit();shell.$flushUpdates();
+      password.value='test-password';confirm.value='different';shell.passwordForm.requestSubmit();await shell.$whenRendered();
       if(shell.passwordError!=='The passwords do not match.'||password.type!=='password')throw new Error('Password masking or confirmation failed '+JSON.stringify({error:shell.passwordError,type:password.type,confirmDisabled:confirm.disabled,mode:shell.passwordConfirm}));
       const rect=shell.passwordDialog.getBoundingClientRect();
       const reachable=[...shell.passwordForm.querySelectorAll('input,button')].filter(element=>!element.disabled&&element.getBoundingClientRect().width).every(element=>{const box=element.getBoundingClientRect();return box.top>=0&&box.bottom<=innerHeight;});
@@ -752,7 +757,7 @@ try {
       windowsVirtualKeyCode: 27,
     });
     await evaluate(
-      `(async()=>{await globalThis.__importFailureProbe;delete globalThis.__importFailureProbe;const shell=document.querySelector('app-shell'),traffic=shell.traffic;if(shell.errorDialog.open||traffic.filesMenuButton.getRootNode().activeElement!==traffic.filesMenuButton)throw new Error('Import dialog did not close and restore focus');const dismiss=traffic.querySelector('[aria-label="Dismiss import message"]');dismiss.click();traffic.$flushUpdates();if(traffic.importStatus)throw new Error('Import message was not dismissible');})()`,
+      `(async()=>{await globalThis.__importFailureProbe;delete globalThis.__importFailureProbe;const shell=document.querySelector('app-shell'),traffic=shell.traffic;if(shell.errorDialog.open||traffic.filesMenuButton.getRootNode().activeElement!==traffic.filesMenuButton)throw new Error('Import dialog did not close and restore focus');const dismiss=traffic.querySelector('[aria-label="Dismiss import message"]');dismiss.click();await traffic.$whenRendered();if(traffic.importStatus)throw new Error('Import message was not dismissible');})()`,
     );
     await call("Emulation.clearDeviceMetricsOverride");
   }
@@ -881,6 +886,14 @@ try {
   await call("Emulation.clearDeviceMetricsOverride");
   await call("Emulation.setEmulatedMedia", { media: "screen", features: [] });
 
+  const heapSamples = [];
+  const sampleHeap = async (phase) => {
+    const metrics = await call("Performance.getMetrics"),
+      bytes = metrics.metrics.find((metric) => metric.name === "JSHeapUsedSize")?.value;
+    heapSamples.push({ phase, bytes: bytes ?? null });
+    return bytes ?? Number.POSITIVE_INFINITY;
+  };
+  await sampleHeap("Before status soak");
   const soakStartedAt = performance.now();
   const reportSoakProgress = () => {
     const elapsed = (performance.now() - soakStartedAt) / 60_000;
@@ -914,25 +927,56 @@ try {
       `[${new Date().toISOString()}] WebView soak duration complete: ${((performance.now() - soakStartedAt) / 60_000).toFixed(1)} min elapsed.\n`,
     );
   }
+  // Bound the status workload before unrelated native inventories and editor
+  // probes change the fixture footprint. The final warmed-workload gate in
+  // smoke-desktop-memory.mjs also runs after those probes, with its 64 MiB cap.
+  const heap = await sampleHeap("After status soak"),
+    heapLimitMiB = 104,
+    heapLimitBytes = heapLimitMiB * 1024 * 1024;
+  if (heap >= heapLimitBytes) {
+    // Collection adds diagnostics; the original raw sample determines the result.
+    const collected = await call("HeapProfiler.collectGarbage")
+      .then(() => call("Performance.getMetrics"))
+      .catch(() => null);
+    const retained =
+      collected?.metrics.find((metric) => metric.name === "JSHeapUsedSize")?.value ?? null;
+    process.stderr.write(
+      `Heap failure context: ${JSON.stringify({ rawHeapBytes: heap, afterCollectionBytes: retained, samples: heapSamples })}\n`,
+    );
+  }
+  assert(
+    heap < heapLimitBytes,
+    `bounded status soak exceeded ${heapLimitMiB} MiB JS heap: ${heap}`,
+  );
+  result.soak = { ...soak, minutes: soakMinutes, finalHeapBytes: heap, heapLimitBytes };
   result.networkSettings = await smokeNetworkSettings(call, evaluate, screenshotPath);
+  await sampleHeap("Network settings");
   result.processInspection = await smokeProcessInspection(call, evaluate, screenshotPath);
+  await sampleHeap("Process inspection");
   result.scriptHelp = await smokeScriptHelp(call, evaluate, screenshotPath);
+  await sampleHeap("Script help");
   result.mcp = await smokeMcp(call, evaluate, screenshotPath);
   result.extensions = await smokeExtensions(call, evaluate, screenshotPath, visualizerTracePath);
+  await sampleHeap("Extensions");
   result.about = await smokeAbout(call, evaluate, screenshotPath);
   result.buildInfo = await smokeBuildInfo(call, evaluate, screenshotPath);
   result.autoResponseFiles = await smokeAutoResponseFiles(call, evaluate, screenshotPath);
   result.autoResponseDragging = await smokeAutoResponseDragging(call, evaluate, screenshotPath);
+  await sampleHeap("Response files and dragging");
   result.loopback = await smokeLoopback(call, evaluate, screenshotPath);
+  await sampleHeap("Loopback inventory");
   result.userAgent = await smokeUserAgent(call, evaluate, screenshotPath);
   result.streams = await smokeStreams(call, evaluate, screenshotPath);
+  await sampleHeap("User agent and streams");
   result.automationEditing = await smokeAutomationEditing(
     call,
     evaluate,
     screenshotPath,
     waitForEvent,
   );
+  await sampleHeap("Automation editing");
   result.bodyEditor = await smokeBodyEditor(call, evaluate, screenshotPath);
+  await sampleHeap("Body editor");
   result.traceExportDialog = await evaluate(`(async()=>{
     const workspace=document.querySelector('app-shell').traffic,dialog=workspace.saveTraceDialog;
     const wait=async(condition)=>{const deadline=Date.now()+10000;while(!condition()){if(Date.now()>deadline)throw new Error('Native export dialog lifecycle timed out');await new Promise(resolve=>setTimeout(resolve,25));}};
@@ -948,28 +992,7 @@ try {
       return {reopenKeepsReview:true,reopenKeepsFocus:true,closeClearsReview:true};
     } finally {if(dialog.open)workspace.closeSaveTrace();}
   })()`);
-  const metrics = await call("Performance.getMetrics");
-  const heap =
-    metrics.metrics.find((metric) => metric.name === "JSHeapUsedSize")?.value ??
-    Number.POSITIVE_INFINITY;
-  const heapLimitMiB = 104;
-  const heapLimitBytes = heapLimitMiB * 1024 * 1024;
-  if (heap >= heapLimitBytes) {
-    // Collection adds diagnostics; the original raw sample determines the result.
-    const collected = await call("HeapProfiler.collectGarbage")
-      .then(() => call("Performance.getMetrics"))
-      .catch(() => null);
-    const retained =
-      collected?.metrics.find((metric) => metric.name === "JSHeapUsedSize")?.value ?? null;
-    process.stderr.write(
-      `Heap failure context: ${JSON.stringify({ rawHeapBytes: heap, afterCollectionBytes: retained })}\n`,
-    );
-  }
-  assert(
-    heap < heapLimitBytes,
-    `bounded status soak exceeded ${heapLimitMiB} MiB JS heap: ${heap}`,
-  );
-  result.soak = { ...soak, minutes: soakMinutes, finalHeapBytes: heap, heapLimitBytes };
+  result.memory = { finalHeapBytes: await sampleHeap("After functional checks"), heapSamples };
   assert(browserErrors.length === 0, `browser errors: ${JSON.stringify(browserErrors)}`);
 
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

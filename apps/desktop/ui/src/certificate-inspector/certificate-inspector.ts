@@ -1,3 +1,4 @@
+import { captureFocus, captureRenderScope } from "../rendering.js";
 import { WebUIElement, attr, observable } from "@microsoft/webui-framework";
 import { invoke } from "@tauri-apps/api/core";
 import { describeError } from "../utilities.js";
@@ -227,9 +228,14 @@ export class CertificateInspector extends WebUIElement {
     this.certificateHasBytes = false;
     this.certificateTab = "details";
   }
-  showTab(tab: string): void {
+  async showTab(tab: string): Promise<void> {
+    const focus = captureFocus(this);
     this.certificateTab = tab;
-    this.$flushUpdates();
+    const current = captureRenderScope(this, () => [this.generation, this.certificateTab]);
+    await this.$whenRendered();
+    if (!current() || !focus()) {
+      return;
+    }
     this.certificateRepresentation.scrollIntoView({ block: "nearest" });
   }
   async copyPem(): Promise<void> {

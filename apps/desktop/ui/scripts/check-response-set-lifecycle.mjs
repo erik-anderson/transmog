@@ -120,6 +120,20 @@ export async function checkResponseSetLifecycle(page, root) {
   };
   const stateText = () => lifecycle.locator(".set-live-controls > span").textContent();
   const baseline = await status();
+  for (const action of ["versions", "confirm", "leave"]) {
+    assert.equal(
+      await lifecycle.evaluate(async (control, action) => {
+        const opening = action === "confirm" ? control.ask("delete-set") : control.showVersions();
+        if (action === "confirm") await control.cancelConfirm();
+        else if (action === "leave") control.leave();
+        else control.closeVersions();
+        await opening;
+        return control.versionsDialog.open || control.confirmDialog.open;
+      }, action),
+      false,
+      "Cancelled lifecycle dialogs must remain closed after rendering",
+    );
+  }
   assert.equal(await stateText(), "Not applied to live traffic");
   assert.equal(
     await lifecycle.getByText("Saved responses are paused globally.", { exact: true }).isVisible(),
@@ -180,6 +194,16 @@ export async function checkResponseSetLifecycle(page, root) {
   await settled();
   assert.equal((await status()).responseSets[0].versions[0].name, "Known good checkout");
   assert.equal((await status()).responseSets[0].notes, "A saved debugging task");
+  assert.equal(
+    await lifecycle.evaluate(async (control) => {
+      const opening = control.viewVersion(control.owner().versions[0].id);
+      control.closeVersionView();
+      await opening;
+      return control.versionViewDialog.open;
+    }),
+    false,
+    "A cancelled version inspection must remain closed after rendering",
+  );
   await versions.getByRole("button", { name: "View version", exact: true }).click();
   const view = lifecycle.locator('[aria-labelledby="set-version-view-title"]');
   await view.waitFor();

@@ -393,6 +393,44 @@ export async function checkFormatConverter(page, root) {
     "Dismissing a save failure must restore the output editor",
   );
   assert.equal(await panel.isVisible(), true);
+  // Escape while the failure message is rendering must cancel its pending modal.
+  await page.evaluate(() => {
+    const host = document.querySelector("app-shell").shadowRoot.querySelector("converter-host");
+    const original = host.$whenRendered;
+    host.$whenRendered = async () => {
+      await original.call(host);
+      await new Promise((resolve) => {
+        globalThis.__workspaceFixture.finishConverterSaveRender = resolve;
+      });
+    };
+    globalThis.__workspaceFixture.restoreConverterRender = () => {
+      host.$whenRendered = original;
+    };
+  });
+  await host.getByRole("button", { name: "Save output…", exact: true }).click();
+  await page.waitForFunction(() => globalThis.__workspaceFixture.finishConverterSaveRender);
+  await page.keyboard.press("Escape");
+  await filter.focus();
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.restoreConverterRender();
+    globalThis.__workspaceFixture.finishConverterSaveRender();
+  });
+  await page.waitForFunction(
+    () =>
+      !document.querySelector("app-shell").shadowRoot.querySelector("converter-host")
+        .converterSaving,
+  );
+  assert.equal(
+    await host.getByRole("dialog", { name: "Output could not be saved", exact: true }).isVisible(),
+    false,
+    "A dismissed converter reopened its late save error",
+  );
+  assert.equal(
+    await filter.evaluate((node) => node.getRootNode().activeElement === node),
+    true,
+    "A late save error stole newer focus",
+  );
+  await trigger.click();
   await page.evaluate(() => {
     globalThis.__workspaceFixture.converterSaveError = false;
   });

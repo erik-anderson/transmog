@@ -8,7 +8,7 @@ export async function smokeTrafficPerformance(client, screenshot) {
     const stats=values=>{values.sort((a,b)=>a-b);return {p50:values[Math.floor(values.length*.5)],p95:values[Math.floor(values.length*.95)]};};
     const render=[],refresh=[],queries=[],api=window.__TAURI_INTERNALS__;
     for(let sample=0;sample<30;sample++){
-      const began=performance.now();for(let n=0;n<30;n++)t.renderViewport();
+      const began=performance.now();for(let n=0;n<30;n++)await t.renderViewport();
       if(sample>=5)render.push((performance.now()-began)/30);
       await new Promise(resolve=>setTimeout(resolve,0));
     }

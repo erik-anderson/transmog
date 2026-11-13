@@ -1,3 +1,4 @@
+import { captureFocus, captureRenderScope } from "../rendering.js";
 import { attr, observable } from "@microsoft/webui-framework";
 import { invoke } from "@tauri-apps/api/core";
 import { WorkspaceElement } from "../workspace-element.js";
@@ -183,14 +184,24 @@ export class IncidentIntake extends WorkspaceElement {
       this.$emit("marker-time-request", { traceId: this.traceId, markerId: id });
     }
   }
-  editMarker(id: string): void {
+  async editMarker(id: string): Promise<void> {
+    const focus = captureFocus(this);
     this.selectedMarkerId = id;
     this.editingMarkerId = id;
     this.markerDraft =
       this.drafts.get(this.traceId + ":" + id) ??
       this.intakeMarkers.find((m) => m.id === id)?.note ??
       "";
-    this.$flushUpdates();
+    const current = captureRenderScope(this, () => [
+      this.traceId,
+      this.revision,
+      this.editingMarkerId,
+      this.markerDraft,
+    ]);
+    await this.$whenRendered();
+    if (!current() || !focus()) {
+      return;
+    }
     this.markerEditor.value = this.markerDraft;
     this.markerEditor.focus();
   }

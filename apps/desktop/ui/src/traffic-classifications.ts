@@ -29,7 +29,7 @@ export class TrafficClassifications {
   private pending = new Set<string>();
   constructor(
     private selected: () => string[],
-    private columnsChanged: () => void,
+    private columnsChanged: () => void | Promise<void>,
     private rowsChanged: () => void,
   ) {}
   get columns(): ExtensionTrafficColumn[] {
@@ -125,11 +125,11 @@ export class TrafficClassifications {
       this.setChoices(choices);
       this.catalogError = "";
       this.rowError = "";
-      this.columnsChanged();
+      await this.columnsChanged();
     } catch {
       if (this.connected && generation === this.catalogGeneration) {
         this.catalogError = "Extension columns could not be loaded. Retry to check for changes.";
-        this.columnsChanged();
+        await this.columnsChanged();
       }
     }
   }

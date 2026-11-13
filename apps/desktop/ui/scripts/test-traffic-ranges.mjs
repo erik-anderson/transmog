@@ -9,9 +9,10 @@ const output = await build({
   format: "esm",
   write: false,
 });
-const { decimalToBase, localDateTime, localToMillis, inclusiveRange } = await import(
-  "data:text/javascript;base64," + Buffer.from(output.outputFiles[0].text).toString("base64")
-);
+const { decimalToBase, localDateTime, localDateTimeInput, localToMillis, inclusiveRange } =
+  await import(
+    "data:text/javascript;base64," + Buffer.from(output.outputFiles[0].text).toString("base64")
+  );
 test("unit conversion is exact and preserves the entire unsigned range", () => {
   assert.equal(decimalToBase("1.001", "s"), "1001");
   assert.equal(decimalToBase("0.5", "KiB"), "512");
@@ -48,6 +49,15 @@ test("local dates roundtrip exact milliseconds, leap dates and DST boundaries", 
     assert.equal(localToMillis("2026-11-01T01:30"), String(Date.UTC(2026, 10, 1, 8, 30)));
     const later = String(Date.UTC(2026, 10, 1, 9, 30)),
       text = localDateTime(later);
+    assert.equal(localDateTimeInput(later), "2026-11-01T01:30");
+    assert.equal(
+      localDateTimeInput(String(Date.UTC(2026, 10, 1, 9, 30, 12))),
+      "2026-11-01T01:30:12",
+    );
+    assert.equal(
+      localDateTimeInput(String(Date.UTC(2026, 10, 1, 9, 30, 0, 120))),
+      "2026-11-01T01:30:00.12",
+    );
     assert.equal(
       inclusiveRange("started-at", text, "", "1", { from: { text, value: later } })[0].value,
       later,

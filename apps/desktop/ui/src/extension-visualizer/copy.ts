@@ -83,7 +83,7 @@ export async function visualizerCopyTree(
   id: string,
   initial: VisualizerView,
   current: () => boolean,
-  expanded: (view: VisualizerView) => void,
+  expanded: (view: VisualizerView) => void | Promise<void>,
 ): Promise<string> {
   let view = initial,
     expansions = 0;
@@ -156,7 +156,7 @@ export async function visualizerCopyTree(
     // Expansion tokens may be single-use. Retain materialized data while keeping the
     // existing expansion set, selection, view mode and scroll position unchanged.
     if (changed && current()) {
-      expanded(view);
+      await expanded(view);
     }
   }
 }

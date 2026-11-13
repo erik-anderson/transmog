@@ -1,4 +1,5 @@
 import { WebUIElement, attr, observable } from "@microsoft/webui-framework";
+import { captureFocus, captureRenderScope } from "../rendering.js";
 import type { ConverterText } from "../converter-selection.js";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -78,23 +79,36 @@ export class AuthInspector extends WebUIElement {
   private view: AuthView | null = null;
   private returnPosition: { key: string; interpretation: string; top: number } | null = null;
   private relatedOriginTop = 0;
+  private positionRevision = 0;
   relatedButton!: HTMLButtonElement;
-  closeRelated(): void {
+  async closeRelated(): Promise<void> {
+    const focus = captureFocus(this),
+      top = this.relatedOriginTop;
     this.authRelated = null;
-    this.$flushUpdates();
+    const current = captureRenderScope(this, () => [
+      this.revision,
+      this.view,
+      this.authRelated,
+      this.active,
+    ]);
+    await this.$whenRendered();
+    if (!current() || !focus()) {
+      return;
+    }
     const scroll = this.querySelector(".auth-scroll");
     if (scroll) {
-      scroll.scrollTop = this.relatedOriginTop;
+      scroll.scrollTop = top;
     }
     this.relatedButton.focus({ preventScroll: true });
   }
-  restorePosition(top: number): void {
+  async restorePosition(top: number): Promise<void> {
+    this.positionRevision++;
     if (this.selection) {
       this.returnPosition = { key: this.selection.key, interpretation: this.interpretation, top };
-      this.applyPosition();
+      await this.applyPosition();
     }
   }
-  private applyPosition(): void {
+  private async applyPosition(): Promise<void> {
     const position = this.returnPosition;
     if (!position || this.authBusy || !this.view) {
       return;
@@ -103,7 +117,17 @@ export class AuthInspector extends WebUIElement {
     if (position.key !== this.selection?.key || position.interpretation !== this.interpretation) {
       return;
     }
-    this.$flushUpdates();
+    const current = captureRenderScope(this, () => [
+      this.positionRevision,
+      this.revision,
+      this.view,
+      this.selection?.key,
+      this.interpretation,
+    ]);
+    await this.$whenRendered();
+    if (!current()) {
+      return;
+    }
     const scroll = this.querySelector(".auth-scroll");
     if (scroll) {
       scroll.scrollTop = position.top;
@@ -301,7 +325,7 @@ export class AuthInspector extends WebUIElement {
     } finally {
       if (this.current(revision)) {
         this.authBusy = false;
-        this.applyPosition();
+        await this.applyPosition();
       }
     }
   }
@@ -538,8 +562,15 @@ export class AuthInspector extends WebUIElement {
       if (this.current(revision) && this.active) {
         const unmoved = scroll?.scrollTop === top;
         this.authRelated = related;
-        this.$flushUpdates();
-        if (unmoved && scroll) {
+        await this.$whenRendered();
+        if (
+          this.current(revision) &&
+          this.active &&
+          this.authRelated === related &&
+          unmoved &&
+          scroll &&
+          scroll.scrollTop === top
+        ) {
           scroll.scrollTop = 0;
         }
       }

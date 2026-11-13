@@ -75,6 +75,13 @@ export function localDateTime(value: string): string {
   const pad = (n: number, width = 2) => String(n).padStart(width, "0");
   return `${pad(date.getFullYear(), 4)}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`;
 }
+/** Match datetime-local normalization before capturing an input's baseline. */
+export function localDateTimeInput(value: string): string {
+  return localDateTime(value)
+    .replace(/\.000$/, "")
+    .replace(/(\.\d*?[1-9])0+$/, "$1")
+    .replace(/:00$/, "");
+}
 export function localToMillis(text: string): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?$/.exec(text);
   if (!match) {

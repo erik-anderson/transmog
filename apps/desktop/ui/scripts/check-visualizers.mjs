@@ -142,6 +142,76 @@ export async function checkVisualizers(page, root) {
       .waitFor();
     await details.waitFor();
     await checkVisualizerPanes(page, root, visualizer);
+    for (const action of ["selection", "scroll"]) {
+      assert.equal(
+        await visualizer.evaluate(async (element, action) => {
+          const selection = element.selected,
+            details = element.visualizerDetailsOpen;
+          const scroll = element.treeViewport.scrollTop;
+          const render = element.$whenRendered;
+          let release,
+            reached,
+            held = false;
+          const ready = new Promise((resolve) => (reached = resolve));
+          const rendered = new Promise((resolve) => (release = resolve));
+          element.$whenRendered = async () => {
+            await render.call(element);
+            if (!held) {
+              held = true;
+              reached();
+              await rendered;
+            }
+          };
+          const pending = element.selectNode("field-4999", false);
+          try {
+            await ready;
+            if (action === "selection") await element.selectNode("field-0", false);
+            else {
+              element.treeViewport.scrollTop = 260;
+              element.windowRows();
+            }
+            const top = element.treeViewport.scrollTop;
+            release();
+            await pending;
+            return element.treeViewport.scrollTop === top;
+          } finally {
+            release();
+            await pending;
+            element.$whenRendered = render;
+            await element.selectNode(selection, details);
+            element.treeViewport.scrollTop = scroll;
+            element.windowRows();
+          }
+        }, action),
+        true,
+        "A delayed field reveal must preserve newer selection or scrolling",
+      );
+    }
+    assert.equal(
+      await visualizer.evaluate(async (element) => {
+        const select = element.selectNode;
+        let release;
+        const rendered = new Promise((resolve) => (release = resolve));
+        element.selectNode = function (id, openDetails) {
+          const pending = select.call(this, id, openDetails);
+          return rendered.then(() => pending);
+        };
+        const pending = element.clickNode(element.selected);
+        try {
+          const input = document.querySelector("app-shell").traffic.searchInput;
+          input.focus();
+          release();
+          await pending;
+          return input.getRootNode().activeElement === input;
+        } finally {
+          release();
+          await pending;
+          element.selectNode = select;
+        }
+      }),
+      true,
+      "A delayed field click must preserve newer focus",
+    );
     const selected = await tree.getAttribute("aria-activedescendant");
     const inspected = await page.evaluate(
       () => document.querySelector("app-shell").traffic.selectedSessionId,

@@ -39,6 +39,49 @@ export async function checkResponseSetIntake(page, root) {
     await dialog.waitFor({ state: "visible" });
     await idle();
   };
+  for (const type of ["keydown", "pointerdown"]) {
+    const opened = await page.evaluate(async (type) => {
+      const shell = document.querySelector("app-shell"),
+        rendered = shell.$whenRendered;
+      let release, entered;
+      const gate = new Promise((resolve) => (release = resolve)),
+        waiting = new Promise((resolve) => (entered = resolve));
+      shell.$whenRendered = async () => {
+        await rendered.call(shell);
+        entered();
+        await gate;
+      };
+      try {
+        const request = shell.onResponseSetIntake(
+          new CustomEvent("response-set-intake-request", {
+            detail: { source: "traffic", ids: ["first"] },
+          }),
+        );
+        await waiting;
+        document.dispatchEvent(
+          type === "keydown"
+            ? new KeyboardEvent(type, { key: "Escape", bubbles: true })
+            : new PointerEvent(type, { bubbles: true }),
+        );
+        release();
+        await request;
+        return shell.responseSetIntake.intakeDialog.open;
+      } finally {
+        release();
+        shell.$whenRendered = rendered;
+        shell.responseSetIntake.close();
+      }
+    }, type);
+    assert.equal(opened, false, `${type} did not cancel intake while its workspace mounted`);
+  }
+  await traffic.locator('tr[data-session-id="first"]').click({ button: "right" });
+  await traffic
+    .locator("#traffic-entry-menu")
+    .getByRole("button", { name: "Details…", exact: true })
+    .click();
+  const details = traffic.locator(".timing-dialog");
+  await details.waitFor({ state: "visible" });
+  await details.getByRole("button", { name: "Close", exact: true }).click();
   await traffic.locator('tr[data-session-id="first"]').click();
   await traffic.locator('tr[data-session-id="second"]').click({ modifiers: ["Control"] });
   const selectedBefore = await page.evaluate(() => [

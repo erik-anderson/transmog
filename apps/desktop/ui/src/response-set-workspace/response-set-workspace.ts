@@ -1,4 +1,5 @@
 import { observable } from "@microsoft/webui-framework";
+import { captureFocus, captureRenderScope } from "../rendering.js";
 import { invoke } from "@tauri-apps/api/core";
 import { WorkspaceElement } from "../workspace-element.js";
 import "../response-set-tour/response-set-tour.js";
@@ -131,7 +132,8 @@ export class ResponseSetWorkspace extends WorkspaceElement {
       this.guidePending = false;
     }
   }
-  showGuideHelp(): void {
+  async showGuideHelp(): Promise<void> {
+    const focus = captureFocus(this);
     if (!this.overviewVisible) {
       return;
     }
@@ -139,19 +141,23 @@ export class ResponseSetWorkspace extends WorkspaceElement {
     this.tourStep = 0;
     this.helpOpen = true;
     this.guideError = "";
-    this.$flushUpdates();
+    const epoch = this.guideEpoch;
+    await this.$whenRendered();
+    if (epoch !== this.guideEpoch || !this.helpOpen || !this.guideAvailable() || !focus()) {
+      return;
+    }
     this.guideHelpPanel.scrollIntoView({ block: "nearest" });
     this.guideHelpPanel.focus({ preventScroll: true });
   }
-  closeGuideHelp(): void {
+  async closeGuideHelp(): Promise<void> {
     this.guideEpoch++;
     this.helpOpen = false;
-    this.restoreGuideFocus();
+    await this.restoreGuideFocus();
   }
-  dismissGuideInvitation(): void {
+  async dismissGuideInvitation(): Promise<void> {
     this.guideEpoch++;
     this.invitationVisible = false;
-    this.restoreGuideFocus();
+    await this.restoreGuideFocus();
   }
   async startGuide(): Promise<void> {
     if (this.guidePending || !this.guideAvailable()) {
@@ -187,8 +193,9 @@ export class ResponseSetWorkspace extends WorkspaceElement {
       }
       this.helpOpen = false;
       this.invitationVisible = false;
-      this.setTourStep(1);
-      this.tourPanel.focusNext();
+      if (await this.setTourStep(1)) {
+        this.tourPanel.focusNext();
+      }
     } catch (error) {
       if (epoch === this.guideEpoch) {
         this.guideError = "Tour could not start: " + describeError(error);
@@ -197,7 +204,9 @@ export class ResponseSetWorkspace extends WorkspaceElement {
       this.guidePending = false;
     }
   }
-  private setTourStep(step: number): void {
+  private async setTourStep(step: number): Promise<boolean> {
+    const focus = captureFocus(this);
+    const epoch = this.guideEpoch;
     this.tourStep = step;
     const copy = tourSteps[step - 1]!;
     this.stepNumber = step;
@@ -205,27 +214,33 @@ export class ResponseSetWorkspace extends WorkspaceElement {
     this.stepCopy = copy.copy;
     this.stepLast = step === 4;
     this.updateTourContext();
-    this.$flushUpdates();
+    await this.$whenRendered();
+    if (epoch !== this.guideEpoch || this.tourStep !== step || !this.guideAvailable() || !focus()) {
+      return false;
+    }
     this.tourPanel.scrollIntoView({ block: "nearest" });
+    return true;
   }
-  nextTourStep(): void {
+  async nextTourStep(): Promise<void> {
     if (this.tourStep === 4) {
-      this.endGuide();
+      await this.endGuide();
     } else if (this.tourStep) {
-      this.setTourStep(this.tourStep + 1);
-      this.tourPanel.focusNext();
+      if (await this.setTourStep(this.tourStep + 1)) {
+        this.tourPanel.focusNext();
+      }
     }
   }
-  previousTourStep(): void {
+  async previousTourStep(): Promise<void> {
     if (this.tourStep > 1) {
-      this.setTourStep(this.tourStep - 1);
-      this.tourPanel.focusNext();
+      if (await this.setTourStep(this.tourStep - 1)) {
+        this.tourPanel.focusNext();
+      }
     }
   }
-  endGuide(): void {
+  async endGuide(): Promise<void> {
     this.guideEpoch++;
     this.tourStep = 0;
-    this.restoreGuideFocus();
+    await this.restoreGuideFocus();
   }
   private leaveGuide(): void {
     this.guideEpoch++;
@@ -236,21 +251,27 @@ export class ResponseSetWorkspace extends WorkspaceElement {
   dismissGuideForNavigation(): void {
     this.leaveGuide();
   }
-  private restoreGuideFocus(): void {
-    this.$flushUpdates();
-    if (this.overviewVisible && this.isConnected) {
+  private async restoreGuideFocus(): Promise<void> {
+    const focus = captureFocus(this),
+      current = captureRenderScope(this, () => [
+        this.guideEpoch,
+        this.selectionEpoch,
+        this.overviewVisible,
+      ]);
+    await this.$whenRendered();
+    if (current() && focus() && this.overviewVisible) {
       this.guideHelpButton.scrollIntoView({ block: "nearest" });
       this.guideHelpButton.focus({ preventScroll: true });
     }
   }
-  guideKeyboard(event: KeyboardEvent): void {
+  async guideKeyboard(event: KeyboardEvent): Promise<void> {
     if (event.key === "Escape" && (this.tourStep || this.helpOpen)) {
       event.preventDefault();
       event.stopPropagation();
       if (this.tourStep) {
-        this.endGuide();
+        await this.endGuide();
       } else {
-        this.closeGuideHelp();
+        await this.closeGuideHelp();
       }
     } else if (
       this.tourStep &&
@@ -420,7 +441,7 @@ export class ResponseSetWorkspace extends WorkspaceElement {
   requestOpen(id: string, source: SelectedResponse | null = null): void {
     this.$emit("set-open", { id, source });
   }
-  open(id: string): void {
+  async open(id: string): Promise<void> {
     const set = this.status?.responseSets?.find((set) => set.id === id);
     if (!set) {
       return;
@@ -443,13 +464,18 @@ export class ResponseSetWorkspace extends WorkspaceElement {
     this.message = "";
     this.renderRules();
     this.renderLibrary();
-    this.$flushUpdates();
+    const current = captureRenderScope(this, () => [this.selectionEpoch, this.setId]);
+    await this.$whenRendered();
+    if (!current()) {
+      return;
+    }
     this.nameInput.value = this.setName;
     this.notesInput.value = this.setNotes;
     void this.refreshPage();
     void this.offerGuide();
   }
-  close(focus = true): void {
+  async close(focus = true): Promise<void> {
+    const unchangedFocus = captureFocus(this);
     this.selectionEpoch++;
     this.pageEpoch++;
     this.leaveGuide();
@@ -458,8 +484,9 @@ export class ResponseSetWorkspace extends WorkspaceElement {
     this.draftRules = [];
     this.dirty = false;
     this.editorDirty = false;
-    this.$flushUpdates();
-    if (focus) {
+    const current = captureRenderScope(this, () => [this.selectionEpoch, this.setId]);
+    await this.$whenRendered();
+    if (focus && current() && unchangedFocus()) {
       this.newSetButton.focus({ preventScroll: true });
     }
   }
@@ -569,7 +596,7 @@ export class ResponseSetWorkspace extends WorkspaceElement {
     }
   }
   keyboard(event: KeyboardEvent): void {
-    this.guideKeyboard(event);
+    void this.guideKeyboard(event);
     if (event.defaultPrevented) {
       return;
     }

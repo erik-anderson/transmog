@@ -1,4 +1,5 @@
 import { observable } from "@microsoft/webui-framework";
+import { captureFocus, captureRenderScope, renderPresentation } from "../rendering.js";
 import { invoke } from "@tauri-apps/api/core";
 import { WorkspaceElement } from "../workspace-element.js";
 import { pageIdentity } from "../response-set-page-picker/response-set-page-picker.js";
@@ -72,13 +73,13 @@ export class ResponseSetDemos extends WorkspaceElement {
     this.addEventListener("focusin", () => this.focusEpoch++);
   }
 
-  show(
+  async show(
     owner: ResponseSet,
     mode: "list" | "save",
     current: () => boolean,
     savingAllowed = true,
     capturedSelectionId = "",
-  ): void {
+  ): Promise<void> {
     const source = this.activeElement(),
       changed = this.owner?.id !== owner.id || this.owner?.incarnation !== owner.incarnation;
     this.closeAll();
@@ -104,10 +105,14 @@ export class ResponseSetDemos extends WorkspaceElement {
     this.savingAllowed = savingAllowed;
     this.capturedSelectionId = capturedSelectionId;
     if (mode === "save") {
-      this.startSave();
+      await this.startSave();
     } else {
       this.listError = "";
-      this.$flushUpdates();
+      const epoch = this.listEpoch;
+      const current = await renderPresentation(this, () => [this.listEpoch, this.owner?.id]);
+      if (!current() || epoch !== this.listEpoch || !this.validOwner()) {
+        return;
+      }
       this.listDialog.showModal();
       void this.loadList();
     }
@@ -174,7 +179,7 @@ export class ResponseSetDemos extends WorkspaceElement {
       }
     }
   }
-  startSave(id = ""): void {
+  async startSave(id = ""): Promise<void> {
     if (!this.validOwner() || this.busy || !this.savingAllowed) {
       return;
     }
@@ -195,7 +200,13 @@ export class ResponseSetDemos extends WorkspaceElement {
     this.missingRows = [];
     const epoch = ++this.saveEpoch;
     this.pagesLoading = true;
-    this.$flushUpdates();
+    const current = await renderPresentation(this, () => [this.saveEpoch, this.owner?.id]);
+    if (!current() || epoch !== this.saveEpoch || !this.validOwner()) {
+      if (epoch === this.saveEpoch) {
+        this.pagesLoading = false;
+      }
+      return;
+    }
     this.nameInput.value = this.name;
     this.saveDialog.showModal();
     this.nameInput.focus();
@@ -278,6 +289,7 @@ export class ResponseSetDemos extends WorkspaceElement {
         return;
       }
       const ownsFocus = this.activeElement() === focused;
+      const focus = captureFocus(this);
       this.review = prepared;
       this.reviewSummary = `${prepared.report.available} available responses · ${prepared.report.skipped} unavailable · ${size(prepared.report.bytes)}. Response changes and linked-file bytes are frozen for this save.`;
       this.missingRows = prepared.report.resources
@@ -290,33 +302,44 @@ export class ResponseSetDemos extends WorkspaceElement {
         }));
       this.omittedMissing = Math.max(0, prepared.report.skipped - this.missingRows.length);
       this.busy = false;
-      this.$flushUpdates();
-      if (ownsFocus) {
+      await this.$whenRendered();
+      if (
+        ownsFocus &&
+        epoch === this.saveEpoch &&
+        this.operation === operation &&
+        this.review === prepared &&
+        this.saveDialog.open &&
+        focus()
+      ) {
         this.commitButton.focus({ preventScroll: true });
       }
     } catch (error) {
-      if (epoch === this.saveEpoch) {
+      if (epoch === this.saveEpoch && this.operation === operation) {
         this.saveError = describeError(error);
       }
     } finally {
-      if (epoch === this.saveEpoch) {
+      if (epoch === this.saveEpoch && this.operation === operation) {
         this.busy = false;
         this.operation = "";
       }
     }
   }
-  changeChoices(): void {
+  async changeChoices(): Promise<void> {
     if (this.busy) {
       return;
     }
     const token = this.review?.token;
     this.review = null;
     this.saveError = "";
+    const focus = captureFocus(this),
+      current = captureRenderScope(this, () => [this.saveEpoch, this.review, this.saveDialog.open]);
     if (token) {
       void invoke("cancel_demo_save", { token }).catch(() => {});
     }
-    this.$flushUpdates();
-    this.nameInput.focus();
+    await this.$whenRendered();
+    if (current() && focus()) {
+      this.nameInput.focus();
+    }
   }
   async commit(): Promise<void> {
     const review = this.review;
@@ -353,7 +376,7 @@ export class ResponseSetDemos extends WorkspaceElement {
         this.showNotice("Demo save failed", describeError(error), null, null);
       }
     } finally {
-      if (epoch === this.saveEpoch || this.operation === operation) {
+      if (this.operation === operation) {
         this.busy = false;
         this.operation = "";
       }
@@ -396,7 +419,7 @@ export class ResponseSetDemos extends WorkspaceElement {
       isCurrent: current,
     } satisfies SavedDemoPreviewIntent);
   }
-  askDelete(id: string): void {
+  async askDelete(id: string): Promise<void> {
     const demo = this.currentDemo(id);
     if (!demo) {
       return;
@@ -405,8 +428,11 @@ export class ResponseSetDemos extends WorkspaceElement {
     this.deleteName = demo.name;
     this.deleteError = "";
     this.deleteCompleted = false;
-    this.deleteEpoch++;
-    this.$flushUpdates();
+    const epoch = ++this.deleteEpoch;
+    const current = await renderPresentation(this, () => [this.deleteEpoch, this.deleting]);
+    if (!current() || epoch !== this.deleteEpoch || !this.ownsDemo(demo)) {
+      return;
+    }
     this.deleteDialog.showModal();
   }
   async confirmDelete(): Promise<void> {
@@ -434,7 +460,7 @@ export class ResponseSetDemos extends WorkspaceElement {
       }
       const focus = this.focusEpoch,
         refreshed = await this.loadList();
-      this.$flushUpdates();
+      await this.$whenRendered();
       if (
         ownsFocus &&
         refreshed &&

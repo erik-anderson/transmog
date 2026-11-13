@@ -103,6 +103,18 @@ export async function checkComposerAuthoring(page, root) {
   });
   assert.equal(await headers.getByLabel("Header value 1", { exact: true }).inputValue(), "one");
   assert.equal(await headers.getByLabel("Header value 2", { exact: true }).inputValue(), "");
+  const submitted = await calls();
+  await workspace.evaluate(async (w) => {
+    await Promise.all([
+      w.executeComposer(new Event("submit", { cancelable: true })),
+      w.executeComposer(new Event("submit", { cancelable: true })),
+    ]);
+  });
+  assert.equal(
+    await calls(),
+    submitted + 1,
+    "Overlapping validation must not send the request twice",
+  );
   await headers.getByRole("button", { name: "Edit as text", exact: true }).click();
   const rawHeaders = headers.getByRole("textbox", { name: "Request headers as text", exact: true });
   await rawHeaders.fill("X-Duplicate: one\nX-Duplicate:\nBroken header");
@@ -343,6 +355,71 @@ export async function checkComposerAuthoring(page, root) {
     true,
   );
   await page.evaluate(() => globalThis.__workspaceFixture.restoreComposerInvoke());
+
+  await load({ url: "https://example.test/initial?source=initial" });
+  await workspace.locator("query-editor summary").click();
+  await workspace.getByRole("textbox", { name: "Query parameter name 1", exact: true }).focus();
+  const overlapping = await workspace.evaluate(async (w) => {
+    const state = globalThis.__workspaceFixture;
+    const editor = w.queryEditor;
+    const replace = editor.replaceValue;
+    let release, reached;
+    const paused = new Promise((resolve) => (reached = resolve));
+    const pending = new Promise((resolve) => (release = resolve));
+    let held = false;
+    editor.replaceValue = function (value) {
+      const rendered = replace.call(this, value);
+      if (!held) {
+        held = true;
+        reached();
+        return pending.then(() => rendered);
+      }
+      return rendered;
+    };
+    state.composerSourceOverride = {
+      method: "POST",
+      url: "https://example.test/older?source=older",
+      headers: [{ name: "X-Source", value: "older" }],
+      body: "4f4c44",
+      bodyAvailable: true,
+      notices: [],
+    };
+    const older = w.populateRequest({ id: "first" });
+    try {
+      await paused;
+      state.composerSourceOverride = {
+        method: "PUT",
+        url: "https://example.test/newer?source=newer",
+        headers: [{ name: "X-Source", value: "newer" }],
+        body: "4e4557",
+        bodyAvailable: true,
+        notices: [],
+      };
+      await w.populateRequest({ id: "second" });
+      release();
+      await older;
+      return {
+        method: w.composerForm.elements.namedItem("method").value,
+        url: w.composerForm.elements.namedItem("url").value,
+        headers: w.headerEditor.value,
+        body: w.currentBodyBytes(),
+      };
+    } finally {
+      release();
+      await older;
+      editor.replaceValue = replace;
+    }
+  });
+  assert.deepEqual(
+    overlapping,
+    {
+      method: "PUT",
+      url: "https://example.test/newer?source=newer",
+      headers: "X-Source: newer",
+      body: [78, 69, 87],
+    },
+    "An older Composer load must not mix its headers or body into the newer request",
+  );
 
   // Editing or changing body representation cancels an in-flight source load.
   // Both success and failure must settle its feedback without touching the draft.

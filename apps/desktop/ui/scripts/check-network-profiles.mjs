@@ -53,6 +53,30 @@ export async function checkNetworkProfiles(page, root) {
     await panel.getByRole("button", { name: "Use profile", exact: true }).isEnabled(),
     false,
   );
+  assert.equal(
+    await panel.evaluate(async (element) => {
+      const pending = element.customize(true);
+      element.closeEditor();
+      await pending;
+      const reopened = element.networkEditor.open;
+      element.discard();
+      return reopened;
+    }),
+    false,
+    "Closing a pending profile editor must prevent a late open",
+  );
+  assert.equal(
+    await panel.evaluate(async (element) => {
+      const pending = element.customize(true);
+      element.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, composed: true }));
+      await pending;
+      const reopened = element.networkEditor.open;
+      element.discard();
+      return reopened;
+    }),
+    false,
+    "A newer pointer action must cancel a pending profile editor without changing focus",
+  );
   await panel.getByRole("button", { name: "Customize…", exact: true }).click();
   await dialog.waitFor({ state: "visible" });
   await dialog.getByLabel("Name", { exact: true }).fill("Debug without H3");

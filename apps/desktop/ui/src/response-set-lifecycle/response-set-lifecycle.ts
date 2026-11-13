@@ -1,4 +1,5 @@
 import { observable } from "@microsoft/webui-framework";
+import { captureFocus, captureRenderScope, renderPresentation } from "../rendering.js";
 import { invoke } from "@tauri-apps/api/core";
 import { WorkspaceElement } from "../workspace-element.js";
 import { describeError } from "../utilities.js";
@@ -117,7 +118,9 @@ export class ResponseSetLifecycle extends WorkspaceElement {
   private confirmingOwner: Owner | null = null;
   private confirmingVersion: ResponseSetVersion | null = null;
   private viewedSnapshot: ResponseSetVersion | null = null;
+  private versionsEpoch = 0;
   private viewEpoch = 0;
+  private confirmEpoch = 0;
   private overlapsResolve: ((allowed: boolean) => void) | null = null;
 
   statusChanged(): void {
@@ -172,8 +175,13 @@ export class ResponseSetLifecycle extends WorkspaceElement {
       element.focus({ preventScroll: true });
     }
   }
-  private restoreLiveFocus(): void {
-    this.$flushUpdates();
+  private async restoreLiveFocus(): Promise<void> {
+    const focus = captureFocus(this),
+      current = captureRenderScope(this, () => [this.epoch, this.selectionKey, this.visible]);
+    await this.$whenRendered();
+    if (!current() || !focus()) {
+      return;
+    }
     this.restoreFocus(
       this.canApply
         ? this.liveButton
@@ -302,7 +310,15 @@ export class ResponseSetLifecycle extends WorkspaceElement {
         this.overlapAcknowledged = false;
         this.overlapError = "";
         this.returnFocus = source;
-        this.$flushUpdates();
+        const presentation = await renderPresentation(this, () => [this.epoch, this.selectionKey]);
+        if (
+          !presentation() ||
+          !this.context(owner, epoch) ||
+          this.dirty ||
+          this.active() !== source
+        ) {
+          return;
+        }
         this.overlapCheckbox.checked = false;
         this.overlapDialog.showModal();
         const allowed = await new Promise<boolean>((resolve) => {
@@ -332,7 +348,7 @@ export class ResponseSetLifecycle extends WorkspaceElement {
           ? "Applied saved changes and resumed this set."
           : "Applied saved changes to live traffic.";
         if (ownsFocus) {
-          this.restoreLiveFocus();
+          await this.restoreLiveFocus();
         }
       }
     } catch (error) {
@@ -399,7 +415,7 @@ export class ResponseSetLifecycle extends WorkspaceElement {
               ? "Paused this set on live traffic."
               : "Resumed this set on live traffic.";
         if (ownsFocus) {
-          this.restoreLiveFocus();
+          await this.restoreLiveFocus();
         }
       }
     } catch (error) {
@@ -408,22 +424,38 @@ export class ResponseSetLifecycle extends WorkspaceElement {
       this.pending = false;
     }
   }
-  showVersions(): void {
+  async showVersions(): Promise<void> {
     if (!this.available()) {
       return;
     }
+    const epoch = this.epoch,
+      presentation = ++this.versionsEpoch;
     this.closeMenu(this.moreMenu, this.moreButton);
     this.returnFocus = this.moreButton;
     this.versionName = "";
     this.versionError = "";
     this.versionMessage = "";
-    this.$flushUpdates();
+    const current = await renderPresentation(this, () => [
+      this.epoch,
+      this.versionsEpoch,
+      this.visible,
+    ]);
+    if (
+      !current() ||
+      presentation !== this.versionsEpoch ||
+      epoch !== this.epoch ||
+      !this.isConnected ||
+      !this.available()
+    ) {
+      return;
+    }
     this.versionsDialog.showModal();
     this.versionNameInput.value = "";
     this.versionNameInput.focus();
   }
   closeVersions(event?: Event): void {
     event?.preventDefault();
+    this.versionsEpoch++;
     this.versionsDialog?.close();
     this.restoreFocus(this.returnFocus);
   }
@@ -477,12 +509,13 @@ export class ResponseSetLifecycle extends WorkspaceElement {
       this.pending = false;
     }
   }
-  viewVersion(id: string): void {
+  async viewVersion(id: string): Promise<void> {
     const version = this.owner()?.versions.find((version) => version.id === id);
     if (!version || !this.available()) {
       return;
     }
-    this.viewEpoch++;
+    const epoch = this.epoch,
+      presentation = ++this.viewEpoch;
     this.selectedVersionResponseId = "";
     this.versionResponseLoading = false;
     this.versionResponseError = "";
@@ -504,7 +537,20 @@ export class ResponseSetLifecycle extends WorkspaceElement {
       included: rule.enabled !== false,
       definition: JSON.stringify(rule, null, 2),
     }));
-    this.$flushUpdates();
+    const current = await renderPresentation(this, () => [
+      this.epoch,
+      this.viewEpoch,
+      this.visible,
+    ]);
+    if (
+      !current() ||
+      presentation !== this.viewEpoch ||
+      epoch !== this.epoch ||
+      !this.isConnected ||
+      !this.available()
+    ) {
+      return;
+    }
     this.versionViewDialog.showModal();
     if (version.rules[0]) {
       void this.inspectVersionResponse(version.rules[0].id);
@@ -593,7 +639,7 @@ export class ResponseSetLifecycle extends WorkspaceElement {
       }
     }
   }
-  ask(kind: ConfirmKind, versionId = ""): void {
+  async ask(kind: ConfirmKind, versionId = ""): Promise<void> {
     const set = this.owner();
     if (!set || !this.available()) {
       return;
@@ -602,6 +648,8 @@ export class ResponseSetLifecycle extends WorkspaceElement {
     if (kind !== "delete-set" && !version) {
       return;
     }
+    const epoch = this.epoch,
+      presentation = ++this.confirmEpoch;
     if (kind === "delete-set") {
       this.closeMenu(this.moreMenu, this.moreButton);
     }
@@ -630,11 +678,32 @@ export class ResponseSetLifecycle extends WorkspaceElement {
         : kind === "restore"
           ? "Restore to current set"
           : "Delete version";
-    this.$flushUpdates();
+    const current = await renderPresentation(this, () => [
+      this.epoch,
+      this.confirmEpoch,
+      this.visible,
+    ]);
+    if (
+      !current() ||
+      presentation !== this.confirmEpoch ||
+      !this.context(set, epoch) ||
+      !this.available()
+    ) {
+      return;
+    }
     this.confirmDialog.showModal();
   }
-  private restoreConfirmFocus(): void {
-    this.$flushUpdates();
+  private async restoreConfirmFocus(): Promise<void> {
+    const focus = captureFocus(this),
+      current = captureRenderScope(this, () => [
+        this.epoch,
+        this.confirmEpoch,
+        this.confirmReturnFocus,
+      ]);
+    await this.$whenRendered();
+    if (!current() || !focus()) {
+      return;
+    }
     const source = this.confirmReturnFocus;
     if (source?.isConnected && source.getClientRects().length) {
       this.restoreFocus(source);
@@ -642,10 +711,11 @@ export class ResponseSetLifecycle extends WorkspaceElement {
       this.restoreFocus(this.versionNameInput);
     }
   }
-  cancelConfirm(event?: Event): void {
+  async cancelConfirm(event?: Event): Promise<void> {
     event?.preventDefault();
+    this.confirmEpoch++;
     this.confirmDialog?.close();
-    this.restoreConfirmFocus();
+    await this.restoreConfirmFocus();
   }
   async confirm(): Promise<void> {
     const owner = this.confirmingOwner,
@@ -739,7 +809,7 @@ export class ResponseSetLifecycle extends WorkspaceElement {
       }
       if (ownsFocus) {
         this.confirmDialog.close();
-        this.restoreConfirmFocus();
+        await this.restoreConfirmFocus();
       }
     } catch (error) {
       if (this.context(owner, epoch)) {
@@ -823,7 +893,9 @@ export class ResponseSetLifecycle extends WorkspaceElement {
   }
   leave(): void {
     this.epoch++;
+    this.versionsEpoch++;
     this.viewEpoch++;
+    this.confirmEpoch++;
     this.finishOverlap(false, undefined, false);
     this.versionsDialog?.close();
     this.versionViewDialog?.close();

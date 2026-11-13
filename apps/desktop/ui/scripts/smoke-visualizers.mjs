@@ -34,13 +34,13 @@ export async function smokeVisualizers(call, evaluate, screenshotPath, tracePath
     await wait(()=>child(response)?.view||child(response)?.visualizerError);
     const viewer=child(response);if(viewer.visualizerError)throw new Error(viewer.visualizerError);
     if(viewer.view.document.roots[0]?.value?.value!=='Synthetic body evidence')throw new Error('The native byte continuation did not reach the parser');
-    const handle=viewer.view.handle;viewer.clickNode('body-text');
+    const handle=viewer.view.handle;await viewer.clickNode('body-text');
     const contextView=await window.__TAURI_INTERNALS__.invoke('activate_visualizer',{request:{slot:'native-context-probe',generation:'1',pageId:handle.pageId,selection:{sessionId:row.id,boundary:'client-response',surface:'body'},extensionId:'test.development',visualizerId:'native-context'}});
     if(contextView.document.roots[0]?.value?.value!=='1')throw new Error('Native same-origin context did not reach the sandbox parser');
     await window.__TAURI_INTERNALS__.invoke('deactivate_visualizer',{slot:'native-context-probe',generation:'1',pageId:handle.pageId});
     await viewer.toggleNode('body-text');
     if(viewer.view.document.roots[0].children[0]?.value?.value!=='9007199254740993')throw new Error('Native deferred expansion lost integer precision');
-    viewer.selectNode('body-text');viewer.showSpan(viewer.view.document.roots[0].spans[0]);
+    await viewer.selectNode('body-text');viewer.showSpan(viewer.view.document.roots[0].spans[0]);
     await wait(()=>{const local=viewer.shadowRoot??viewer;return !!local.querySelector('hex-viewer')?.hasSelection;});
     const bytes=await window.__TAURI_INTERNALS__.invoke('visualizer_source',{handle,request:{sourceId:viewer.view.document.roots[0].spans[0].sourceId,offset:'0',maxBytes:8}});
     if(atob(bytes.bytesBase64)!=='Syntheti')throw new Error('Native exact source read returned different evidence');

@@ -237,8 +237,8 @@ export async function checkDebuggerControls(page, workspace, root) {
     .getByRole("button", { name: "Remove breakpoint sample/main.js:3", exact: true })
     .click();
   assert.equal(
-    await workspace.evaluate((element) => {
-      element.$flushUpdates();
+    await workspace.evaluate(async (element) => {
+      await element.$whenRendered();
       return element.debuggerPoints.length;
     }),
     1,

@@ -50,7 +50,7 @@ async function runSmoke(report) {
       this.settingsSection = section;
     },
     async refreshDiagnostics() {},
-    $flushUpdates() {},
+    async $whenRendered() {},
     querySelector: () => ({ nextElementSibling: details }),
   };
   const shell = {

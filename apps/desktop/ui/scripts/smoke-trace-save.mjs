@@ -5,10 +5,10 @@ import { writeFile } from "node:fs/promises";
 // progress and actual trace roundtrips have their own Rust regression checks.
 export async function smokeTraceSave(client, screenshotPath) {
   const traffic = 'document.querySelector("app-shell").traffic';
-  await client.evaluate(`(()=>{
+  await client.evaluate(`(async ()=>{
     const workspace=${traffic};
     globalThis.__traceSaveProbe={workspace,active:workspace.getRootNode().activeElement,state:{savingTrace:workspace.savingTrace,saveTraceStatus:workspace.saveTraceStatus,saveTraceOpen:workspace.saveTraceOpen,saveTraceTotal:workspace.saveTraceTotal,saveTraceCompleted:workspace.saveTraceCompleted}};
-    workspace.savingTrace=true;workspace.saveTraceTotal=4;workspace.saveTraceCompleted=2;workspace.saveTraceStatus='Creating SAZ archive · 2 of 4 entries…';workspace.showSaveTrace();workspace.$flushUpdates();
+    workspace.savingTrace=true;workspace.saveTraceTotal=4;workspace.saveTraceCompleted=2;workspace.saveTraceStatus='Creating SAZ archive · 2 of 4 entries…';workspace.showSaveTrace();await workspace.$whenRendered();
   })()`);
   try {
     for (const [name, width, height] of [
@@ -21,8 +21,8 @@ export async function smokeTraceSave(client, screenshotPath) {
         deviceScaleFactor: 1,
         mobile: false,
       });
-      const layout = await client.evaluate(`(()=>{
-        const workspace=${traffic};workspace.$flushUpdates();
+      const layout = await client.evaluate(`(async ()=>{
+        const workspace=${traffic};await workspace.$whenRendered();
         const dialog=workspace.saveTraceDialog,progress=dialog.querySelector('progress'),close=dialog.querySelector('footer button:last-child');
         const bounds=dialog.getBoundingClientRect(),button=close.getBoundingClientRect();
         close.focus();
@@ -66,7 +66,7 @@ export async function smokeTraceSave(client, screenshotPath) {
     await client.evaluate("globalThis.__traceSaveClosed");
     assert.equal(
       await client.evaluate(
-        `(()=>{const workspace=${traffic};workspace.$flushUpdates();return !workspace.saveTraceDialog.open&&workspace.savingTrace&&!!workspace.querySelector('.trace-import-status progress[aria-label="Saving trace"]');})()`,
+        `(async ()=>{const workspace=${traffic};await workspace.$whenRendered();return !workspace.saveTraceDialog.open&&workspace.savingTrace&&!!workspace.querySelector('.trace-import-status progress[aria-label="Saving trace"]');})()`,
       ),
       true,
       "Escape lost background save progress",
@@ -75,7 +75,7 @@ export async function smokeTraceSave(client, screenshotPath) {
   } finally {
     await client.call("Emulation.clearDeviceMetricsOverride");
     await client.evaluate(
-      `(()=>{const probe=globalThis.__traceSaveProbe;probe.workspace.saveTraceDialog.close();Object.assign(probe.workspace,probe.state);probe.workspace.$flushUpdates();probe.active?.focus({preventScroll:true});delete globalThis.__traceSaveProbe;delete globalThis.__traceSaveClosed;})()`,
+      `(async ()=>{const probe=globalThis.__traceSaveProbe;probe.workspace.saveTraceDialog.close();Object.assign(probe.workspace,probe.state);await probe.workspace.$whenRendered();probe.active?.focus({preventScroll:true});delete globalThis.__traceSaveProbe;delete globalThis.__traceSaveClosed;})()`,
     );
   }
 }

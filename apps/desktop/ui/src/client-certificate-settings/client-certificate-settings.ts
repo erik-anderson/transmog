@@ -84,7 +84,7 @@ export class ClientCertificateSettings extends WorkspaceElement {
       this.loaded = true;
       this.certificateDefault = this.policy.default;
       this.certificateSelectedId = this.policy.rules[0]?.id ?? "";
-      this.render();
+      await this.render();
       this.certificateSettingsDirty = false;
       this.certificateSettingsText = "";
       this.undo = null;
@@ -153,7 +153,7 @@ export class ClientCertificateSettings extends WorkspaceElement {
       down: index < this.policy.rules.length - 1,
     }));
   }
-  private render(): void {
+  private async render(): Promise<void> {
     this.renderRows();
     const rule = this.policy.rules.find((rule) => rule.id === this.certificateSelectedId);
     this.certificateHost = rule?.host ?? "";
@@ -169,7 +169,7 @@ export class ClientCertificateSettings extends WorkspaceElement {
       subject: selector?.subject[name] ?? "",
       issuer: selector?.issuer[name] ?? "",
     }));
-    this.$flushUpdates();
+    await this.$whenRendered();
     this.populateInputs();
   }
   private populateInputs(): void {
@@ -194,11 +194,11 @@ export class ClientCertificateSettings extends WorkspaceElement {
       set(attribute.name + "-issuer", attribute.issuer);
     }
   }
-  chooseRule(id: string): void {
+  async chooseRule(id: string): Promise<void> {
     this.certificateSelectedId = id;
-    this.render();
+    await this.render();
   }
-  addRule(): void {
+  async addRule(): Promise<void> {
     if (this.policy.rules.length >= 256) {
       return;
     }
@@ -212,9 +212,9 @@ export class ClientCertificateSettings extends WorkspaceElement {
     });
     this.certificateSelectedId = id;
     this.changed();
-    this.render();
+    await this.render();
   }
-  removeRule(): void {
+  async removeRule(): Promise<void> {
     const index = this.policy.rules.findIndex((rule) => rule.id === this.certificateSelectedId);
     if (index < 0) {
       return;
@@ -224,9 +224,9 @@ export class ClientCertificateSettings extends WorkspaceElement {
     this.policy.rules = this.policy.rules.filter((rule) => rule.id !== this.certificateSelectedId);
     this.certificateSelectedId = this.policy.rules[Math.max(0, index - 1)]?.id ?? "";
     this.changed();
-    this.render();
+    await this.render();
   }
-  undoRemove(): void {
+  async undoRemove(): Promise<void> {
     if (!this.undo) {
       return;
     }
@@ -239,7 +239,7 @@ export class ClientCertificateSettings extends WorkspaceElement {
     this.undo = null;
     this.certificateUndoAvailable = false;
     this.changed();
-    this.render();
+    await this.render();
   }
   setDefault(event: Event): void {
     this.policy.default = (event.target as HTMLSelectElement)
@@ -247,12 +247,12 @@ export class ClientCertificateSettings extends WorkspaceElement {
     this.certificateDefault = this.policy.default;
     this.changed();
   }
-  setEnabled(id: string, event: Event): void {
+  async setEnabled(id: string, event: Event): Promise<void> {
     this.policy.rules = this.policy.rules.map((rule) =>
       rule.id === id ? { ...rule, enabled: (event.target as HTMLInputElement).checked } : rule,
     );
     this.changed();
-    this.render();
+    await this.render();
   }
   setField(field: string, event: Event): void {
     const value = (event.target as HTMLInputElement).value;
@@ -311,11 +311,11 @@ export class ClientCertificateSettings extends WorkspaceElement {
     this.renderRows();
     this.updateMissing();
   }
-  moveRule(id: string, offset: number): void {
+  async moveRule(id: string, offset: number): Promise<void> {
     const index = this.policy.rules.findIndex((rule) => rule.id === id);
-    this.reorder(id, index + offset);
+    await this.reorder(id, index + offset);
   }
-  private reorder(id: string, to: number): void {
+  private async reorder(id: string, to: number): Promise<void> {
     const from = this.policy.rules.findIndex((rule) => rule.id === id);
     if (from < 0 || to < 0 || to >= this.policy.rules.length || from === to) {
       return;
@@ -323,7 +323,7 @@ export class ClientCertificateSettings extends WorkspaceElement {
     const [rule] = this.policy.rules.splice(from, 1);
     this.policy.rules.splice(to, 0, rule!);
     this.changed();
-    this.render();
+    await this.render();
   }
   dragStart(id: string, event: DragEvent): void {
     this.dragId = id;
@@ -340,12 +340,12 @@ export class ClientCertificateSettings extends WorkspaceElement {
       }
     }
   }
-  dropRule(id: string, event: DragEvent): void {
+  async dropRule(id: string, event: DragEvent): Promise<void> {
     if (!this.dragId) {
       return;
     }
     event.preventDefault();
-    this.reorder(
+    await this.reorder(
       this.dragId,
       this.policy.rules.findIndex((rule) => rule.id === id),
     );
@@ -378,7 +378,7 @@ export class ClientCertificateSettings extends WorkspaceElement {
       this.certificateSettingsDirty = false;
       this.undo = null;
       this.certificateUndoAvailable = false;
-      this.render();
+      await this.render();
       this.certificateSettingsText =
         "Certificate settings saved. New connections use this policy; admitted requests can finish.";
     } catch (error: unknown) {

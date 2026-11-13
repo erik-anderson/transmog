@@ -1,3 +1,9 @@
+import {
+  captureFocus,
+  capturePresentationIntent,
+  captureRenderScope,
+  renderPresentation,
+} from "../rendering.js";
 import { WebUIElement, attr, observable } from "@microsoft/webui-framework";
 import { invoke } from "@tauri-apps/api/core";
 import { describeError } from "../utilities.js";
@@ -79,6 +85,7 @@ export class ConverterHost extends WebUIElement {
   private history: Edit[] = [];
   private future: Edit[] = [];
   private revision = 0;
+  private menuEpoch = 0;
   private timer: number | undefined;
   private selection: ConverterSelection | null = null;
   private readonly menuPlacement = new MeasuredMenu(
@@ -86,13 +93,19 @@ export class ConverterHost extends WebUIElement {
     (x, y) => {
       this.converterMenuX = x;
       this.converterMenuY = y;
-      this.$flushUpdates();
     },
   );
   menuToggled(event: ToggleEvent): void {
-    if (event.newState === "closed") {
+    if (event.newState === "closed" && !this.selectionMenu.matches(":popover-open")) {
       this.menuPlacement.close();
     }
+  }
+  private closeSelectionMenu(): void {
+    this.menuEpoch++;
+    if (this.selectionMenu?.matches(":popover-open")) {
+      this.selectionMenu.hidePopover();
+    }
+    this.menuPlacement.close();
   }
   private output: Output | null = null;
   private restoreFocus: HTMLElement | null = null;
@@ -105,7 +118,7 @@ export class ConverterHost extends WebUIElement {
     }
     return element;
   }
-  private readonly contextListener = (event: MouseEvent): void => {
+  private readonly contextListener = async (event: MouseEvent): Promise<void> => {
     if (
       event.defaultPrevented ||
       event
@@ -118,9 +131,9 @@ export class ConverterHost extends WebUIElement {
     if (!selected || copyDialog(selected.source)) {
       return;
     }
-    this.showContext(event, selected, "");
+    await this.showContext(event, selected, "");
   };
-  private readonly keyboardListener = (event: KeyboardEvent): void => {
+  private readonly keyboardListener = async (event: KeyboardEvent): Promise<void> => {
     if (
       event.defaultPrevented ||
       event.repeat ||
@@ -137,7 +150,7 @@ export class ConverterHost extends WebUIElement {
     }
     const selection = selectedConverterText(event);
     if (selection && !copyDialog(selection.source)) {
-      this.showContext(event, selection, "");
+      await this.showContext(event, selection, "");
     }
   };
   private readonly requestListener = (event: Event): void => {
@@ -151,7 +164,7 @@ export class ConverterHost extends WebUIElement {
     };
     void this.acceptSelection();
   };
-  private readonly headerListener = (event: Event): void => {
+  private readonly headerListener = async (event: Event): Promise<void> => {
     const detail = (
       event as CustomEvent<{
         event: MouseEvent | KeyboardEvent;
@@ -160,7 +173,7 @@ export class ConverterHost extends WebUIElement {
         source: HTMLElement;
       }>
     ).detail;
-    this.showContext(
+    await this.showContext(
       detail.event,
       selectedConverterText(detail.event) ?? { text: detail.text, source: detail.source },
       detail.error,
@@ -183,7 +196,10 @@ export class ConverterHost extends WebUIElement {
         return;
       }
       this.authConversions = catalog;
-      this.$flushUpdates();
+      await this.$whenRendered();
+      if (!this.isConnected) {
+        return;
+      }
       this.operationSelect.value = this.converterOperation;
       this.updateAuthHint();
     } catch {
@@ -196,7 +212,7 @@ export class ConverterHost extends WebUIElement {
       this.authConversions.find((entry) => entry.id === this.converterOperation)?.hint ?? "";
   }
   disconnectedCallback(): void {
-    this.menuPlacement.close();
+    this.closeSelectionMenu();
     document.removeEventListener("contextmenu", this.contextListener);
     document.removeEventListener("keydown", this.keyboardListener);
     document.removeEventListener("format-converter-request", this.requestListener);
@@ -206,11 +222,14 @@ export class ConverterHost extends WebUIElement {
     super.disconnectedCallback();
   }
   private async receiveDraft(): Promise<void> {
+    const focus = captureFocus(this);
     try {
       const draft = await invoke<Draft>("take_converter_draft");
-      this.applyDraft(draft);
+      await this.applyDraft(draft);
       await invoke("acknowledge_converter_window");
-      this.inputEditor.focus();
+      if (this.isConnected && focus()) {
+        this.inputEditor.focus();
+      }
       this.schedule();
     } catch (error: unknown) {
       this.converterError = describeError(error);
@@ -260,7 +279,7 @@ export class ConverterHost extends WebUIElement {
       theme,
     };
   }
-  private applyDraft(draft: Draft): void {
+  private async applyDraft(draft: Draft): Promise<void> {
     this.converterInput = draft.input;
     this.converterRepresentation = draft.representation;
     this.converterEncoding = draft.encoding;
@@ -269,13 +288,23 @@ export class ConverterHost extends WebUIElement {
     this.history = draft.history ?? [];
     this.future = draft.future ?? [];
     this.converterTheme = draft.theme ?? "system";
-    this.$flushUpdates();
     this.inputEditor.value = this.converterInput;
-    this.operationSelect.value = this.converterOperation;
-    this.updateAuthHint();
     this.inputEditor.setSelectionRange(draft.selectionStart ?? 0, draft.selectionEnd ?? 0);
     this.inputEditor.scrollTop = draft.scrollTop ?? 0;
     this.pendingOutputScroll = draft.outputScrollTop ?? 0;
+    const current = captureRenderScope(this, () => [
+      this.revision,
+      this.converterInput,
+      this.converterOperation,
+      this.converterRepresentation,
+      this.converterEncoding,
+    ]);
+    await this.$whenRendered();
+    if (!current()) {
+      return;
+    }
+    this.operationSelect.value = this.converterOperation;
+    this.updateAuthHint();
   }
   toggle(): void {
     if (this.panel.matches(":popover-open")) {
@@ -488,7 +517,8 @@ export class ConverterHost extends WebUIElement {
     }
     this.converterSaving = true;
     const revision = this.revision,
-      input = this.resultInput;
+      input = this.resultInput,
+      presentation = capturePresentationIntent(this);
     try {
       const saved = await invoke<boolean>("save_converter_output", { input });
       if (revision === this.revision) {
@@ -496,9 +526,23 @@ export class ConverterHost extends WebUIElement {
       }
     } catch (error: unknown) {
       this.converterSaveError = describeError(error);
-      this.$flushUpdates();
+      if (!presentation.current() || revision !== this.revision) {
+        return;
+      }
+      const current = await renderPresentation(this, () => [
+        this.revision,
+        this.standalone || this.panel.matches(":popover-open"),
+      ]);
+      if (
+        !current() ||
+        !presentation.current() ||
+        (!this.standalone && !this.panel.matches(":popover-open"))
+      ) {
+        return;
+      }
       this.saveErrorDialog.showModal();
     } finally {
+      presentation.dispose();
       this.converterSaving = false;
     }
   }
@@ -539,13 +583,14 @@ export class ConverterHost extends WebUIElement {
       this.converterHandoff = false;
     }
   }
-  private showContext(
+  private async showContext(
     event: MouseEvent | KeyboardEvent,
     selection: ConverterSelection,
     error: string,
-  ): void {
+  ): Promise<void> {
     event.preventDefault();
     event.stopPropagation();
+    const epoch = ++this.menuEpoch;
     this.selection = selection;
     const editable =
       selection.source instanceof HTMLTextAreaElement ||
@@ -557,7 +602,10 @@ export class ConverterHost extends WebUIElement {
     this.converterSelection = selection.text.length > 0;
     this.converterMenuError = error;
     const anchor = menuAnchor(event, selection.source);
-    this.$flushUpdates();
+    const current = await renderPresentation(this, () => [this.menuEpoch, this.selection]);
+    if (epoch !== this.menuEpoch || !current() || !this.selectionCurrent(selection)) {
+      return;
+    }
     this.selectionMenu.showPopover();
     this.menuPlacement.open(anchor);
     (this.selectionMenu.querySelector("button:not(:disabled)") as HTMLElement | null)?.focus();
@@ -566,7 +614,7 @@ export class ConverterHost extends WebUIElement {
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
-      this.selectionMenu.hidePopover();
+      this.closeSelectionMenu();
       this.restoreSource();
       return;
     }
@@ -581,7 +629,7 @@ export class ConverterHost extends WebUIElement {
     );
   }
   openSelection(): void {
-    this.selectionMenu.hidePopover();
+    this.closeSelectionMenu();
     void this.acceptSelection();
   }
   private async acceptSelection(): Promise<void> {
@@ -669,14 +717,19 @@ export class ConverterHost extends WebUIElement {
     }
   }
   private clipboardSelectionCurrent(selection: ConverterSelection): boolean {
+    return (
+      this.selectionCurrent(selection) &&
+      this.selectionMenu.matches(":popover-open") &&
+      this.selectionMenu.contains(this.shadowRoot?.activeElement ?? null)
+    );
+  }
+  private selectionCurrent(selection: ConverterSelection): boolean {
     if (
       !this.isConnected ||
       document.hidden ||
       this.selection !== selection ||
       !selection.source.isConnected ||
-      (!selection.source.getClientRects().length && !this.panel.contains(selection.source)) ||
-      !this.selectionMenu.matches(":popover-open") ||
-      !this.selectionMenu.contains(this.shadowRoot?.activeElement ?? null)
+      (!selection.source.getClientRects().length && !this.panel.contains(selection.source))
     ) {
       return false;
     }
@@ -701,7 +754,7 @@ export class ConverterHost extends WebUIElement {
       if (!this.clipboardSelectionCurrent(selection)) {
         return;
       }
-      this.selectionMenu.hidePopover();
+      this.closeSelectionMenu();
       this.restoreSource(selection);
       copied(selection.source);
     } catch {
@@ -723,7 +776,7 @@ export class ConverterHost extends WebUIElement {
       if (!this.clipboardSelectionCurrent(selection)) {
         return;
       }
-      this.selectionMenu.hidePopover();
+      this.closeSelectionMenu();
       this.restoreSource(selection);
       document.execCommand("insertText", false, text);
     } catch {

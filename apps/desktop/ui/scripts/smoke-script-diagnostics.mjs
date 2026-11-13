@@ -129,7 +129,7 @@ try {
     const shell = document.querySelector("app-shell");
     if (!(await shell.activateView("automation"))) throw new Error(shell.diagnosticText);
     await shell.automation.showAutomationSection("scripts");
-    shell.automation.$flushUpdates();
+    await shell.automation.$whenRendered();
   });
   const scripts = page.locator("script-editor");
   await page.waitForFunction(

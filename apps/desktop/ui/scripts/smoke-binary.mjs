@@ -86,7 +86,7 @@ async function smokePackagedBinary(call, evaluate, screenshotPath, tracePath, se
         if(!last.name.includes('Depth 64'))throw new Error('Flattened deep Bond field lost its nesting depth');
         const wire=all.find(node=>node.name.includes('wire bytes (descendants shown separately)'));
         if(!wire||wire.value?.kind!=='bytes')throw new Error('Flattened Bond container can copy as an empty object');
-        deep.selectNode(wire.id,false);const tree=deep.treeViewport;tree.focus();
+        await deep.selectNode(wire.id,false);const tree=deep.treeViewport;tree.focus();
         let request;const receive=event=>{event.stopImmediatePropagation();request=event.detail;};
         tree.addEventListener('inspection-copy-request',receive,{once:true});
         try{tree.dispatchEvent(new KeyboardEvent('keydown',{key:'ContextMenu',bubbles:true,cancelable:true}));}finally{tree.removeEventListener('inspection-copy-request',receive);}
@@ -106,7 +106,7 @@ async function smokePackagedBinary(call, evaluate, screenshotPath, tracePath, se
     const ranged=await show('bond-record-ranges','request');
     for(const offset of [0,149997])for(let count=0;count<20;count++){
       const all=ranged.view.document.roots.flatMap(walk),last=all.find(node=>node.name==='Field 1 · uint8'&&node.spans[0].offset===String(offset));
-      if(last){if(last.value.value!=='7')throw new Error('Bond record value changed');ranged.selectNode(last.id,offset===149997);break;}
+      if(last){if(last.value.value!=='7')throw new Error('Bond record value changed');await ranged.selectNode(last.id,offset===149997);break;}
       const pending=all.find(node=>node.childrenToken&&node.spans.some(span=>Number(span.offset)<=offset&&Number(span.offset)+Number(span.length)>offset));
       if(!pending)throw new Error('No deferred range leads to Bond record');
       const previous=ranged.visualizerRows.find(row=>row.selected)?.id;

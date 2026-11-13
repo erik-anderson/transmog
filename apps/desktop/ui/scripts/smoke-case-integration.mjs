@@ -100,29 +100,20 @@ export async function smokeCaseIntegration({ page, output, chromium, processId, 
   await page.evaluate((path) => {
     void document.querySelector("app-shell").traffic.importTrace(path);
   }, input);
-  await page.waitForFunction(
-    () => {
-      const t = document.querySelector("app-shell").traffic;
-      return (
-        t.sessions.some((r) => r.path === "/case-page") ||
-        t.importStatus.startsWith("Import failed:")
-      );
-    },
-    null,
-    { timeout: 30000 },
-  );
-  assert.equal(
-    await page.evaluate(() =>
-      document.querySelector("app-shell").traffic.importStatus.startsWith("Import failed:"),
-    ),
-    false,
+  await page.waitForFunction(() => !document.querySelector("app-shell").traffic.importingTrace);
+  assert.match(
     await page.evaluate(() => document.querySelector("app-shell").traffic.importStatus),
+    /^Imported 99 entries /,
   );
-  const rows = await page.evaluate(() =>
-    document
-      .querySelector("app-shell")
-      .traffic.sessions.filter((r) => r.url.startsWith("https://case.invalid/")),
-  );
+  // The UI retains a bounded row window and can still be scrolled to the end
+  // after import. Read this fixture's full metadata independently of that window.
+  const metadata = await invoke("query_sessions", {
+    query: { search: "https://case.invalid/", limit: 100 },
+  });
+  assert.equal(metadata.totalMatched, 99);
+  const rows = metadata.sessions;
+  assert.equal(rows.length, 99);
+  assert.ok(rows.some((row) => row.path === "/case-page"));
   const css = rows.filter((r) => r.path === "/case.css");
   assert.equal(css.length, 2);
   const asset = await invoke("create_response_asset", {

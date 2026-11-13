@@ -29,6 +29,8 @@ export async function checkAutomationContracts(page, root) {
   };
   await choose("Outbound headers");
   await headers.getByRole("button", { name: "Discard changes", exact: true }).click();
+  await checkRuleSelectionRaces(page);
+  await checkHeaderDraftRaces(page);
   const name = headers.getByLabel("Rule name", { exact: true }),
     save = headers.getByRole("button", { name: "Save rule", exact: true });
   assert.equal(await save.isDisabled(), true);
@@ -164,6 +166,412 @@ export async function checkAutomationContracts(page, root) {
     await navigation.click();
   await page.setViewportSize({ width: 1440, height: 900 });
   await checkUnsavedDialogs(page, workspace, choose, root);
+}
+
+async function checkRuleSelectionRaces(page) {
+  const result = await page.evaluate(async () => {
+    const workspace = document.querySelector("app-shell").automation,
+      state = globalThis.__workspaceFixture,
+      saved = state.automation.rules.find((rule) => rule.request.responseAsset),
+      target = state.automation.rules.find((rule) => rule.displayName === "Outbound headers"),
+      delayed = {
+        ...structuredClone(saved),
+        id: "delayed-selection",
+        displayName: "Delayed response",
+      };
+    state.automation.rules.push(delayed);
+    workspace.renderAutomation(structuredClone(state.automation));
+    state.deferAssetInspection = true;
+    globalThis.__olderRuleSelection = workspace.selectRule(delayed);
+    return {
+      delayed: delayed.id,
+      target: target.id,
+      saved: saved.id,
+      inbound: state.automation.rules.find((rule) => rule.displayName === "Inbound headers").id,
+    };
+  });
+  try {
+    await page.waitForFunction(() => !!globalThis.__workspaceFixture.releaseAssetInspection);
+    const grid = page.getByRole("grid", { name: "Traffic rules", exact: true });
+    await grid.locator(`tr[data-rule-id="${result.target}"]`).click();
+    await page.waitForFunction(
+      (id) => document.querySelector("app-shell").automation.catalogSelectedId === id,
+      result.target,
+    );
+    const selection = await page.evaluate(async () => {
+      const state = globalThis.__workspaceFixture;
+      state.releaseAssetInspection();
+      delete state.releaseAssetInspection;
+      await globalThis.__olderRuleSelection;
+      delete globalThis.__olderRuleSelection;
+      const workspace = document.querySelector("app-shell").automation;
+      return {
+        ids: [...workspace.ruleSelection.ids],
+        focused: workspace.ruleSelection.focused,
+        active: workspace.getRootNode().activeElement?.closest("[data-rule-id]")?.dataset.ruleId,
+      };
+    });
+    assert.deepEqual(selection.ids, [result.target], "An older load replaced the newer selection");
+    assert.equal(selection.focused, result.target, "An older load restored its list focus");
+    assert.equal(selection.active, result.target, "An older load moved keyboard focus back");
+    const preparedSelection = await page.evaluate(async (ids) => {
+      const w = document.querySelector("app-shell").automation,
+        headers = w.matchTestHeaders,
+        replace = headers.replaceValue;
+      let release,
+        entered,
+        paused = false;
+      const gate = new Promise((resolve) => (release = resolve)),
+        waiting = new Promise((resolve) => (entered = resolve));
+      headers.replaceValue = async (...args) => {
+        await replace.apply(headers, args);
+        if (!paused) {
+          paused = true;
+          entered();
+          await gate;
+        }
+      };
+      const older = w.selectRule(
+        globalThis.__workspaceFixture.automation.rules.find((rule) => rule.id === ids.saved),
+      );
+      try {
+        await waiting;
+        await w.selectRule(
+          globalThis.__workspaceFixture.automation.rules.find((rule) => rule.id === ids.inbound),
+        );
+        release();
+        await older;
+        return [...w.ruleSelection.ids];
+      } finally {
+        release();
+        await older;
+        headers.replaceValue = replace;
+      }
+    }, result);
+    assert.deepEqual(
+      preparedSelection,
+      [result.inbound],
+      "An older editor preparation replaced the newer native selection",
+    );
+    await grid.locator(`tr[data-rule-id="${result.target}"]`).click();
+    await checkRuleSelectionSiblings(page, result);
+  } finally {
+    await page.evaluate(() => {
+      const state = globalThis.__workspaceFixture;
+      state.automation.rules = state.automation.rules.filter(
+        (rule) => rule.id !== "delayed-selection",
+      );
+      document
+        .querySelector("app-shell")
+        .automation.renderAutomation(structuredClone(state.automation));
+    });
+  }
+}
+
+async function checkRuleSelectionSiblings(page, ids) {
+  const grid = page.getByRole("grid", { name: "Traffic rules", exact: true }),
+    row = (id) => grid.locator(`tr[data-rule-id="${id}"]`),
+    snapshot = () =>
+      page.evaluate(() => {
+        const w = document.querySelector("app-shell").automation,
+          active = w.getRootNode().activeElement;
+        return {
+          ids: [...w.ruleSelection.ids],
+          focused: w.ruleSelection.focused,
+          active: active?.closest("[data-rule-id]")?.dataset.ruleId,
+          activeLabel: active?.getAttribute("aria-label"),
+        };
+      });
+  for (const newer of ["saved", "search", "all", "keyboard", "menu-cancel"]) {
+    await page.evaluate(
+      async ({ ids, newer }) => {
+        const w = document.querySelector("app-shell").automation,
+          state = globalThis.__workspaceFixture;
+        await w.selectRule(state.automation.rules.find((rule) => rule.id === ids.saved));
+        state.deferAssetInspection = true;
+        const rule = state.automation.rules.find((rule) => rule.id === ids.delayed);
+        globalThis.__olderRuleSelection =
+          newer === "menu-cancel"
+            ? w.openRuleMenu(
+                rule,
+                new MouseEvent("contextmenu", { cancelable: true, clientX: 100, clientY: 100 }),
+              )
+            : w.selectRule(rule);
+      },
+      { ids, newer },
+    );
+    await page.waitForFunction(() => !!globalThis.__workspaceFixture.releaseAssetInspection);
+    let target = ids.delayed;
+    if (newer === "saved") {
+      target = ids.saved;
+      await row(target).click();
+      await page.waitForFunction(
+        () => !document.querySelector("app-shell").automation.loadingSavedResponse,
+      );
+    } else if (newer === "search") {
+      await page.getByLabel("Search rules", { exact: true }).focus();
+    } else if (newer === "all") {
+      await grid.getByRole("checkbox", { name: "Select all visible rules", exact: true }).check();
+    } else if (newer === "menu-cancel") {
+      await page.keyboard.press("Escape");
+    } else {
+      target = await page.evaluate((id) => {
+        const order = document.querySelector("app-shell").automation.ruleOrder();
+        return order[order.indexOf(id) - 1];
+      }, ids.delayed);
+      await row(ids.delayed).focus();
+      await page.keyboard.press("ArrowUp");
+      await page.waitForFunction(
+        (id) => document.querySelector("app-shell").automation.ruleSelection.focused === id,
+        target,
+      );
+    }
+    await page.evaluate(async () => {
+      const state = globalThis.__workspaceFixture;
+      state.releaseAssetInspection();
+      delete state.releaseAssetInspection;
+      await globalThis.__olderRuleSelection;
+      delete globalThis.__olderRuleSelection;
+    });
+    const current = await snapshot();
+    if (newer === "menu-cancel") {
+      assert.equal(
+        await page.evaluate(() =>
+          document.querySelector("app-shell").automation.ruleMenu.matches(":popover-open"),
+        ),
+        false,
+        "Escape during selection reopened the rule menu",
+      );
+    } else if (newer === "all") {
+      assert.equal(current.ids.length, 6, "An older load replaced Select All");
+      assert.equal(current.activeLabel, "Select all visible rules");
+    } else {
+      assert.deepEqual(current.ids, [target], `${newer}: an older load replaced selection`);
+      assert.equal(current.focused, target, `${newer}: an older load restored list focus`);
+      if (newer === "search") assert.equal(current.activeLabel, "Search rules");
+      else assert.equal(current.active, target, `${newer}: an older load moved keyboard focus`);
+    }
+  }
+
+  // A stale native child must not roll its parent back over a newer saved response.
+  await page.evaluate((ids) => {
+    const w = document.querySelector("app-shell").automation,
+      rendered = w.$whenRendered;
+    let release,
+      paused = false;
+    const gate = new Promise((resolve) => (release = resolve));
+    w.$whenRendered = async () => {
+      await rendered.call(w);
+      if (!paused && w.automationSection === "header-rules") {
+        paused = true;
+        globalThis.__releaseRuleSelection = release;
+        await gate;
+      }
+    };
+    globalThis.__olderRuleSelection = w
+      .selectRule(
+        globalThis.__workspaceFixture.automation.rules.find((rule) => rule.id === ids.inbound),
+      )
+      .finally(() => {
+        w.$whenRendered = rendered;
+      });
+  }, ids);
+  await page.waitForFunction(() => !!globalThis.__releaseRuleSelection);
+  await row(ids.saved).click();
+  await page.waitForFunction(
+    (id) => document.querySelector("app-shell").automation.editingAutoResponseId === id,
+    ids.saved,
+  );
+  await page.evaluate(async () => {
+    globalThis.__releaseRuleSelection();
+    await globalThis.__olderRuleSelection;
+    delete globalThis.__releaseRuleSelection;
+    delete globalThis.__olderRuleSelection;
+  });
+  assert.deepEqual(
+    (await snapshot()).ids,
+    [ids.saved],
+    "A stale child rolled back its parent selection",
+  );
+
+  // Both requests share one leave decision; only the latest may apply it.
+  const baseline = await page.locator('.auto-response-editor [name="body"]').inputValue();
+  await page.locator('.auto-response-editor [name="body"]').fill("Pending response draft");
+  await page.waitForFunction(() => document.querySelector("app-shell").automation.draftDirty);
+  await page.evaluate((ids) => {
+    const w = document.querySelector("app-shell").automation,
+      rules = globalThis.__workspaceFixture.automation.rules;
+    globalThis.__ruleSelectionRequests = Promise.all([
+      w.selectRule(rules.find((rule) => rule.id === ids.target)),
+      w.selectRule(rules.find((rule) => rule.id === ids.inbound)),
+    ]);
+  }, ids);
+  await page
+    .locator(".unsaved-rule-dialog")
+    .getByRole("button", { name: "Discard changes", exact: true })
+    .click();
+  await page.evaluate(async () => {
+    await globalThis.__ruleSelectionRequests;
+    delete globalThis.__ruleSelectionRequests;
+  });
+  assert.deepEqual(
+    (await snapshot()).ids,
+    [ids.inbound],
+    "A shared leave decision applied an older selection",
+  );
+  await row(ids.saved).click();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").automation.loadingSavedResponse,
+  );
+  assert.equal(
+    await page.locator('.auto-response-editor [name="body"]').inputValue(),
+    baseline,
+    "Returning to a mounted editor restored a discarded draft",
+  );
+  await row(ids.target).click();
+  const headers = page.locator('header-rules[editor-kind="headers"]'),
+    savedBody = page.locator('.auto-response-editor [name="body"]');
+  await headers.getByLabel("Rule name", { exact: true }).fill("Pending header draft");
+  await row(ids.saved).click();
+  await savedBody.fill("Keep after a canceled destination");
+  await row(ids.inbound).click();
+  await page
+    .locator(".unsaved-rule-dialog")
+    .getByRole("button", { name: "Discard changes", exact: true })
+    .click();
+  await headers
+    .locator(".header-unsaved")
+    .getByRole("button", { name: "Keep editing", exact: true })
+    .click();
+  await page.waitForFunction(
+    (id) => document.querySelector("app-shell").automation.ruleSelection.ids.has(id),
+    ids.saved,
+  );
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").automation.draftDirty),
+    true,
+    "A destination that kept its own draft consumed the source discard",
+  );
+  assert.equal(await savedBody.inputValue(), "Keep after a canceled destination");
+  await page.evaluate(async () => {
+    const w = document.querySelector("app-shell").automation;
+    await w.revertAutoResponse();
+    await w.headerRulesEditor.discard();
+  });
+  await row(ids.target).click();
+  await checkBulkSelectionOwnership(page, ids);
+}
+
+async function checkBulkSelectionOwnership(page, ids) {
+  const search = page.getByLabel("Search rules", { exact: true }),
+    grid = page.getByRole("grid", { name: "Traffic rules", exact: true });
+  for (const target of [ids.target, ids.saved]) {
+    await search.fill("");
+    await grid.locator(`tr[data-rule-id="${target}"]`).click();
+    await page.waitForFunction(
+      () => !document.querySelector("app-shell").automation.loadingSavedResponse,
+    );
+    for (const action of ["duplicate", "undo-remove"]) {
+      if (action === "undo-remove") {
+        await search.fill("");
+        await grid.locator(`tr[data-rule-id="${target}"]`).click();
+        await page.waitForFunction(
+          () => !document.querySelector("app-shell").automation.loadingSavedResponse,
+        );
+        await page.evaluate(() =>
+          document.querySelector("app-shell").automation.mutateSelectedRules("remove"),
+        );
+      }
+      await page.evaluate((action) => {
+        const w = document.querySelector("app-shell").automation;
+        globalThis.__workspaceFixture.holdCommand = "activate_automation";
+        globalThis.__pendingRuleMutation =
+          action === "duplicate" ? w.mutateSelectedRules("duplicate") : w.undoRemoveAutoResponse();
+      }, action);
+      await page.waitForFunction(() => !!globalThis.__workspaceFixture.finishHeldCommand);
+      await search.fill(action === "duplicate" ? "Outbound" : "Inbound");
+      const selected = await page.evaluate(async () => {
+        const state = globalThis.__workspaceFixture;
+        state.finishHeldCommand();
+        delete state.finishHeldCommand;
+        await globalThis.__pendingRuleMutation;
+        delete globalThis.__pendingRuleMutation;
+        return [...document.querySelector("app-shell").automation.ruleSelection.ids];
+      });
+      assert.deepEqual(selected, [], `${action}: a late mutation replaced newer search selection`);
+      if (action === "duplicate") {
+        await page.evaluate(() =>
+          document.querySelector("app-shell").automation.undoRemoveAutoResponse(),
+        );
+      }
+    }
+  }
+  await search.fill("");
+  await grid.locator(`tr[data-rule-id="${ids.target}"]`).click();
+}
+
+async function checkHeaderDraftRaces(page) {
+  const ids = await page.evaluate(() => {
+    const w = document.querySelector("app-shell").automation,
+      editor = w.headerRulesEditor,
+      rendered = editor.$whenRendered;
+    let release,
+      paused = false;
+    const gate = new Promise((resolve) => (release = resolve));
+    editor.$whenRendered = async () => {
+      await rendered.call(editor);
+      if (!paused && !editor.hrId) {
+        paused = true;
+        globalThis.__releaseHeaderDraft = release;
+        await gate;
+      }
+    };
+    globalThis.__olderHeaderDraft = editor.newRule(undefined, "request").finally(() => {
+      editor.$whenRendered = rendered;
+    });
+    const rules = globalThis.__workspaceFixture.automation.rules;
+    return {
+      inbound: rules.find((rule) => rule.displayName === "Inbound headers").id,
+      outbound: rules.find((rule) => rule.displayName === "Outbound headers").id,
+    };
+  });
+  await page.waitForFunction(() => !!globalThis.__releaseHeaderDraft);
+  const grid = page.getByRole("grid", { name: "Traffic rules", exact: true });
+  await grid.locator(`tr[data-rule-id="${ids.inbound}"]`).click();
+  await page.waitForFunction(
+    (id) => document.querySelector("app-shell").automation.headerRulesEditor.hrId === id,
+    ids.inbound,
+  );
+  const phase = await page.evaluate(async () => {
+    globalThis.__releaseHeaderDraft();
+    await globalThis.__olderHeaderDraft;
+    delete globalThis.__releaseHeaderDraft;
+    delete globalThis.__olderHeaderDraft;
+    return document.querySelector("app-shell").automation.headerRulesEditor.hrPhase;
+  });
+  assert.equal(
+    phase,
+    "response",
+    "A superseded new request draft changed the selected response rule",
+  );
+
+  await page.evaluate(() =>
+    document.querySelector("app-shell").automation.headerRulesEditor.newRule(undefined, "request"),
+  );
+  const name = page
+      .locator('header-rules[editor-kind="headers"]')
+      .getByLabel("Rule name", { exact: true }),
+    original = await name.inputValue();
+  await name.fill("Temporary request name");
+  await name.fill(original);
+  assert.equal(
+    await page.evaluate(
+      () => document.querySelector("app-shell").automation.headerRulesEditor.hrDirty,
+    ),
+    false,
+    "A pristine request draft used a response baseline",
+  );
+  await grid.locator(`tr[data-rule-id="${ids.outbound}"]`).click();
 }
 
 async function checkUnsavedDialogs(page, workspace, choose, root) {

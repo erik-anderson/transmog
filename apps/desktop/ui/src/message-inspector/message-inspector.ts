@@ -1,4 +1,5 @@
 import { WebUIElement, attr, observable } from "@microsoft/webui-framework";
+import { captureFocus, captureRenderScope } from "../rendering.js";
 import type { ConverterText } from "../converter-selection.js";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type {
@@ -38,11 +39,27 @@ const exactHeaderBytes = (value: number | null | undefined): string =>
 export class MessageInspector extends WebUIElement {
   headerVisualization?: ExtensionVisualizer;
   bodyVisualization?: ExtensionVisualizer;
+  private renderScope(): () => boolean {
+    return captureRenderScope(this, () => [
+      this.detail?.id,
+      this.boundary,
+      this.mode,
+      this.viewer,
+      this.headerViewer,
+      this.authInterpretation,
+      this.bodySourceMode,
+    ]);
+  }
   async reviewExtensionDebugger(extensionId: string, visualizerId: string): Promise<boolean> {
     if (!this.detail) {
       return false;
     }
+    const focus = captureFocus(this),
+      initial = this.renderScope();
     await this.refreshChoices(true);
+    if (!initial() || !focus()) {
+      return false;
+    }
     const match = (choice: VisualizerChoice): boolean =>
       choice.extensionId === extensionId && choice.visualizerId === visualizerId;
     const body = this.bodyChoices.find(match),
@@ -59,7 +76,11 @@ export class MessageInspector extends WebUIElement {
     }
     this.setChoices();
     this.rememberView();
-    this.$flushUpdates();
+    const current = this.renderScope();
+    await this.$whenRendered();
+    if (!current() || !focus()) {
+      return false;
+    }
     const visualization = body ? this.bodyVisualization : this.headerVisualization;
     visualization?.showDebuggerOptions();
     return true;
@@ -74,11 +95,15 @@ export class MessageInspector extends WebUIElement {
   private authRequestedKey = "";
   authTab!: HTMLButtonElement;
   bodyViewerControl!: HTMLSelectElement;
-  closeAuthBody(): void {
+  async closeAuthBody(): Promise<void> {
+    const focus = captureFocus(this);
     this.authInterpretation = "auto";
     this.showMode("body");
-    this.$flushUpdates();
-    this.bodyViewerControl?.focus();
+    const current = this.renderScope();
+    await this.$whenRendered();
+    if (current() && focus()) {
+      this.bodyViewerControl?.focus();
+    }
   }
   onAuthCount(
     event: CustomEvent<{ count: number | null; complete?: boolean; failed?: boolean }>,
@@ -148,7 +173,17 @@ export class MessageInspector extends WebUIElement {
       ) {
         return;
       }
-      this.$flushUpdates();
+      await this.$whenRendered();
+      if (
+        moved ||
+        !this.isConnected ||
+        source.sessionId !== this.detail?.id ||
+        source.boundary !== this.boundary ||
+        this.mode !== "headers" ||
+        this.headerViewer !== "raw"
+      ) {
+        return;
+      }
       const root = this.getRootNode();
       if (root instanceof ShadowRoot) {
         root.getElementById(this.pane + "-header-" + index)?.focus({ preventScroll: false });
@@ -158,18 +193,27 @@ export class MessageInspector extends WebUIElement {
       document.removeEventListener("keydown", interaction, true);
     }
   }
-  showAuthBoundary(boundary: string, interpretation = "auto", scrollTop?: number): void {
+  async showAuthBoundary(
+    boundary: string,
+    interpretation = "auto",
+    scrollTop?: number,
+  ): Promise<void> {
     if (!this.heads().some((head) => head.boundary === boundary)) {
       return;
     }
+    const focus = captureFocus(this);
     this.boundary = boundary;
     this.updateMessage();
     this.authInterpretation = interpretation;
     this.showMode("auth");
-    this.$flushUpdates();
+    const current = this.renderScope();
+    await this.$whenRendered();
+    if (!current() || !focus()) {
+      return;
+    }
     this.authTab?.focus({ preventScroll: true });
     if (scrollTop !== undefined) {
-      this.querySelector<AuthInspector>("auth-inspector")?.restorePosition(scrollTop);
+      await this.querySelector<AuthInspector>("auth-inspector")?.restorePosition(scrollTop);
     }
   }
   headerContext(
@@ -331,18 +375,21 @@ export class MessageInspector extends WebUIElement {
     event.stopPropagation();
     this.bodySourceLimited = event.detail;
   }
-  changeSourceMode(mode: string, event?: Event): void {
+  async changeSourceMode(mode: string, event?: Event): Promise<void> {
+    const focus = captureFocus(this);
+    const eventTarget = event?.currentTarget;
     if (this.bodySourceMode === mode) {
       return;
     }
-    const source = event?.currentTarget as HTMLElement | null,
+    const source = eventTarget as HTMLElement | null,
       root = this.getRootNode();
     const restore =
       !!source &&
       (root instanceof ShadowRoot ? root.activeElement : document.activeElement) === source;
     this.bodySourceMode = mode;
-    this.$flushUpdates();
-    if (restore) {
+    const current = this.renderScope();
+    await this.$whenRendered();
+    if (restore && current() && focus()) {
       (mode === "source" ? this.bodySourceSourceTab : this.bodySourceFieldsTab)?.focus({
         preventScroll: true,
       });
@@ -352,11 +399,15 @@ export class MessageInspector extends WebUIElement {
     event.stopPropagation();
     this.bodySourceMode = event.detail;
   }
-  findSource(): void {
+  async findSource(): Promise<void> {
+    const focus = captureFocus(this);
     this.bodyOptions.open = false;
     this.bodySourceMode = "source";
-    this.$flushUpdates();
-    this.bodySourceViewer?.find();
+    const current = this.renderScope();
+    await this.$whenRendered();
+    if (current() && focus()) {
+      this.bodySourceViewer?.find();
+    }
   }
   @observable bodyNotice = "Select an exchange to preview its body.";
   @observable bodyCopyLabel = "Body preview";
@@ -816,13 +867,18 @@ export class MessageInspector extends WebUIElement {
       this.largestFirst ? (a, b) => b.bytes - a.bytes : (a, b) => Number(a.id) - Number(b.id),
     );
   }
-  changeViewer(event: Event): void {
-    const value = (event.currentTarget as HTMLSelectElement).value;
+  async changeViewer(event: Event): Promise<void> {
+    const eventTarget = event?.currentTarget;
+    const value = (eventTarget as HTMLSelectElement).value;
     if (value.startsWith("auth:") && authBodyFormats[value.slice(5)]) {
+      const focus = captureFocus(this);
       this.authInterpretation = value.slice(5);
       this.showMode("auth");
-      this.$flushUpdates();
-      this.authTab?.focus();
+      const current = this.renderScope();
+      await this.$whenRendered();
+      if (current() && focus()) {
+        this.authTab?.focus();
+      }
       return;
     }
     this.viewer = value;

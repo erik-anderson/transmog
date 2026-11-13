@@ -8,7 +8,7 @@ export async function checkResponseSetWorkspaces(page, root) {
   await page.goto("https://workspace.test/");
   await page.getByRole("link", { name: /Automation/ }).click();
   await page.waitForFunction(
-    () => !!document.querySelector("app-shell").automation.autoresponseState,
+    () => !!document.querySelector("app-shell").automation?.autoresponseState,
   );
   await page.evaluate(() => {
     const state = globalThis.__workspaceFixture;
@@ -52,6 +52,25 @@ export async function checkResponseSetWorkspaces(page, root) {
   const originalLive = await page.evaluate(() =>
     JSON.stringify(globalThis.__workspaceFixture.automation.rules),
   );
+  for (const modifier of ["ctrlKey", "metaKey"]) {
+    assert.equal(
+      await sets.evaluate(
+        (workspace, modifier) =>
+          workspace.querySelector(".response-set-current").dispatchEvent(
+            new KeyboardEvent("keydown", {
+              key: "s",
+              [modifier]: true,
+              bubbles: true,
+              composed: true,
+              cancelable: true,
+            }),
+          ),
+        modifier,
+      ),
+      false,
+      "Save shortcut must cancel the native default during event dispatch",
+    );
+  }
   const add = async (source) => {
     const count = await page.evaluate(
       () => document.querySelector("app-shell").automation.responseSets.draftRules.length,
@@ -66,6 +85,29 @@ export async function checkResponseSetWorkspaces(page, root) {
     await editor.waitFor({ state: "visible" });
   };
   await add("Create from scratch…");
+  assert.equal(
+    await workspace.evaluate(async (element) => {
+      const status = element.autoResponseStatus,
+        value = status.value,
+        open = element.responseOpen,
+        focused = status.getRootNode().activeElement;
+      try {
+        element.responseOpen = false;
+        status.value = "100";
+        await element.$whenRendered();
+        status.reportValidity();
+        await element.$whenRendered();
+        return status.getRootNode().activeElement === status;
+      } finally {
+        status.value = value;
+        element.responseOpen = open;
+        await element.$whenRendered();
+        focused?.focus();
+      }
+    }),
+    true,
+    "Native validation must reveal and focus a response status in a closed section",
+  );
   await editor.getByLabel("Response name", { exact: true }).fill("Checkout response");
   await editor
     .getByLabel("Matching address", { exact: true })
@@ -462,7 +504,7 @@ export async function checkResponseSetDraftRegressions(page) {
       },
       request: {
         ...action,
-        responseAsset: "draft-regression-asset@1",
+        responseAsset: id === "Response A" ? "draft-regression-asset@1" : "draft-regression-b@1",
         allowNonIdempotentBodyReplacement: false,
       },
       response: action,
@@ -480,6 +522,12 @@ export async function checkResponseSetDraftRegressions(page) {
         provenance: { kind: "authored" },
       },
     ];
+    state.assets.push({
+      ...state.assets[0],
+      id: "draft-regression-b",
+      display: "saved B",
+      bodyBytes: 7,
+    });
     state.automation = {
       schemaVersion: 2,
       generation: 1,
@@ -516,6 +564,86 @@ export async function checkResponseSetDraftRegressions(page) {
   const workspace = page.locator("automation-workspace"),
     sets = workspace.locator("response-set-workspace"),
     editor = workspace.locator(".auto-response-editor");
+  assert.deepEqual(
+    await workspace.evaluate(async (automation) => {
+      const invoke = window.__TAURI_INTERNALS__.invoke;
+      let release;
+      const pending = new Promise((resolve) => (release = resolve));
+      window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+        const result = await invoke(command, args);
+        if (command === "inspect_response_asset" && args.reference === "draft-regression-asset@1") {
+          await pending;
+        }
+        return result;
+      };
+      const select = (ruleId) =>
+        automation.editCollectionResponse(
+          new CustomEvent("set-edit", {
+            detail: { ruleId },
+          }),
+        );
+      const older = select("Response A"),
+        newer = select("Response B");
+      try {
+        await newer;
+        release();
+        await older;
+        await Promise.all([select("Response A"), select("Response B")]);
+        return {
+          id: automation.collectionRuleId,
+          asset: automation.savedResponse.asset.id,
+          body: automation.autoResponseBody.value,
+          pendingDraftCaptured: automation.collectionSnapshots.has("Response A"),
+        };
+      } finally {
+        release();
+        await older;
+        window.__TAURI_INTERNALS__.invoke = invoke;
+      }
+    }),
+    { id: "Response B", asset: "draft-regression-b", body: "saved B", pendingDraftCaptured: false },
+    "Cold response selections must not share ownership of the latest editor revision",
+  );
+  await sets
+    .locator(".response-set-current")
+    .getByLabel("Notes", { exact: true })
+    .fill("Discard this note");
+  const discardedSelection = await workspace.evaluate(async (automation) => {
+    const sets = automation.responseSets,
+      rendered = sets.$whenRendered;
+    let release,
+      entered,
+      paused = false;
+    const gate = new Promise((resolve) => (release = resolve)),
+      waiting = new Promise((resolve) => (entered = resolve));
+    sets.$whenRendered = async () => {
+      await rendered.call(sets);
+      if (!paused) {
+        paused = true;
+        entered();
+        await gate;
+      }
+    };
+    const discard = automation.discardCollection();
+    try {
+      await waiting;
+      await automation.editCollectionResponse(
+        new CustomEvent("set-edit", { detail: { ruleId: "Response A" } }),
+      );
+      release();
+      await discard;
+      return automation.collectionRuleId;
+    } finally {
+      release();
+      await discard;
+      sets.$whenRendered = rendered;
+    }
+  });
+  assert.equal(
+    discardedSelection,
+    "Response A",
+    "An older discard restored its response over a newer selection",
+  );
   const edit = async (name) => {
     await sets.getByRole("button", { name, exact: true }).click();
     await page.waitForFunction(
@@ -523,6 +651,76 @@ export async function checkResponseSetDraftRegressions(page) {
     );
   };
   await edit("Response B");
+  const originalB = await editor.locator('[name="body"]').inputValue();
+  const address = editor.getByLabel("Matching address", { exact: true });
+  const originalAddressB = await address.inputValue();
+  await editor.locator('[name="body"]').fill("Pending response B body");
+  await address.fill("https://example.test/pending-b");
+  await edit("Response A");
+  const originalA = await editor.locator('[name="body"]').inputValue();
+  const originalAddressA = await address.inputValue();
+  await editor.locator('[name="body"]').fill("Pending response A body");
+  await address.fill("https://example.test/pending-a");
+  await edit("Response B");
+  const preservedA = await workspace.evaluate(async (automation) => {
+    const rules = automation.responseSets.draftRules;
+    const id = rules.find((rule) => rule.displayName === "Response A").id;
+    const select = (name) =>
+      automation.editCollectionResponse(
+        new CustomEvent("set-edit", {
+          detail: { ruleId: rules.find((rule) => rule.displayName === name).id },
+        }),
+      );
+    await Promise.all([select("Response A"), select("Response B")]);
+    return automation.collectionSnapshots.get(id).fields.find((field) => field.name === "body")
+      .value;
+  });
+  assert.equal(
+    preservedA,
+    "Pending response A body",
+    "Rapid collection selection must preserve the pending response's own form fields",
+  );
+  await edit("Response A");
+  assert.equal(
+    await editor.locator('[name="body"]').inputValue(),
+    "Pending response A body",
+    "Rapid collection selection must not capture another response's fields into the pending draft",
+  );
+  assert.equal(await address.inputValue(), "https://example.test/pending-a");
+  await editor.locator('[name="body"]').fill(originalA);
+  await address.fill(originalAddressA);
+  await edit("Response B");
+  assert.equal(await editor.locator('[name="body"]').inputValue(), "Pending response B body");
+  assert.equal(await address.inputValue(), "https://example.test/pending-b");
+  await editor.locator('[name="body"]').fill(originalB);
+  await address.fill(originalAddressB);
+  await edit("Response A");
+  await address.fill("");
+  await editor.getByLabel("URL matching", { exact: true }).selectOption("any");
+  await edit("Response B");
+  await editor.locator('[name="method"]').selectOption("CUSTOM");
+  await editor.getByLabel("Custom method", { exact: true }).fill("PROPFIND");
+  await sets.getByRole("button", { name: "Save changes", exact: true }).click();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").automation.responseSets.busy,
+  );
+  const savedMatchers = await page.evaluate(() =>
+    globalThis.__workspaceFixture.automation.responseSets[0].rules.map((rule) => rule.matcher),
+  );
+  assert.equal(
+    savedMatchers[0].url,
+    null,
+    "Saving a restored draft must validate its own rendered required fields",
+  );
+  assert.equal(savedMatchers[1].method, "PROPFIND");
+  await editor.locator('[name="method"]').selectOption("GET");
+  await edit("Response A");
+  await editor.getByLabel("URL matching", { exact: true }).selectOption("exact");
+  await address.fill(originalAddressA);
+  await sets.getByRole("button", { name: "Save changes", exact: true }).click();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").automation.responseSets.busy,
+  );
   await edit("Response A");
   await editor.getByText("Request header conditions", { exact: true }).click();
   await editor.locator('[name="requestHeaders"]').fill("Invalid header");

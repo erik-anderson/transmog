@@ -1,3 +1,4 @@
+import { captureFocus, captureRenderScope } from "../rendering.js";
 import initialState from "../initial-state.json";
 import { attr, observable } from "@microsoft/webui-framework";
 import { invoke } from "@tauri-apps/api/core";
@@ -134,21 +135,35 @@ export class BreakpointWorkspace extends WorkspaceElement {
     this.detailsOpen = true;
     this.renderBreakpoints({ enabled: this.controllerEnabled, paused: this.pausedExchanges });
   }
-  backToQueue(): void {
+  async backToQueue(): Promise<void> {
+    const focus = captureFocus(this);
     this.detailsOpen = false;
-    this.$flushUpdates();
+    const current = captureRenderScope(this, () => [this.view, this.selectedId, this.detailsOpen]);
+    await this.$whenRendered();
+    if (!current() || !focus()) {
+      return;
+    }
     this.pausedQueue
       .querySelector<HTMLElement>('[data-decision-id="' + this.selectedId + '"]')
       ?.focus();
   }
-  queueKeyboard(id: number, event: KeyboardEvent): void {
+  async queueKeyboard(id: number, event: KeyboardEvent): Promise<void> {
+    const focus = captureFocus(this);
     if (isTextEditing(event)) {
       return;
     }
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       this.choosePaused(id);
-      this.$flushUpdates();
+      const current = captureRenderScope(this, () => [
+        this.view,
+        this.selectedId,
+        this.detailsOpen,
+      ]);
+      await this.$whenRendered();
+      if (!current() || !focus()) {
+        return;
+      }
       this.pausedEditor?.focusEditor();
       return;
     }
@@ -168,7 +183,11 @@ export class BreakpointWorkspace extends WorkspaceElement {
     event.preventDefault();
     this.selectedId = this.pausedExchanges[next]?.decisionId ?? null;
     this.renderBreakpoints({ enabled: this.controllerEnabled, paused: this.pausedExchanges });
-    this.$flushUpdates();
+    const current = captureRenderScope(this, () => [this.view, this.selectedId, this.detailsOpen]);
+    await this.$whenRendered();
+    if (!current() || !focus()) {
+      return;
+    }
     this.pausedQueue
       .querySelector<HTMLElement>('[data-decision-id="' + this.selectedId + '"]')
       ?.focus();

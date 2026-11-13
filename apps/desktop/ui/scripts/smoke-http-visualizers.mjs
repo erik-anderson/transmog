@@ -109,7 +109,7 @@ export async function smokeHttpVisualizers(call, evaluate, screenshotPath) {
     await open(paths[0]);
     assert.equal(await evaluate(`${viewer}.view.document.roots[0].value.value`), text);
     const result = await evaluate(
-      `(()=>{const v=${viewer},source=v.view.sources.find(source=>source.httpDecoded);if(!source)throw new Error('Decoded provenance missing');v.selectNode('body-text');v.showSpan(v.view.document.roots[0].spans[0]);return {handle:v.view.handle,source};})()`,
+      `(async ()=>{const v=${viewer},source=v.view.sources.find(source=>source.httpDecoded);if(!source)throw new Error('Decoded provenance missing');await v.selectNode('body-text');v.showSpan(v.view.document.roots[0].spans[0]);return {handle:v.view.handle,source};})()`,
     );
     const decoded = await invoke("visualizer_source", {
       handle: result.handle,

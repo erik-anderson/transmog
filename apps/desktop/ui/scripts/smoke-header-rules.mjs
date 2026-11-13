@@ -77,7 +77,7 @@ export async function smokeHeaderRules({ main, viewer, waitFor, screenshot }) {
       (await invoke("automation_status")).rules.some((r) => r.id === saved.id),
       false,
     );
-    await main.evaluate(`${editor}.undoRemove()`);
+    await main.evaluate(`(async()=>{await ${editor}.undoRemove()})()`);
     assert.equal(
       (await invoke("automation_status")).rules.some((r) => r.id === saved.id),
       true,

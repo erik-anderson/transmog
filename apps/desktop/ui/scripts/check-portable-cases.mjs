@@ -276,8 +276,59 @@ export async function checkPortableCases(page, root) {
   await dialog.getByRole("button", { name: "Close", exact: true }).click();
   await traffic.getByRole("button", { name: "Files", exact: true }).click();
   await traffic.getByRole("button", { name: "Save case…", exact: true }).click();
+  await page.evaluate(() => {
+    const fixture = globalThis.__workspaceFixture,
+      original = window.__TAURI_INTERNALS__.invoke;
+    fixture.restoreCaseCancelInvoke = () => {
+      window.__TAURI_INTERNALS__.invoke = original;
+    };
+    window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+      if (command === "cancel_case_operation" && fixture.rejectCaseCancel) {
+        throw new Error("Fixture cancellation unavailable");
+      }
+      const result = await original(command, args);
+      if (command === "cancel_case_operation") {
+        await new Promise((resolve) => {
+          fixture.finishCaseCancel = resolve;
+        });
+        fixture.caseCancelFinished = true;
+      }
+      return result;
+    };
+  });
   await dialog.getByRole("button", { name: "Cancel operation", exact: true }).click();
   await dialog.getByText("Case operation canceled.", { exact: true }).waitFor();
+  await page.waitForFunction(() => globalThis.__workspaceFixture.finishCaseCancel);
+  await page.evaluate(() => document.querySelector("app-shell").traffic.portableCase.workingCopy());
+  await page.evaluate(() => globalThis.__workspaceFixture.finishCaseCancel());
+  await page.waitForFunction(() => globalThis.__workspaceFixture.caseCancelFinished);
+  await dialog
+    .getByText("Folder saved to C:/cases/plaintext-working-copy", { exact: true })
+    .waitFor();
+  await page.evaluate(() => {
+    const fixture = globalThis.__workspaceFixture;
+    fixture.rejectCaseCancel = true;
+    fixture.holdCommand = "save_case_working_copy";
+    fixture.finishHeldCommand = null;
+    void document.querySelector("app-shell").traffic.portableCase.workingCopy();
+  });
+  await page.waitForFunction(() => globalThis.__workspaceFixture.finishHeldCommand);
+  await dialog.getByRole("button", { name: "Cancel operation", exact: true }).click();
+  await dialog
+    .getByText("Cancellation could not be requested: Fixture cancellation unavailable", {
+      exact: true,
+    })
+    .waitFor();
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").traffic.portableCase.caseBusy),
+    true,
+    "A cancellation failure stopped monitoring owned case work",
+  );
+  await page.evaluate(() => globalThis.__workspaceFixture.finishHeldCommand());
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").traffic.portableCase.caseBusy,
+  );
+  await page.evaluate(() => globalThis.__workspaceFixture.restoreCaseCancelInvoke());
   await dialog.getByRole("button", { name: "Close", exact: true }).click();
   await page.evaluate(() => {
     globalThis.__workspaceFixture.caseLocked = true;
@@ -590,7 +641,62 @@ export async function checkPortableCases(page, root) {
     true,
   );
   await dialog.getByRole("button", { name: "More", exact: true }).click();
+  await page.evaluate(() => {
+    const fixture = globalThis.__workspaceFixture;
+    fixture.holdCommand = "close_case";
+    fixture.finishHeldCommand = null;
+    fixture.closeCaseCalls = fixture.calls.close_case ?? 0;
+    const original = window.__TAURI_INTERNALS__.invoke;
+    fixture.restoreCaseUnloadInvoke = () => {
+      window.__TAURI_INTERNALS__.invoke = original;
+    };
+    let fail = true;
+    window.__TAURI_INTERNALS__.invoke = async (command, args) => {
+      if (command === "close_case" && fail) {
+        fail = false;
+        throw new Error("Fixture case unload unavailable");
+      }
+      return original(command, args);
+    };
+  });
   await dialog.getByRole("button", { name: "Unload case", exact: true }).click();
+  const unloadError = page.locator(".operation-error-dialog[open]");
+  await unloadError.getByText("Fixture case unload unavailable", { exact: true }).waitFor();
+  await unloadError.getByRole("button", { name: "Close", exact: true }).click();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").traffic.portableCase.caseBusy,
+  );
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").traffic.caseOpen),
+    true,
+    "A failed unload lost the open case",
+  );
+  await dialog.getByRole("button", { name: "More", exact: true }).click();
+  await dialog.getByRole("button", { name: "Unload case", exact: true }).click();
+  await page.waitForFunction(() => globalThis.__workspaceFixture.finishHeldCommand);
+  assert.equal(
+    await page.evaluate(async () => {
+      const panel = document.querySelector("app-shell").traffic.portableCase;
+      await panel.closePackage();
+      return panel.caseBusy;
+    }),
+    true,
+    "Unloading did not retain operation ownership",
+  );
+  await page.evaluate(() => globalThis.__workspaceFixture.finishHeldCommand());
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").traffic.portableCase.caseBusy,
+  );
+  assert.equal(
+    await page.evaluate(
+      () =>
+        globalThis.__workspaceFixture.calls.close_case -
+        globalThis.__workspaceFixture.closeCaseCalls,
+    ),
+    1,
+    "Unloading submitted twice",
+  );
+  await page.evaluate(() => globalThis.__workspaceFixture.restoreCaseUnloadInvoke());
   assert.equal(await dialog.isVisible(), false);
   assert.equal(
     await page.evaluate(() => document.querySelector("app-shell").traffic.caseOpen),

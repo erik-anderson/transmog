@@ -180,6 +180,22 @@ test("subtree copy rejects eviction loops and allows progressive children", asyn
       "Root\n  Child 0: 0\n  Child 1: 1",
     );
     assert.equal(pages, 2);
+    pages = 0;
+    let restored = false;
+    await visualizerCopyTree(
+      "root",
+      progressive(0),
+      () => true,
+      async () => {
+        await new Promise((resolve) => setImmediate(resolve));
+        restored = true;
+      },
+    );
+    assert.equal(
+      restored,
+      true,
+      "Copy must finish restoring the expanded inspection before completing",
+    );
   } finally {
     delete globalThis.__copyRangeHost;
   }

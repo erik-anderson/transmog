@@ -25,7 +25,7 @@ export async function smokeUserAgent(call, evaluate, screenshotPath) {
     );
     await wait(`Boolean(document.querySelector('app-shell').automation?.userAgentOverrides)`);
     await evaluate(
-      `(async()=>{const workspace=document.querySelector('app-shell').automation;workspace.showAutomationSection('headers');const editor=${component};await editor.add();editor.$flushUpdates();const fill=(name,value)=>{const field=editor.querySelector('[name="'+name+'"]');field.value=value;field.dispatchEvent(new Event('input',{bubbles:true}));};fill('uaName','Native Edge override');fill('uaHost','127.0.0.1');fill('uaPath','/ua-native');const select=editor.querySelector('[aria-label="User-Agent preset"]');select.value=Array.from(select.options).find(option=>/Edge.*Windows/.test(option.textContent)).value;select.dispatchEvent(new Event('change',{bubbles:true}));globalThis.__uaNativeSave=editor.saveAndEnable();})()`,
+      `(async()=>{const workspace=document.querySelector('app-shell').automation;workspace.showAutomationSection('headers');const editor=${component};await editor.add();await editor.$whenRendered();const fill=(name,value)=>{const field=editor.querySelector('[name="'+name+'"]');field.value=value;field.dispatchEvent(new Event('input',{bubbles:true}));};fill('uaName','Native Edge override');fill('uaHost','127.0.0.1');fill('uaPath','/ua-native');const select=editor.querySelector('[aria-label="User-Agent preset"]');select.value=Array.from(select.options).find(option=>/Edge.*Windows/.test(option.textContent)).value;select.dispatchEvent(new Event('change',{bubbles:true}));globalThis.__uaNativeSave=editor.saveAndEnable();})()`,
     );
     await evaluate(`globalThis.__uaNativeSave`);
     await wait(
@@ -33,7 +33,7 @@ export async function smokeUserAgent(call, evaluate, screenshotPath) {
     );
     assert.ok(await evaluate(`document.querySelector('app-shell').automationEnabledCount>=1`));
     await evaluate(
-      `(async()=>{const editor=${component};await editor.add();editor.$flushUpdates();for(const[name,value]of[['uaName','Duplicate native'],['uaHost','127.0.0.1'],['uaPath','/ua-native']]){const input=editor.querySelector('[name="'+name+'"]');input.value=value;input.dispatchEvent(new Event('input',{bubbles:true}));}globalThis.__uaNativeSave=editor.saveAndEnable();})()`,
+      `(async()=>{const editor=${component};await editor.add();await editor.$whenRendered();for(const[name,value]of[['uaName','Duplicate native'],['uaHost','127.0.0.1'],['uaPath','/ua-native']]){const input=editor.querySelector('[name="'+name+'"]');input.value=value;input.dispatchEvent(new Event('input',{bubbles:true}));}globalThis.__uaNativeSave=editor.saveAndEnable();})()`,
     );
     await wait(`${component}.uaDuplicateDialog.open`);
     const point = await evaluate(
@@ -48,7 +48,7 @@ export async function smokeUserAgent(call, evaluate, screenshotPath) {
       ),
     );
     await evaluate(
-      `(()=>{const editor=${component};editor.uaDirty=false;const rule=editor.uaState.rules.find(rule=>rule.displayName==='Native Edge override');editor.load(rule);})()`,
+      `(async ()=>{const editor=${component};editor.uaDirty=false;const rule=editor.uaState.rules.find(rule=>rule.displayName==='Native Edge override');await editor.load(rule);})()`,
     );
     if (screenshotPath)
       await writeFile(
@@ -125,11 +125,11 @@ export async function smokeUserAgent(call, evaluate, screenshotPath) {
     assert.equal("user-agent" in absent, false);
     assert.equal("sec-ch-ua" in absent, false);
     await evaluate(
-      `(async()=>{const editor=${component};editor.load(editor.uaState.rules.find(rule=>rule.displayName==='Native Edge override'));const field=editor.querySelector('[name="uaPath"]');field.value='/ua-native/edge';field.dispatchEvent(new Event('input',{bubbles:true}));await editor.saveAndEnable();})()`,
+      `(async()=>{const editor=${component};await editor.load(editor.uaState.rules.find(rule=>rule.displayName==='Native Edge override'));const field=editor.querySelector('[name="uaPath"]');field.value='/ua-native/edge';field.dispatchEvent(new Event('input',{bubbles:true}));await editor.saveAndEnable();})()`,
     );
     const add = async (name, path, value) =>
       evaluate(
-        `(async()=>{const editor=${component};await editor.add();editor.$flushUpdates();for(const[name,value]of ${JSON.stringify(
+        `(async()=>{const editor=${component};await editor.add();await editor.$whenRendered();for(const[name,value]of ${JSON.stringify(
           [
             ["uaName", name],
             ["uaHost", "127.0.0.1"],

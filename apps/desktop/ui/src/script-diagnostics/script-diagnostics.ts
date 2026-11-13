@@ -247,6 +247,7 @@ export class ScriptDiagnostics extends WebUIElement {
     }
   }
   async openSource(frame: FrameView, generated: boolean, event: Event): Promise<void> {
+    const eventTarget = event?.currentTarget;
     const location = generated ? frame.generated : frame.location;
     if (!location || !frame.artifact) {
       return;
@@ -256,7 +257,7 @@ export class ScriptDiagnostics extends WebUIElement {
       return;
     }
     const version = ++this.sourceVersion;
-    this.sourceTrigger = event.currentTarget as HTMLElement;
+    this.sourceTrigger = eventTarget as HTMLElement;
     this.sourceStatus = "Loading the executing source snapshot…";
     this.sourcePage = null;
     this.sourceDialog.showModal();

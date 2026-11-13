@@ -261,7 +261,7 @@ export function installDebuggerWorkspaceFixture() {
       if (debug.recreateSurface && debug.open) {
         shell.debuggerPlacement = "closed";
         shell.debuggerDocked = false;
-        shell.$flushUpdates();
+        await shell.$whenRendered();
       }
       shell.debuggerPlacement = args.placement === "window" ? "bottom" : args.placement;
       shell.debuggerDocked = debug.open;

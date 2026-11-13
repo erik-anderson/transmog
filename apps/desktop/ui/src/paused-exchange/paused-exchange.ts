@@ -101,13 +101,16 @@ export class PausedExchangeElement extends WorkspaceElement {
           return;
         }
         this.editorLoaded = true;
-        this.$flushUpdates();
+        await this.$whenRendered();
         await waitForStyles(this.monacoStyles);
         if (!this.isConnected || !this.paused) {
           return;
         }
         this.editorReady = true;
-        this.$flushUpdates();
+        await this.$whenRendered();
+        if (!this.isConnected || !this.paused) {
+          return;
+        }
         this.model = this.monaco.editor.createModel(
           this.draftText,
           this.paused.phase.endsWith("body") ? "plaintext" : "json",

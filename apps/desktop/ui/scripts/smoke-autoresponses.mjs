@@ -30,7 +30,7 @@ export async function smokeAutoResponseFiles(call, evaluate, screenshotPath) {
       shell.shadowRoot.querySelector('a[data-view="automation"]').click();
       await new Promise(resolve=>setTimeout(resolve,100));
       const workspace=shell.shadowRoot.querySelector('automation-workspace');
-      await workspace.refreshAutomation();await workspace.editAutoResponse(rule,true);workspace.$flushUpdates();
+      await workspace.refreshAutomation();await workspace.editAutoResponse(rule,true);await workspace.$whenRendered();
       const waitForFile=async()=>{const deadline=Date.now()+15000;while((workspace.loadingSavedResponse||workspace.fileChoiceBusy)&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,20));if(workspace.loadingSavedResponse||workspace.fileChoiceBusy)throw new Error('Native file inspection did not finish');};
       await waitForFile();
       if(!workspace.autoResponseBody.disabled||!workspace.textContent.includes('Response body from file'))throw new Error('Native linked-file overlay is missing');
@@ -55,15 +55,15 @@ export async function smokeAutoResponseFiles(call, evaluate, screenshotPath) {
       );
     await unlink(path);
     await evaluate(
-      `(async()=>{const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');await w.refreshResponseFile();w.$flushUpdates();if(!w.responseBodyFileError.includes('missing or unreadable')||!w.responseBodyFile)throw new Error('Native missing-file state lost configuration or recovery');})()`,
+      `(async()=>{const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');await w.refreshResponseFile();await w.$whenRendered();if(!w.responseBodyFileError.includes('missing or unreadable')||!w.responseBodyFile)throw new Error('Native missing-file state lost configuration or recovery');})()`,
     );
     await writeFile(path, "external replacement");
     await evaluate(
-      `(async()=>{const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');await w.refreshResponseFile();if(w.responseBodyFileError)throw new Error('Native restored-file state did not recover');w.clearResponseBodyFile();w.$flushUpdates();if(w.autoResponseBody.disabled||w.autoResponseBody.readOnly)throw new Error('Native clear-file action did not restore editing');})()`,
+      `(async()=>{const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');await w.refreshResponseFile();if(w.responseBodyFileError)throw new Error('Native restored-file state did not recover');w.clearResponseBodyFile();await w.$whenRendered();if(w.autoResponseBody.disabled||w.autoResponseBody.readOnly)throw new Error('Native clear-file action did not restore editing');})()`,
     );
     await evaluate(`(async()=>{
       const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace'),body='{"native":[1,2],"ready":true}';
-      w.autoResponseBody.value=body;w.openBodyDialog();
+      w.autoResponseBody.value=body;await w.openBodyDialog();
       const deadline=Date.now()+15000;while(!w.bodyEditor.bodyEditorReady&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,25));
       if(!w.bodyEditor.editor||w.bodyEditor.bodyLanguage!=='json'||!w.bodyEditor.bodyCanSave)throw new Error('Native syntax dialog did not hydrate with body-only saving');
       await w.bodyEditor.format();if(!w.bodyEditor.model.getValue().includes('\\n'))throw new Error('Native JSON formatting did not run');
@@ -98,11 +98,11 @@ export async function smokeAutoResponseFiles(call, evaluate, screenshotPath) {
     await evaluate(`(async()=>{
       const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');w.bodyEditor.commit(false);
       await new Promise(resolve=>setTimeout(resolve,50));if(!w.autoResponseBody.value.includes('\\n')||w.bodyEditor.model)throw new Error('Native dialog Apply did not restore and release the draft');
-      const applied=w.autoResponseBody.value,appliedBytes=w.currentBodyBytes();w.openBodyDialog();const deadline=Date.now()+15000;
+      const applied=w.autoResponseBody.value,appliedBytes=w.currentBodyBytes();await w.openBodyDialog();const deadline=Date.now()+15000;
       while(!w.bodyEditor.bodyEditorReady&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,25));
       w.bodyEditor.editor.setValue('cancelled');w.bodyEditor.cancel();await new Promise(resolve=>setTimeout(resolve,50));
       if(w.autoResponseBody.value!==applied)throw new Error('Native Cancel changed the draft');
-      w.openBodyDialog();while(!w.bodyEditor.bodyEditorReady&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,25));
+      await w.openBodyDialog();while(!w.bodyEditor.bodyEditorReady&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,25));
       w.bodyEditor.commit(true);const savedDeadline=Date.now()+15000;
       while((w.bodyEditor.surface.open||w.draftDirty||w.bodyEditor.model)&&Date.now()<savedDeadline)await new Promise(resolve=>setTimeout(resolve,25));
       if(w.bodyEditor.surface.open||w.draftDirty||w.bodyEditor.model)throw new Error('Native dialog Save rule failed: '+JSON.stringify({open:w.bodyEditor.surface.open,dirty:w.draftDirty,hasModel:Boolean(w.bodyEditor.model),canSave:w.bodyEditor.bodyCanSave,busy:w.bodyEditor.bodyBusy,error:w.bodyEditor.bodyError,ruleError:w.autoResponseError}));
@@ -142,7 +142,7 @@ export async function smokeAutoResponseDragging(call, evaluate, screenshotPath) 
     // Opening a rule (including after a drop) shows properties instead of the
     // list at compact native window sizes. Return through the normal Back action.
     const point = await evaluate(
-      `(async()=>{const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');await w.backToRules();w.$flushUpdates();const grip=w.querySelector('[data-rule-id="${id}"] .rule-drag-grip');grip.scrollIntoView({block:'nearest',behavior:'instant'});await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));const r=grip.getBoundingClientRect();if(!r.width||!r.height)throw new Error('Native drag grip is hidden');return {x:r.x+r.width/2,y:r.y+r.height/2};})()`,
+      `(async()=>{const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');await w.backToRules();await w.$whenRendered();const grip=w.querySelector('[data-rule-id="${id}"] .rule-drag-grip');grip.scrollIntoView({block:'nearest',behavior:'instant'});await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));const r=grip.getBoundingClientRect();if(!r.width||!r.height)throw new Error('Native drag grip is hidden');return {x:r.x+r.width/2,y:r.y+r.height/2};})()`,
     );
     await call("Input.dispatchMouseEvent", { type: "mouseMoved", ...point });
     await call("Input.dispatchMouseEvent", {
@@ -192,7 +192,7 @@ export async function smokeAutoResponseDragging(call, evaluate, screenshotPath) 
       const request={headers:[],replaceBody:null,discardBody:false,abortReason:null,responseAsset:asset.id+'@1',allowNonIdempotentBodyReplacement:false},response={headers:[],replaceBody:null,discardBody:false,abortReason:null};
       const rules=Array.from({length:55},(_,index)=>({id:'native-drag-'+index,displayName:'Native drag rule '+index,enabled:true,revision:1,priority:-3000000+index,matcher:{...matcher,url:{kind:'exact',value:'https://example.test/native-drag/'+index}},request,response}));
       const candidate=await invoke('validate_automation',{document:{schemaVersion:2,generation:original.generation,autoresponsesEnabled:original.autoresponsesEnabled,responseSets:original.responseSets,rules:[...rules,...original.rules]}});await invoke('activate_automation',{candidateId:candidate.candidateId});
-      shell.shadowRoot.querySelector('a[data-view="automation"]').click();await new Promise(resolve=>setTimeout(resolve,100));const w=shell.shadowRoot.querySelector('automation-workspace');w.draftDirty=false;await w.cancelAutoResponseEdit();await w.refreshAutomation();await w.editAutoResponse(rules[0],true);w.$flushUpdates();
+      await shell.activateView('automation');const w=shell.shadowRoot.querySelector('automation-workspace');w.draftDirty=false;await w.cancelAutoResponseEdit();await w.refreshAutomation();await w.editAutoResponse(rules[0],true);await w.$whenRendered();
     })()`);
     await start("native-drag-0");
     const bottom = await edge(true);

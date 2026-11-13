@@ -9,7 +9,7 @@ export async function checkPagePreviewRules(page, root) {
   const traffic = page.locator("traffic-workspace"),
     dialog = page.locator("captured-preview .captured-page-warning[open]");
   try {
-    await page.evaluate(() => {
+    await page.evaluate(async () => {
       const state = globalThis.__workspaceFixture;
       const rule = (id, enabled, priority) => ({
         id,
@@ -36,7 +36,7 @@ export async function checkPagePreviewRules(page, root) {
       // would be overwritten by the shared preview surface's next update.
       const shell = document.querySelector("app-shell");
       shell.viewerMode = false;
-      shell.$flushUpdates();
+      await shell.$whenRendered();
       shell.traffic.showCapturedPage();
     });
     await page.waitForFunction(() => !document.querySelector("app-shell").traffic.previewRulesBusy);
