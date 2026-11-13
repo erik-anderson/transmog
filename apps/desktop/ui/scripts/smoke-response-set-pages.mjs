@@ -103,26 +103,22 @@ export async function smokeResponseSetPages(options) {
     await h.pointer(dialog + `.querySelectorAll('input[type=radio]')[${index}]`);
   };
   await choose();
-  // WebUI captures the handler at hydration. Wrap its dispatch, preserving the
-  // real usePage handler, and intercept only its synchronous invoke registration.
-  // Restore both methods before awaiting the native result so status refreshes
-  // cannot replace the save's delayed reply.
+  // The template's click handler runs on this button. Bracket it with native
+  // capture/bubble listeners so only its synchronous IPC registration is held.
+  // Restore before the reply so independent status refreshes remain untouched.
   const delay = async (predicate) =>
       main.evaluate(`(()=>{
-    const node=${picker},method=Object.getOwnPropertyDescriptor(node,'$callEventHandler'),dispatch=node.$callEventHandler,usePage=node.usePage;
+    const button=${use},callbacks=window.__TAURI_INTERNALS__.callbacks;
+    const descriptor=Object.getOwnPropertyDescriptor(callbacks,'set'),original=callbacks.set;
     globalThis.releasePageReply=null;globalThis.pageDelayedCallbacks=0;
-    node.$callEventHandler=function(handler,...args){
-      if(handler!==usePage)return dispatch.call(this,handler,...args);
-      const callbacks=window.__TAURI_INTERNALS__.callbacks,descriptor=Object.getOwnPropertyDescriptor(callbacks,'set'),original=callbacks.set;
+    button.addEventListener('click',()=>{
       callbacks.set=function(id,callback){globalThis.pageDelayedCallbacks++;return original.call(this,id,result=>{
         if(${predicate})globalThis.releasePageReply=()=>callback(result);else callback(result);
       });};
-      try{return dispatch.call(this,handler,...args);}
-      finally{
-        if(descriptor)Object.defineProperty(callbacks,'set',descriptor);else delete callbacks.set;
-        if(method)Object.defineProperty(node,'$callEventHandler',method);else delete node.$callEventHandler;
-      }
-    };
+    },{capture:true,once:true});
+    button.addEventListener('click',()=>{
+      if(descriptor)Object.defineProperty(callbacks,'set',descriptor);else delete callbacks.set;
+    },{once:true});
   })()`),
     release = async () => {
       assert.equal(

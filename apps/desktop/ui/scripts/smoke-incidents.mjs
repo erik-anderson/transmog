@@ -108,6 +108,12 @@ export async function smokeIncidentRecording(main, viewer, traffic, path, screen
       `(async()=>{await window.__TAURI_INTERNALS__.invoke('stop_capture');await window.__TAURI_INTERNALS__.invoke('save_product_state',{productState:${JSON.stringify(original)}});await document.querySelector('app-shell').activateView('traffic');})()`,
     );
   }
+  const restored = await main.evaluate("window.__TAURI_INTERNALS__.invoke('product_state')");
+  assert.equal(restored.preferences.decryptHttps, original.preferences.decryptHttps);
+  assert.equal(
+    restored.preferences.configureSystemProxy,
+    original.preferences.configureSystemProxy,
+  );
   process.stdout.write(
     "Native desktop marker, marker-only file, viewer denial and stopped routing verified.\n",
   );

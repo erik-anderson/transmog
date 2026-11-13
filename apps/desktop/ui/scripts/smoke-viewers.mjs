@@ -257,6 +257,42 @@ try {
       0,
       "Viewer imported into the main catalog",
     );
+    // This isolated viewer profile has no interception CA. Give recording
+    // probes a valid certificate-free baseline before they snapshot settings;
+    // restoring the default HTTPS-on choice would require certificate setup.
+    const networkBaseline = await main.evaluate(`(async()=>{
+      const invoke=window.__TAURI_INTERNALS__.invoke;
+      const original=await invoke('desktop_bootstrap');
+      const product=await invoke('product_state');
+      product.preferences.configureSystemProxy=false;
+      product.preferences.decryptHttps=false;
+      await invoke('save_product_state',{productState:product});
+      let enableError=null;
+      if(!original.caFilesPresent){
+        const enabled=structuredClone(product);enabled.preferences.decryptHttps=true;
+        enableError=await invoke('save_product_state',{productState:enabled})
+          .then(()=>null,error=>error.message??String(error));
+      }
+      const saved=await invoke('product_state'),bootstrap=await invoke('desktop_bootstrap');
+      const settings=document.querySelector('app-shell').settings;
+      await settings.ready;await settings.loadSettings();
+      return {preferences:saved.preferences,enableError,
+        certificateUnchanged:original.caFilesPresent===bootstrap.caFilesPresent
+          && original.ownedCaSha256===bootstrap.ownedCaSha256
+          && original.ownedCaTrusted===bootstrap.ownedCaTrusted,
+        lifecycle:(await invoke('app_status')).lifecycle,
+        certificateMissing:!original.caFilesPresent};
+    })()`);
+    assert.equal(networkBaseline.preferences.configureSystemProxy, false);
+    assert.equal(networkBaseline.preferences.decryptHttps, false);
+    assert.equal(networkBaseline.certificateUnchanged, true);
+    assert.equal(networkBaseline.lifecycle, "stopped");
+    if (networkBaseline.certificateMissing) {
+      assert.match(networkBaseline.enableError, /interception certificate/i);
+    }
+    process.stdout.write(
+      "Certificate-free viewer recording baseline and HTTPS validation verified.\n",
+    );
     await smokeWindowShortcuts(main, viewer, targets, connect, waitFor, closeNative);
     // Taskbar Shift-click / middle-click relaunch the executable without files.
     const beforeRelaunch = await targets();
