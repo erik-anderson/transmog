@@ -11,8 +11,8 @@ repository.workspace = true
 getrandom.workspace = true
 sourcemap.workspace = true
 tokio.workspace = true
-transmog-script = { version = "=0.1.24", path = "../proxy-script" }
-transmog-script-diagnostics = { version = "=0.1.24", path = "../script-diagnostics" }
+transmog-script = { version = "=0.1.25", path = "../proxy-script" }
+transmog-script-diagnostics = { version = "=0.1.25", path = "../script-diagnostics" }
 
 [dev-dependencies]
 serde_json.workspace = true
