@@ -119,12 +119,13 @@ apply to this invocation and do not read or change desktop preferences.
 Process selection uses exact executable filenames, ignoring case on Windows.
 It matches all instances; add helper executables separately. Unidentified and
 remote callers pass through uninspected while a process filter is active.
-Excluded callers bypass rules and recording, including CONNECT metadata, but
-still use the proxy relay. See [process inspection](network-profiles.md#choose-processes-to-inspect)
+Excluded callers bypass inspection rules and still use the proxy relay.
+Their CONNECT tunnels retain connection summaries without headers or contents;
+other HTTP is not recorded. See [process inspection](network-profiles.md#choose-processes-to-inspect)
 for matching and platform details.
 
 `--no-decrypt-https` forwards HTTPS through opaque CONNECT tunnels and retains
-connection summaries for selected callers. Plain HTTP remains inspectable.
+connection summaries for every caller. Plain HTTP remains inspectable for selected callers.
 This mode does not create, load, install, or remove an interception CA for the
 run, and `serve` needs no `--ca-cert` or `--ca-key`. `record` still restores
 interrupted Windows proxy routing before starting. `--no-install-root` alone leaves HTTPS

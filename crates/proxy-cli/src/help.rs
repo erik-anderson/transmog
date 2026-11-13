@@ -149,8 +149,9 @@ Remove those proxy settings after recording.
 ", "Process filters are unavailable on this platform.
 Configure clients' HTTP/HTTPS proxy settings manually.
 Remove those proxy settings after recording.
-", "With a process filter, unidentified and remote callers pass through without inspection or recording.
---no-decrypt-https records selected HTTPS destination/byte summaries and selected plain HTTP.
+", "With a process filter, unidentified and remote callers pass through without message inspection.
+CONNECT destination/byte summaries are recorded for every caller; excluded headers and contents are not.
+--no-decrypt-https records opaque HTTPS summaries and selected plain HTTP.
 It cannot be combined with --install-root or --persistent-root; existing root cleanup is deferred.
 Bodies, URLs and metadata can contain private data even with --redact; review before sharing.
 Inspectable HTTP response bodies are recorded. Trace files have no fixed size ceiling.
@@ -206,7 +207,8 @@ extensionless names accept an omitted .exe suffix. Other extensions remain disti
 ", "Process names are case sensitive and match exact executable basenames.
 ", "Process filters are unavailable on this platform.
 ", "With a filter, unidentified and remote callers pass through
-without inspection, proof markers or recording. Choices apply only to this run.
+without message inspection or proof markers. Choices apply only to this run.
+Excluded CONNECT tunnels retain connection summaries without headers or contents; other HTTP is not recorded.
 Opaque HTTPS records destination and byte summaries when --capture is used; selected plain HTTP
 is still captured. --no-decrypt-https never loads or creates an interception CA.
 For guided setup, encryption or circular retention, use record.");

@@ -1330,7 +1330,7 @@ impl ProxyState {
         context: ConnectionContext,
         cancellation: &mut RequestCancellation,
     ) -> Result<Response<DownstreamBody>, ProxyRuntimeError> {
-        if !context.inspect {
+        if !context.inspect && request.method() != Method::CONNECT {
             return self.handle_uninspected_request(request, context).await;
         }
         if request.method() != Method::CONNECT {
@@ -1346,7 +1346,7 @@ impl ProxyState {
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
-        if !https.enabled {
+        if !context.inspect || !https.enabled {
             return self
                 .handle_opaque_connect(request, context, authority, cancellation)
                 .await;

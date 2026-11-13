@@ -1,6 +1,6 @@
 //! Network-level evidence for the inspection admission boundary.
 use super::*;
-use std::sync::atomic::AtomicUsize;
+use std::sync::{Mutex as StdMutex, atomic::AtomicUsize};
 use tokio::{io::AsyncWriteExt, sync::oneshot, task::JoinHandle};
 use transmog_core::{
     ClientIdentity,
@@ -21,6 +21,7 @@ struct Calls {
     hooks: AtomicUsize,
     observers: AtomicUsize,
     certificates: AtomicUsize,
+    events: StdMutex<Vec<ObserverEvent>>,
 }
 
 struct CountingHooks(Arc<Calls>);
@@ -35,8 +36,9 @@ impl InterceptorFactory for CountingHooks {
 }
 struct CountingObserver(Arc<Calls>);
 impl Observer for CountingObserver {
-    fn on_event(&self, _: ObserverEvent) -> BoxObserverFuture<'_> {
+    fn on_event(&self, event: ObserverEvent) -> BoxObserverFuture<'_> {
         self.0.observers.fetch_add(1, Ordering::Relaxed);
+        self.0.events.lock().unwrap().push(event);
         Box::pin(async { Ok(()) })
     }
 }
@@ -181,6 +183,9 @@ impl Running {
         }
     }
     async fn finish(self, inspected: bool) {
+        self.finish_observed(inspected, inspected).await;
+    }
+    async fn finish_observed(self, inspected: bool, observed: bool) {
         self.stop.send(()).unwrap();
         timeout(Duration::from_secs(3), self.task)
             .await
@@ -190,9 +195,12 @@ impl Running {
         assert_eq!(self.calls.certificates.load(Ordering::Relaxed), 0);
         if inspected {
             assert!(self.calls.hooks.load(Ordering::Relaxed) > 0);
-            assert!(self.calls.observers.load(Ordering::Relaxed) > 0);
         } else {
             assert_eq!(self.calls.hooks.load(Ordering::Relaxed), 0);
+        }
+        if observed {
+            assert!(self.calls.observers.load(Ordering::Relaxed) > 0);
+        } else {
             assert_eq!(self.calls.observers.load(Ordering::Relaxed), 0);
         }
     }
@@ -218,7 +226,7 @@ async fn tunnel(proxy: SocketAddr, destination: SocketAddr) -> TcpStream {
 }
 
 #[tokio::test]
-async fn excluded_connect_preserves_arbitrary_bytes_half_close_and_no_inspection() {
+async fn excluded_connect_preserves_bytes_and_records_only_connection_context() {
     for policy in [only("selected.exe"), except("excluded.exe")] {
         let proxy = Running::start(policy, named("excluded.exe")).await;
         let origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -243,7 +251,43 @@ async fn excluded_connect_preserves_arbitrary_bytes_half_close_and_no_inspection
         assert_eq!(received, bytes);
         origin.await.unwrap();
         assert_eq!(proxy.control.unresolved_process_connections(), 0);
-        proxy.finish(false).await;
+        let calls = proxy.calls.clone();
+        proxy.finish_observed(false, true).await;
+        let events = calls.events.lock().unwrap();
+        assert!(events.iter().any(|event| matches!(&event.kind,
+            ObserverEventKind::ExchangeStarted { metadata }
+                if metadata.client_identity == named("excluded.exe")
+        )));
+        assert!(events.iter().any(|event| matches!(&event.kind,
+            ObserverEventKind::RouteSelected { policy_id, .. }
+                if policy_id.as_ref() == "process-bypass-tunnel"
+        )));
+        assert!(events.iter().any(|event| matches!(&event.kind,
+            ObserverEventKind::Completed(completed)
+                if completed.request_head.method == "CONNECT"
+                    && completed.request_head.headers.iter().next().is_none()
+        )));
+        assert!(events.iter().any(|event| matches!(&event.kind,
+            ObserverEventKind::Performance(performance) if performance.transports.iter().any(|transport|
+                transport.tunnel_destination == Some(destination.to_string())
+                    && transport.bytes_read == Some(bytes.len() as u64)
+                    && transport.bytes_written == Some(bytes.len() as u64)
+                    && transport.tls.is_none() && transport.tls_version.is_none())
+        )));
+        for event in events.iter() {
+            match &event.kind {
+                ObserverEventKind::RequestHeadObserved { head, .. }
+                | ObserverEventKind::RequestHeadFinalized(head) => {
+                    assert!(head.headers.iter().next().is_none());
+                }
+                ObserverEventKind::BodyChunk(_)
+                | ObserverEventKind::BodyTrailers(_)
+                | ObserverEventKind::HookEffect(_) => {
+                    panic!("excluded tunnel retained message content")
+                }
+                _ => {}
+            }
+        }
     }
 }
 
@@ -276,13 +320,13 @@ async fn unresolved_nameless_and_remote_callers_bypass_both_filters() {
             drop(client);
             origin.await.unwrap();
             assert_eq!(proxy.control.unresolved_process_connections(), 1);
-            proxy.finish(false).await;
+            proxy.finish_observed(false, true).await;
         }
     }
 }
 
 #[tokio::test]
-async fn excluded_connect_failure_never_falls_back_to_mitm_or_capture() {
+async fn excluded_connect_failure_records_context_without_mitm() {
     let proxy = Running::start(except("excluded.exe"), named("excluded.exe")).await;
     let unavailable = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let destination = unavailable.local_addr().unwrap();
@@ -296,7 +340,16 @@ async fn excluded_connect_failure_never_falls_back_to_mitm_or_capture() {
         .unwrap();
     assert!(head(&mut client).await.starts_with(b"HTTP/1.1 502"));
     drop(client);
-    proxy.finish(false).await;
+    let calls = proxy.calls.clone();
+    proxy.finish_observed(false, true).await;
+    assert!(
+        calls
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| matches!(&event.kind, ObserverEventKind::Failed(_)))
+    );
 }
 
 #[tokio::test]
@@ -673,7 +726,7 @@ async fn excluded_tunnels_participate_in_drain_and_shutdown() {
     server.read_exact(&mut bytes).await.unwrap();
     assert_eq!(&bytes, b"live");
     assert!(proxy.control.resume_drain(generation));
-    proxy.finish(false).await;
+    proxy.finish_observed(false, true).await;
     assert_eq!(
         timeout(Duration::from_secs(1), client.read_u8())
             .await

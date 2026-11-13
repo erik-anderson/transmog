@@ -17,6 +17,6 @@
   </div>
   <p id="process-name-error" class="field-error" role="status" ?hidden="{{!processError}}">{{processError}}</p>
   <p class="field-help">Applies to new connections after saving.</p>
-  <details class="process-disclosure"><summary>How process inspection works</summary><p class="field-help">Matches every instance by executable filename. Process names are case insensitive; extensionless names use .exe. Add helper processes separately.</p><p class="field-help">Other traffic bypasses rules and capture, including HTTPS summaries. With a filter, remote callers and callers without a process name also bypass inspection. Diagnostics counts unresolved connections.</p></details>
+  <details class="process-disclosure"><summary>How process inspection works</summary><p class="field-help">Matches every instance by executable filename. Process names are case insensitive; extensionless names use .exe. Add helper processes separately.</p><p class="field-help">Other traffic bypasses inspection rules. Its CONNECT tunnels still appear in Traffic and recordings with process, destination, endpoints, outcome and byte counts; headers and contents are not retained. Other HTTP is not captured. With a filter, remote callers and callers without a process name also bypass inspection. Diagnostics counts unresolved connections.</p></details>
 </div>
 </template>

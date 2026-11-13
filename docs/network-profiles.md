@@ -97,9 +97,13 @@ paths are rejected, and duplicate names are merged. The built-in CLI supports
 process selection on Windows and Linux; other platforms report that attribution
 is unavailable instead of silently accepting ineffective rules.
 
-Excluded HTTPS connections use opaque CONNECT tunnels. They do not load an
-interception certificate or enter rules, scripts, breakpoints, observers, or
-recording, including CONNECT metadata. Excluded ordinary HTTP still needs
+Excluded HTTPS connections use opaque CONNECT tunnels. Each tunnel appears as
+a CONNECT entry in Traffic and recordings, including while it is open. It
+retains the caller process when known, destination, endpoints and outcome;
+final byte counts are available when the tunnel closes. Details explains that
+the process filter bypassed inspection. CONNECT headers and tunnel contents are
+not retained. These connections do not request an interception certificate or
+enter rules, scripts or breakpoints. Excluded ordinary HTTP still needs
 protocol parsing for forwarding but is neither recorded nor modified by
 inspection rules. These connections still use Transmog as a relay; this is not
 a change to the application's proxy routing or a direct-network bypass.
@@ -139,7 +143,9 @@ capture and saved mode stay unchanged, and the settings draft remains available.
 
 With decryption off, CONNECT forwards opaque bytes without loading an
 interception CA or requiring CA trust.
-For callers selected for inspection, Traffic and TMCap retain the destination,
+Traffic and TMCap retain CONNECT connection context for every caller, including
+those excluded by the process filter. For selected callers this includes CONNECT
+headers; excluded callers retain no headers. The context includes the destination,
 endpoints, outcome and byte counts;
 the recorded HTTP protocol is the outer CONNECT protocol, and the tunneled
 protocol and contents remain unknown. Decrypted entries retain their CONNECT

@@ -911,6 +911,7 @@ export class MessageInspector extends WebUIElement {
       Number(this.bodyLimit?.value ?? 262144),
       status,
       this.detail ? opaqueConnectTransport(this.detail)?.tunnelDestination : null,
+      this.detail?.routeSelection?.startsWith("process-bypass-tunnel:"),
       body
         ? [
             body.exchangeId,
@@ -969,10 +970,15 @@ export class MessageInspector extends WebUIElement {
     const tunnel = opaqueConnectTransport(this.detail);
     if (tunnel) {
       this.hexPreview = null;
+      const reason = this.detail.routeSelection?.startsWith("process-bypass-tunnel:")
+        ? "The caller was excluded by the process filter. Only connection context was retained; CONNECT headers were not recorded."
+        : "HTTPS decryption was disabled.";
       this.bodyNotice =
         "Opaque CONNECT tunnel to " +
         tunnel.tunnelDestination +
-        ". HTTPS decryption was disabled. Tunnel contents and the tunneled protocol were not inspected. Open Timings for connection outcomes, endpoints and byte counts.";
+        ". " +
+        reason +
+        " Tunnel contents and the tunneled protocol were not inspected. Open Details → Connection for outcomes, endpoints and byte counts.";
       this.viewerLabel = "Opaque tunnel";
       return;
     }

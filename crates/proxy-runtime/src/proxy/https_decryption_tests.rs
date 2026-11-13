@@ -461,7 +461,7 @@ async fn certificate_free_start_can_enable_live_and_excluded_connections_still_b
     let evidence = proxy.finish().await;
     let mut methods = evidence.methods.lock().unwrap().clone();
     methods.sort();
-    assert_eq!(methods, ["CONNECT", "GET"]);
+    assert_eq!(methods, ["CONNECT", "CONNECT", "GET"]);
 }
 
 #[tokio::test]

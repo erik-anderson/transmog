@@ -1779,6 +1779,7 @@ struct NativeSession {
     provenance: Option<SavedEntry>,
     performance_bytes: usize,
     performance: transmog_core::performance::PerformanceEvidence,
+    route_selection: Option<(Arc<str>, Arc<str>)>,
     client: Option<SocketAddr>,
     caller: ClientIdentity,
     started: Option<SystemTime>,
@@ -2599,6 +2600,12 @@ fn apply_native_frame(
                 row.diagnostics
                     .push(format!("Saved route {policy_id}: {reason}"));
             }
+            let previous = row.route_selection.as_ref().map_or(0, |(policy, reason)| {
+                policy.len().saturating_add(reason.len())
+            });
+            *budget = budget.saturating_sub(previous);
+            charge_native_index(budget, policy_id.len().saturating_add(reason.len()))?;
+            row.route_selection = Some((policy_id.into(), reason.into()));
         }
         CaptureRecordKind::RouteAttempt { protocol, outcome } => {
             if row.diagnostics.len() < 64 {
@@ -2720,6 +2727,7 @@ fn append_native(
             .and_then(|millis| SystemTime::UNIX_EPOCH.checked_add(Duration::from_millis(millis)));
     }
     snapshot.performance = row.performance;
+    snapshot.route_selection = row.route_selection;
     if !row.completed || row.failed {
         snapshot.terminal = Some(saved_failure(
             snapshot.metadata.clone(),

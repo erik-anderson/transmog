@@ -228,8 +228,10 @@ when changing the experience.
   Preserve authored choices and explain recovery instead of silently substituting
   a configuration with different trust, privacy or authorization consequences.
 - Keep caller selection separate from HTTPS decryption. Default to all callers;
-  distinguish uninspected passthrough from selected callers' opaque connection
-  evidence. Offer certificate-free HTTPS tunnels explicitly, preserve that
+  show relayed CONNECT tunnels as Traffic entries even for excluded callers,
+  retaining connection context without their headers or contents. Explain the
+  inspection bypass separately from the tunnel's observed outcome. Offer
+  certificate-free HTTPS tunnels explicitly, preserve that
   choice after certificate setup, and keep interception certificate setup beside
   the decryption control. Saving HTTPS changes updates new CONNECT requests
   without restarting capture. Disabling retires intercepted connections for new

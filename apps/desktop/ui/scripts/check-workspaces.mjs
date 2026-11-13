@@ -5501,6 +5501,15 @@ try {
     );
     process.exit(0);
   }
+  if (process.argv.includes("--connect-tunnels-only")) {
+    await page.goto("https://workspace.test/");
+    await page.locator('tr[data-session-id="first"]').click();
+    await checkConnectTunnels(page, root);
+    assert.deepEqual(errors, []);
+    await browser.close();
+    process.stdout.write("CONNECT tunnel context and process bypass display verified.\n");
+    process.exit(0);
+  }
   if (process.argv.includes("--process-inspection-only")) {
     await page.goto("https://workspace.test/");
     await view("settings");

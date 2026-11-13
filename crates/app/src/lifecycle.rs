@@ -1265,101 +1265,144 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)] // Verify active visibility and saved/reopened context for selected and excluded callers together.
     async fn tunnel_only_proxy_starts_without_loading_interception_files() {
-        let root = tempfile::tempdir().unwrap();
-        let application = crate::Application::new(crate::AppConfig {
-            body_store: Some(crate::BodyStoreConfig::product_default(
-                root.path().join("bodies"),
-            )),
-            ..crate::AppConfig::default()
-        })
-        .unwrap();
-        let mut state = application.product_state();
-        state.preferences.decrypt_https = false;
-        application.save_product_state(state).unwrap();
-        let request = ProxyStartRequest {
-            ca_certificate_path: "/missing/certificate.pem".into(),
-            ca_private_key_path: "/missing/private.key".into(),
-            ..ProxyStartRequest::default()
-        };
-        application.start_proxy(request, None).await.unwrap();
-        assert_eq!(application.status().lifecycle, crate::AppLifecycle::Running);
-        let origin = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let destination = origin.local_addr().unwrap();
-        let origin_task = tokio::spawn(async move {
-            let (mut socket, _) = origin.accept().await.unwrap();
-            let mut bytes = [0; 3];
-            socket.read_exact(&mut bytes).await.unwrap();
-            socket.write_all(&bytes).await.unwrap();
-            socket.shutdown().await.unwrap();
-        });
-        let mut client = tokio::net::TcpStream::connect(application.status().listener.unwrap())
-            .await
+        for excluded in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let application = crate::Application::new(crate::AppConfig {
+                body_store: Some(crate::BodyStoreConfig::product_default(
+                    root.path().join("bodies"),
+                )),
+                ..crate::AppConfig::default()
+            })
             .unwrap();
-        client
-            .write_all(
-                format!("CONNECT {destination} HTTP/1.1\r\nHost: {destination}\r\n\r\n").as_bytes(),
-            )
-            .await
-            .unwrap();
-        assert!(
-            read_http_head(&mut client)
+            let mut state = application.product_state();
+            let baseline = state.preferences.process_inspection.clone();
+            state.preferences.decrypt_https = false;
+            if excluded {
+                state.preferences.process_inspection = crate::ProcessInspectionPolicy {
+                    mode: crate::ProcessInspectionMode::Only,
+                    include: vec!["transmog-nonexistent-fixture.exe".into()],
+                    exclude: vec![],
+                };
+            }
+            application
+                .save_product_state_with_process_inspection(state, &baseline)
+                .unwrap();
+            let request = ProxyStartRequest {
+                ca_certificate_path: "/missing/certificate.pem".into(),
+                ca_private_key_path: "/missing/private.key".into(),
+                ..ProxyStartRequest::default()
+            };
+            application.start_proxy(request, None).await.unwrap();
+            assert_eq!(application.status().lifecycle, crate::AppLifecycle::Running);
+            let origin = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let destination = origin.local_addr().unwrap();
+            let origin_task = tokio::spawn(async move {
+                let (mut socket, _) = origin.accept().await.unwrap();
+                let mut bytes = [0; 3];
+                socket.read_exact(&mut bytes).await.unwrap();
+                socket.write_all(&bytes).await.unwrap();
+                socket.shutdown().await.unwrap();
+            });
+            let mut client = tokio::net::TcpStream::connect(application.status().listener.unwrap())
                 .await
-                .starts_with(b"HTTP/1.1 200")
-        );
-        client.write_all(&[0xff, 0x00, 0x80]).await.unwrap();
-        client.shutdown().await.unwrap();
-        let mut echoed = Vec::new();
-        client.read_to_end(&mut echoed).await.unwrap();
-        assert_eq!(echoed, [0xff, 0x00, 0x80]);
-        origin_task.await.unwrap();
-        application.shutdown().await.unwrap();
-        let path = root.path().join("opaque.tmcap");
-        application
-            .save_traffic_trace(path.clone(), crate::TraceSaveOptions::default())
-            .await
-            .unwrap();
-        let reopened = crate::Application::new(crate::AppConfig {
-            body_store: Some(crate::BodyStoreConfig::product_default(
-                root.path().join("reopened-bodies"),
-            )),
-            ..crate::AppConfig::default()
-        })
-        .unwrap();
-        reopened
-            .import_trace(
-                crate::TraceImportRequest {
-                    path,
-                    password: None,
-                    operation_id: "opaque".into(),
-                    max_file_bytes: u64::MAX,
-                },
-                Arc::new(|_| {}),
+                .unwrap();
+            client
+            .write_all(
+                format!("CONNECT {destination} HTTP/1.1\r\nHost: {destination}\r\nSecret: not-retained-for-excluded-callers\r\n\r\n").as_bytes(),
             )
             .await
             .unwrap();
-        let rows = reopened
-            .query_sessions(crate::SessionQueryInput::default())
+            assert!(
+                read_http_head(&mut client)
+                    .await
+                    .starts_with(b"HTTP/1.1 200")
+            );
+            // Open relays must already be visible, before any tunnel bytes or close.
+            let rows = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                loop {
+                    let rows = application
+                        .query_sessions(crate::SessionQueryInput::default())
+                        .unwrap();
+                    if rows
+                        .sessions
+                        .first()
+                        .is_some_and(|row| row.method == "CONNECT")
+                    {
+                        break rows;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
             .unwrap();
-        assert_eq!(rows.sessions.len(), 1);
-        let detail = reopened.session_detail(&rows.sessions[0].id).unwrap();
-        assert_eq!(detail.requests[0].method.as_deref(), Some("CONNECT"));
-        assert_eq!(detail.terminal_state, "completed");
-        let transport = &detail.performance.transports[0];
-        assert_eq!(
-            transport.tunnel_destination.as_deref(),
-            Some(destination.to_string().as_str())
-        );
-        assert_eq!(transport.bytes_read, Some(3));
-        assert_eq!(transport.bytes_written, Some(3));
-        assert!(
-            detail
-                .performance
-                .protocols
-                .iter()
-                .any(|protocol| protocol.boundary == "client-request"
-                    && protocol.version == "HTTP/1.1")
-        );
+            assert_eq!(rows.sessions.len(), 1);
+            assert_eq!(rows.sessions[0].terminal, "active");
+            client.write_all(&[0xff, 0x00, 0x80]).await.unwrap();
+            client.shutdown().await.unwrap();
+            let mut echoed = Vec::new();
+            client.read_to_end(&mut echoed).await.unwrap();
+            assert_eq!(echoed, [0xff, 0x00, 0x80]);
+            origin_task.await.unwrap();
+            application.shutdown().await.unwrap();
+            let path = root.path().join("opaque.tmcap");
+            application
+                .save_traffic_trace(path.clone(), crate::TraceSaveOptions::default())
+                .await
+                .unwrap();
+            let reopened = crate::Application::new(crate::AppConfig {
+                body_store: Some(crate::BodyStoreConfig::product_default(
+                    root.path().join("reopened-bodies"),
+                )),
+                ..crate::AppConfig::default()
+            })
+            .unwrap();
+            reopened
+                .import_trace(
+                    crate::TraceImportRequest {
+                        path,
+                        password: None,
+                        operation_id: "opaque".into(),
+                        max_file_bytes: u64::MAX,
+                    },
+                    Arc::new(|_| {}),
+                )
+                .await
+                .unwrap();
+            let rows = reopened
+                .query_sessions(crate::SessionQueryInput::default())
+                .unwrap();
+            assert_eq!(rows.sessions.len(), 1);
+            let detail = reopened.session_detail(&rows.sessions[0].id).unwrap();
+            assert_eq!(detail.requests[0].method.as_deref(), Some("CONNECT"));
+            assert_eq!(detail.terminal_state, "completed");
+            if excluded {
+                assert!(detail.requests.iter().all(|head| head.headers.is_empty()));
+                assert!(
+                    detail
+                        .route_selection
+                        .as_deref()
+                        .unwrap()
+                        .starts_with("process-bypass-tunnel:")
+                );
+            }
+            let transport = &detail.performance.transports[0];
+            assert_eq!(
+                transport.tunnel_destination.as_deref(),
+                Some(destination.to_string().as_str())
+            );
+            assert_eq!(transport.bytes_read, Some(3));
+            assert_eq!(transport.bytes_written, Some(3));
+            assert!(
+                detail
+                    .performance
+                    .protocols
+                    .iter()
+                    .any(|protocol| protocol.boundary == "client-request"
+                        && protocol.version == "HTTP/1.1")
+            );
+        }
     }
 
     #[tokio::test]

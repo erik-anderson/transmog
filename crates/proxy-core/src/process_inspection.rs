@@ -1,7 +1,8 @@
 //! Exact executable-name selection for newly admitted downstream connections.
 //!
 //! Process attribution is diagnostic, not an authorization boundary. Unresolved
-//! and remote callers bypass inspection whenever a name filter is active.
+//! and remote callers bypass message inspection whenever a name filter is active.
+//! CONNECT tunnels still retain connection summaries without headers or contents.
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;

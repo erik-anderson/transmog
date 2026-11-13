@@ -53,7 +53,7 @@ pub(crate) fn print_policy(policy: &ProcessInspectionPolicy, decrypt: bool) {
     println!("Process inspection: {selection}.");
     if policy.mode != ProcessInspectionMode::All {
         println!(
-            "Names match executable basenames. Unidentified and remote callers pass through without inspection or recording."
+            "Names match executable basenames. Excluded, unidentified and remote callers bypass message inspection. Their CONNECT tunnels retain connection summaries without headers or contents; other HTTP is not recorded."
         );
         #[cfg(windows)]
         println!(

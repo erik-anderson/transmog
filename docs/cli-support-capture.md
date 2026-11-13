@@ -80,7 +80,7 @@ arrives and lets the desktop read body payloads on demand.
 ## Certificates and interrupted runs
 
 To record connection information without installing a certificate, use
-`record --output trace.tmcap --no-decrypt-https`. Selected callers' HTTPS
+`record --output trace.tmcap --no-decrypt-https`. All callers' HTTPS
 connections retain destinations and outcomes but no decrypted contents;
 ordinary HTTP can still be inspected. No CA is created, installed, or removed
 for this run. Proxy restoration still applies. This differs from
@@ -90,7 +90,8 @@ trust setup to you.
 Use repeatable `--process NAME` to focus on specific executables, or repeatable
 `--exclude-process NAME` to leave applications such as pinned TLS clients
 uninspected. These options are mutually exclusive and apply only to the current
-run. Excluded traffic produces no captured records. See
+run. Excluded CONNECT tunnels retain connection summaries without headers or
+contents; other excluded HTTP produces no captured records. See
 [CLI caller and HTTPS selection](cli.md#select-callers-and-https-inspection).
 
 The default root is ephemeral: its private key stays in memory and is never

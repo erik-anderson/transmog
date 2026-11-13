@@ -1,15 +1,16 @@
 //! Uninspected forwarding: protocol framing without inspection components.
 //!
-//! This path never constructs hook contexts, capture records or certificate
-//! requests. Its HTTP/1 senders belong to one downstream connection so that
-//! connection-bound authentication cannot cross callers or inspection decisions.
+//! This HTTP path never constructs hook contexts, capture records or certificate
+//! requests. CONNECT uses the separate metadata-only tunnel path. HTTP/1 senders
+//! belong to one downstream connection so that connection-bound authentication
+//! cannot cross callers or inspection decisions.
 
 use super::{
     Arc, Body, BodyStreamError, Bytes, ConnectAuthority, ConnectionContext, Context,
     DownstreamBody, DownstreamBodyInner, Duration, Frame, HashMap, HeaderMap, HeaderValue,
-    Incoming, Method, Mutex, Pin, Poll, ProxyRuntimeError, ProxyState, Request, Response,
-    StatusCode, TcpStream, TokioIo, TransportObservation, Version, connect_tunnel,
-    target_from_absolute_uri, timeout,
+    Incoming, Mutex, Pin, Poll, ProxyRuntimeError, ProxyState, Request, Response, StatusCode,
+    TcpStream, TokioIo, TransportObservation, Version, connect_tunnel, target_from_absolute_uri,
+    timeout,
 };
 use http::header::{CONNECTION, HOST, PROXY_AUTHORIZATION, UPGRADE};
 use hyper::client::conn::http1::SendRequest;
@@ -104,25 +105,9 @@ impl Body for IncomingBody {
 impl ProxyState {
     pub(super) async fn handle_uninspected_request(
         self: Arc<Self>,
-        mut request: Request<Incoming>,
+        request: Request<Incoming>,
         context: ConnectionContext,
     ) -> Result<Response<DownstreamBody>, ProxyRuntimeError> {
-        if request.method() == Method::CONNECT {
-            let text = request
-                .uri()
-                .authority()
-                .map_or_else(|| request.uri().path(), http::uri::Authority::as_str);
-            let authority: ConnectAuthority = text.parse()?;
-            if !request.body().is_end_stream() {
-                return Err(ProxyRuntimeError::ConnectRequestBodyUnsupported);
-            }
-            let activity = self.activity.continue_transport();
-            let origin = self.connect_uninspected(&authority).await?;
-            let upgraded = hyper::upgrade::on(&mut request);
-            self.spawn_uninspected_relay(upgraded, async move { Ok(origin) }, activity)
-                .await;
-            return Ok(Response::new(DownstreamBody::empty()));
-        }
         self.forward_uninspected_http(request, context).await
     }
 

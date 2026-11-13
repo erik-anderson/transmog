@@ -34,6 +34,18 @@ export async function smokeConnectTunnels(viewer) {
     assert.match(opaque.notice, /Opaque CONNECT tunnel to media.stores.com:443/);
     assert.match(opaque.rendered, /Opaque CONNECT tunnel to media.stores.com:443/);
     assert.doesNotMatch(opaque.rendered, /saved viewer response/);
+    const excluded = await viewer.evaluate(`(async()=>{
+      const workspace=document.querySelector('app-shell').traffic,detail=structuredClone(workspace.selectedDetail);
+      detail.routeSelection='process-bypass-tunnel: Process excluded from inspection';
+      workspace.applyDetail(detail);
+      const inspector=workspace.querySelector('message-inspector[side="response"]');
+      await inspector.inspectBody();await inspector.$whenRendered();
+      return {text:inspector.bodyText,notice:inspector.bodyNotice};
+    })()`);
+    assert.equal(excluded.text, "");
+    assert.match(excluded.notice, /The caller was excluded by the process filter/);
+    assert.match(excluded.notice, /CONNECT headers were not recorded/);
+    assert.doesNotMatch(excluded.notice, /HTTPS decryption was disabled/);
   } finally {
     await viewer.evaluate(`(async()=>{
       const original=${JSON.stringify(original)},workspace=document.querySelector('app-shell').traffic;

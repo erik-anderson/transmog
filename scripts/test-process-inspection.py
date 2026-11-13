@@ -184,9 +184,9 @@ def main():
         for name, options, capture_count, inspect_tls, marker in (
             ("all-inspected", [], 2, True, "process-fixture"),
             ("all-tunnels", ["--no-decrypt-https"], 2, False, "process-fixture"),
-            ("except-pinned", ["--exclude-process", process_name], 0, False, None),
+            ("except-pinned", ["--exclude-process", process_name], 1, False, None),
             ("only-current", ["--process", process_name], 2, True, "process-fixture"),
-            ("only-other", ["--process", "transmog-nonexistent-fixture.exe"], 0, False, None),
+            ("only-other", ["--process", "transmog-nonexistent-fixture.exe"], 1, False, None),
         ):
             capture = root / (name + ".tmcap")
             credentials = [] if "--no-decrypt-https" in options else ["--ca-cert", ca, "--ca-key", key, "--upstream-ca-cert", ca]

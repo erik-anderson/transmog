@@ -1,13 +1,13 @@
-//! Observed CONNECT byte forwarding when HTTPS decryption is disabled.
+//! Observed CONNECT byte forwarding when HTTPS inspection is bypassed.
 use super::{
-    ActivityKind, Arc, CompletedExchange, ConnectAuthority, ConnectionContext, ConnectionMetrics,
-    DownstreamBody, ExchangeBoundary, ExchangeFailure, ExchangeFailureKind, ExchangeMetadata,
-    ExchangeObserver, ExchangeStage, HappyEyeballsConfig, HeaderBlock, HttpLegVersion, Incoming,
-    Instant, MeteredIo, Milestone, ObserverEventKind, PerformanceRecorder, ProtocolObservation,
-    ProxyRuntimeError, ProxyState, Request, RequestCancellation, RequestHead, Response,
-    ResponseHead, RuntimeIdKind, SessionId, SessionMetadata, StatusCode, StreamId, Target,
-    TcpStream, TokioIo, TransportObservation, TransportOutcome, block_from_headers,
-    draining_response, timeout, websocket_request_has_body,
+    ActivityKind, Arc, Body, CompletedExchange, ConnectAuthority, ConnectionContext,
+    ConnectionMetrics, DownstreamBody, ExchangeBoundary, ExchangeFailure, ExchangeFailureKind,
+    ExchangeMetadata, ExchangeObserver, ExchangeStage, HappyEyeballsConfig, HeaderBlock,
+    HttpLegVersion, Incoming, Instant, MeteredIo, Milestone, ObserverEventKind,
+    PerformanceRecorder, ProtocolObservation, ProxyRuntimeError, ProxyState, Request,
+    RequestCancellation, RequestHead, Response, ResponseHead, RuntimeIdKind, SessionId,
+    SessionMetadata, StatusCode, StreamId, Target, TcpStream, TokioIo, TransportObservation,
+    TransportOutcome, block_from_headers, draining_response, timeout, websocket_request_has_body,
 };
 
 impl ProxyState {
@@ -22,6 +22,10 @@ impl ProxyState {
         let Some(activity) = self.activity.acquire(ActivityKind::Transport) else {
             return Ok(draining_response());
         };
+        // Process selection excludes message inspection, not the evidence that
+        // Transmog is relaying this connection. Validate framing separately and
+        // retain no caller-authored CONNECT headers for excluded processes.
+        let has_body = !request.body().is_end_stream();
         let head = RequestHead {
             method: "CONNECT".into(),
             target: Target {
@@ -32,7 +36,11 @@ impl ProxyState {
                 path: "/".into(),
                 query: None,
             },
-            headers: block_from_headers(request.headers())?,
+            headers: if context.inspect {
+                block_from_headers(request.headers())?
+            } else {
+                HeaderBlock::default()
+            },
             source_version: HttpLegVersion::Http1,
         };
         let session = SessionMetadata {
@@ -81,7 +89,7 @@ impl ProxyState {
         observer
             .emit(ObserverEventKind::RequestHeadFinalized(head.clone()))
             .await;
-        if websocket_request_has_body(&head.headers)? {
+        if has_body || websocket_request_has_body(&head.headers)? {
             let error = ProxyRuntimeError::ConnectRequestBodyUnsupported;
             finish_failed_tunnel(
                 &observer,
@@ -102,8 +110,12 @@ impl ProxyState {
             .await;
         observer
             .emit(ObserverEventKind::RouteSelected {
-                policy_id: "connect-tunnel".into(),
-                reason: "HTTPS decryption disabled; forwarding an opaque TCP tunnel".into(),
+                policy_id: if context.inspect { "connect-tunnel" } else { "process-bypass-tunnel" }.into(),
+                reason: if context.inspect {
+                    "HTTPS decryption disabled; forwarding an opaque TCP tunnel"
+                } else {
+                    "Process excluded from inspection; forwarding an opaque TCP tunnel without retaining CONNECT headers or contents"
+                }.into(),
             })
             .await;
         let mut facts = TransportObservation {

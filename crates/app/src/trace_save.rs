@@ -572,6 +572,12 @@ pub(crate) fn write_session<W: Write>(
         })?;
     }
     emit(CaptureRecordKind::Performance(session.performance.clone()))?;
+    if let Some((policy_id, reason)) = &session.route_selection {
+        emit(CaptureRecordKind::RouteSelected {
+            policy_id: policy_id.to_string(),
+            reason: reason.to_string(),
+        })?;
+    }
     for effect in &session.hook_effects {
         use transmog_core::intercept::{HeaderEditSnapshot, HookEffectAction, HookPhase};
         let header_edit = HeaderEditSnapshot::from_action(&effect.action);
