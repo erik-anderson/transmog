@@ -120,7 +120,8 @@ def development_environment(*, root=ROOT, environment=None, platform=None, targe
         vswhere = Path(env.get("ProgramFiles(x86)", "C:/Program Files (x86)")) / "Microsoft Visual Studio/Installer/vswhere.exe"
         vc = None
         sdk = Path(env.get("ProgramFiles(x86)", "C:/Program Files (x86)")) / "Windows Kits/10"
-        if vswhere.is_file():
+        pinned_installation = root / ".tools/msvc"
+        if not pinned_installation.exists() and vswhere.is_file():
             installation = subprocess.run(
                 [str(vswhere), "-latest", "-products", "*", "-requires",
                  "Microsoft.VisualStudio.Component.VC.Tools.ARM64" if architecture == "arm64" else "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath"],
@@ -128,15 +129,34 @@ def development_environment(*, root=ROOT, environment=None, platform=None, targe
             if installation:
                 tools = Path(installation) / "VC/Tools/MSVC"
                 vc = max((p for p in tools.iterdir() if p.is_dir()), key=version_key, default=None)
+        # Hosted builds install one fixed catalog privately. A runner-image
+        # update must not select a newer MSVC toolset between engine production
+        # and native validation. Local checkouts without this installation keep
+        # using their configured Visual Studio tools.
+        if pinned_installation.exists():
+            vc = pinned_installation / "VC/Tools/MSVC/14.51.36231"
+            host_tools = "Hostarm64" if architecture == "arm64" else "Hostx64"
+            if not (vc / f"bin/{host_tools}/{architecture}/link.exe").is_file():
+                raise RuntimeError("The fixed MSVC installation is incomplete; rerun scripts/setup-windows-msvc.ps1.")
+            env.update(VSINSTALLDIR=str(pinned_installation),
+                       VCINSTALLDIR=str(pinned_installation / "VC"),
+                       VCToolsInstallDir=str(vc), VCToolsVersion=vc.name)
+            if not (sdk / "Include/10.0.26100.0").is_dir():
+                raise RuntimeError("The fixed Windows SDK 10.0.26100.0 is missing.")
         if vc and sdk.is_dir():
             versions = [p for p in (sdk / "Include").iterdir() if p.is_dir() and p.name.startswith("10.")]
             preferred = [p for p in versions if p.name.startswith("10.0.26100.")]
             if not versions:
                 raise RuntimeError("Windows SDK headers are missing.")
             version = max(preferred or versions, key=version_key).name
+            if pinned_installation.exists():
+                version = "10.0.26100.0"
             # Select the native linker and target libraries for this Rust host.
             host_tools = "Hostarm64" if architecture == "arm64" else "Hostx64"
             bins += [vc / f"bin/{host_tools}/{architecture}", sdk / f"bin/{version}/{architecture}"]
+            if pinned_installation.exists():
+                suffix = "AARCH64_PC_WINDOWS_MSVC" if architecture == "arm64" else "X86_64_PC_WINDOWS_MSVC"
+                env.setdefault("CARGO_TARGET_" + suffix + "_LINKER", str(vc / f"bin/{host_tools}/{architecture}/link.exe"))
             env["LIB"] = ";".join(map(str, [vc / f"lib/{architecture}", sdk / f"Lib/{version}/ucrt/{architecture}", sdk / f"Lib/{version}/um/{architecture}"]))
             env["INCLUDE"] = ";".join(map(str, [vc / "include", *[sdk / f"Include/{version}/{part}" for part in ("ucrt", "shared", "um", "winrt")]]))
         elif not vc and architecture == "x64":

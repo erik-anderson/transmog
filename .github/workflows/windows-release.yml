@@ -160,6 +160,7 @@ jobs:
           path: |
             artifacts/windows-build-state.json
             artifacts/native-tools-cache-checkpoint.json
+            artifacts/windows-msvc.json
             artifacts/windows-build-gates/
             target/ui-check/workspace-failure.png
             artifacts/windows-build/evidence/
@@ -258,6 +259,7 @@ jobs:
           path: |
             artifacts/windows-build-state.json
             artifacts/native-tools-cache-checkpoint.json
+            artifacts/windows-msvc.json
             artifacts/windows-build-gates/
             artifacts/windows-build/evidence/
             artifacts/windows-desktop-validation/
@@ -347,6 +349,7 @@ jobs:
           path: |
             artifacts/windows-build-state.json
             artifacts/native-tools-cache-checkpoint.json
+            artifacts/windows-msvc.json
             artifacts/windows-build-gates/
             artifacts/windows-build/evidence/
             artifacts/windows-desktop-validation/
@@ -449,6 +452,7 @@ jobs:
           path: |
             artifacts/windows-build-state.json
             artifacts/native-tools-cache-checkpoint.json
+            artifacts/windows-msvc.json
             artifacts/windows-build-gates/
             artifacts/windows-build/evidence/
             artifacts/windows-desktop-validation/

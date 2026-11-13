@@ -105,6 +105,13 @@ Later runs can reuse that Cargo smoke check's immutable successful report. The
 x64 engine producer checks for a matching proof before allocating a native runner;
 a verified match skips the standalone ARM64 verification job and its tool setup.
 The producer still verifies current engine bytes, SDK and compiler identity.
+Hosted setup installs MSVC 14.51.36231 privately from the hash- and
+signature-verified Visual Studio Build Tools 18.11.3 fixed-version bootstrapper.
+Engine producers and native consumers select that installation before the
+runner image's Visual Studio, so an image rollout cannot silently switch the
+MSVC headers, CRT or native linker between jobs. The existing SDK and toolset
+fingerprint checks still reject changed bytes. Changing this fixed profile
+invalidates the engine cache and native proof.
 Reuse additionally requires an identical engine manifest, consumer ABI, locked
 dependencies, local consumer sources and verification tooling. The report's
 artifact digest, source, branch, workflow and successful native job are checked

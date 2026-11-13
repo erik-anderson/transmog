@@ -24,7 +24,7 @@ JOB = "Verify cross-built V8 on native ARM64"
 WORKFLOWS = {".github/workflows/prepare-windows-v8.yml", ".github/workflows/windows-release.yml"}
 INPUTS = ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "scripts/v8_consumer.py",
           "scripts/dev-env.py", "scripts/dev-env.ps1", "scripts/repo_tools.py", "scripts/windows_cross.py",
-          "scripts/v8_artifact.py", "scripts/github_release.py", "scripts/setup-windows-ci.ps1",
+          "scripts/v8_artifact.py", "scripts/github_release.py", "scripts/setup-windows-ci.ps1", "scripts/setup-windows-msvc.ps1",
           ".github/actions/windows-release-setup/action.yml", ".github/workflows/prepare-windows-v8.yml")
 
 

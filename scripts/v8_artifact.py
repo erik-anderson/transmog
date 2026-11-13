@@ -25,7 +25,7 @@ ABI_ENV = (
 INPUTS = (
     "rust-toolchain.toml", "scripts/setup-windows-ci.ps1", "scripts/repo_tools.py",
     "scripts/v8_artifact.py", "scripts/windows_cross.py", "scripts/cache-v8.py", "scripts/v8_native.py",
-    "scripts/v8_cache.py", "scripts/v8_bindgen.py", "scripts/icu_data.py",
+    "scripts/v8_cache.py", "scripts/v8_bindgen.py", "scripts/icu_data.py", "scripts/setup-windows-msvc.ps1",
 )
 FILES = ("rusty_v8.lib", "src_binding.rs", "args.gn")
 
@@ -192,6 +192,14 @@ def identity(target, root=ROOT):
     return {"schema": 2, "target": target, "inputs": input_hashes(root), "tools": tools(target)}
 
 
+def identity_differences(expected, actual, prefix="identity"):
+    if isinstance(expected, dict) and isinstance(actual, dict):
+        return [field for name in sorted(set(expected) | set(actual))
+                for field in ([prefix + "." + name] if name not in expected or name not in actual else
+                              identity_differences(expected[name], actual[name], prefix + "." + name))]
+    return [] if expected == actual else [prefix]
+
+
 def validate(directory, target, root=ROOT, *, cargo=False):
     directory = Path(directory).resolve()
     expected = {"manifest.json", *FILES}
@@ -201,8 +209,10 @@ def validate(directory, target, root=ROOT, *, cargo=False):
         if path.is_symlink() or not path.is_file() or getattr(path, "is_junction", lambda: False)():
             raise ValueError("V8 artifact links and directories are forbidden")
     manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
-    if manifest["identity"] != identity(target, root):
-        raise ValueError("V8 artifact source, profile, target or compiler differs")
+    actual_identity = identity(target, root)
+    if manifest["identity"] != actual_identity:
+        differences = identity_differences(manifest["identity"], actual_identity)
+        raise ValueError("V8 artifact source, profile, target or compiler differs: " + ", ".join(differences))
     if manifest["key"] != encoded_digest(manifest["identity"]):
         raise ValueError("V8 artifact identity key differs")
     if manifest["files"] != {name: digest(directory / name) for name in FILES}:

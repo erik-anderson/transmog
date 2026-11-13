@@ -175,6 +175,7 @@ jobs:
             artifacts/v8-preparation.json
             artifacts/v8-cache-checkpoint.json
             artifacts/native-tools-cache-checkpoint.json
+            artifacts/windows-msvc.json
             artifacts/v8-engine/manifest.json
             target/native-v8/**/args.gn
             target/native-v8/**/.ninja_log
@@ -234,6 +235,7 @@ jobs:
           path: |
             artifacts/v8-engine/manifest.json
             artifacts/native-tools-cache-checkpoint.json
+            artifacts/windows-msvc.json
             artifacts/v8-native-consumer.json
           if-no-files-found: warn
           retention-days: 7

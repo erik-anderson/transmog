@@ -80,6 +80,7 @@ foreach ($tool in $nativeTools) {
     }
 }
 
+& (Join-Path $PSScriptRoot 'setup-windows-msvc.ps1') -VerifyDownloadsOnly:$VerifyDownloadsOnly
 if ($VerifyDownloadsOnly) { return }
 
 $windowsSdk = 'C:\Program Files (x86)\Windows Kits\10\Include\10.0.26100.0'
