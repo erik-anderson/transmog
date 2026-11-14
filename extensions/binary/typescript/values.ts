@@ -1,5 +1,5 @@
 import type { Node, Value, VisualizationDocument } from "transmog:extensions/v1";
-import { Budget, Reader, ParseError, document, failure, floating, text } from "./reader.js";
+import { DocumentLimits, Reader, ParseError, document, failure, floating, text } from "./reader.js";
 
 export function unsigned(reader: Reader, width: number, bigEndian = false): bigint {
   reader.require(width);
@@ -13,7 +13,6 @@ export function unsigned(reader: Reader, width: number, bigEndian = false): bigi
 
 export function float(reader: Reader, width: 4 | 8, bigEndian = false): Value {
   const bytes = reader.take(width);
-  reader.budget.step(bytes.offset, width);
   const view = new DataView(reader.bytes.buffer, reader.bytes.byteOffset + bytes.offset, width);
   return floating(width === 4 ? view.getFloat32(0, !bigEndian) : view.getFloat64(0, !bigEndian));
 }
@@ -102,7 +101,7 @@ export function retainPartial(
     }
     if (children.length) {
       error.partial = {
-        id: `${reader.budget.prefix}.partial.${start}`,
+        id: `${reader.limits.prefix}.partial.${start}`,
         name: `Partial ${name}`,
         value: { kind: array ? "array" : "object" },
         spans: [
@@ -128,7 +127,7 @@ export function parseValues(
   allowEmpty = false,
 ): VisualizationDocument {
   const doc = document(title, summary);
-  const reader = new Reader(bytes, sourceId, new Budget(title.toLowerCase()));
+  const reader = new Reader(bytes, sourceId, new DocumentLimits(title.toLowerCase()));
   let start = 0;
   try {
     if (!reader.remaining && !allowEmpty) {

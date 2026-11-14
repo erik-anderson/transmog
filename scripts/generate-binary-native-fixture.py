@@ -23,6 +23,7 @@ def main():
         ("protobuf", "application/protobuf", protobuf, ""),
         ("protobuf-gzip", "application/x-protobuf", gzip.compress(protobuf, mtime=0), "gzip"),
         ("bond", "application/bond-compact-binary", bond, ""),
+        ("bond-right", "application/bond-compact-binary", bytes.fromhex("2903332e3100"), ""),
         ("bond-deflate", "application/bond-compact-binary", raw_deflate, "deflate"),
         ("bond-sequence-deflate", "application/bond-compact-binary", sequence_deflate, "deflate"),
         ("bond-record-ranges", "application/bond-compact-binary", gzip.compress(many_records, compresslevel=0, mtime=0), "gzip"),

@@ -1,3 +1,4 @@
+import { MAX_TEXT_PREVIEW_UNITS } from "./limits.js";
 import type { Input, Node, Value } from "transmog:extensions/v1";
 import type { Reader } from "./reader.js";
 import { ParseError, floating, integer, text } from "./reader.js";
@@ -28,7 +29,7 @@ function argument(reader: Reader, info: number): bigint | null {
 }
 
 function read(reader: Reader, name: string, depth: number): Node {
-  reader.budget.depth(depth, reader.offset);
+  reader.limits.depth(depth, reader.offset);
   const start = reader.offset,
     tag = reader.byte(),
     major = tag >> 5,
@@ -93,7 +94,7 @@ function read(reader: Reader, name: string, depth: number): Node {
               kind: "string",
               value: decoded.value + (decoded.clipped ? "… [preview]" : ""),
             };
-            if (combined.length + decoded.value.length <= 1024 && !clipped) {
+            if (combined.length + decoded.value.length <= MAX_TEXT_PREVIEW_UNITS && !clipped) {
               combined += decoded.value;
             } else {
               clipped = true;

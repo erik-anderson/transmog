@@ -1,6 +1,6 @@
 import type { Node, VisualizationDocument } from "transmog:extensions/v1";
 import {
-  Budget,
+  DocumentLimits,
   Reader,
   ParseError,
   document,
@@ -30,7 +30,7 @@ function packed(reader: Reader, start: number, end: number): Node[] {
     if (width && (end - start) % width) {
       continue;
     }
-    const payload = new Reader(reader.bytes, reader.sourceId, reader.budget, start, end);
+    const payload = new Reader(reader.bytes, reader.sourceId, reader.limits, start, end);
     const values: Node[] = [];
     let count = 0;
     try {
@@ -76,7 +76,7 @@ function fields(
   group?: number,
   keepPartial = true,
 ): void {
-  reader.budget.depth(depth, reader.offset);
+  reader.limits.depth(depth, reader.offset);
   while (reader.remaining) {
     const start = reader.offset;
     const tag = Number(reader.varint(32));
@@ -121,7 +121,7 @@ function fields(
       const bits = new Reader(
         reader.bytes,
         reader.sourceId,
-        reader.budget,
+        reader.limits,
         valueStart,
         reader.offset,
       );
@@ -156,14 +156,14 @@ function fields(
       const name = `Field ${field} · length-delimited · ${length} bytes`;
       try {
         const rawStart = payload.offset;
-        const raw = new Reader(reader.bytes, reader.sourceId, reader.budget, rawStart, payload.end);
+        const raw = new Reader(reader.bytes, reader.sourceId, reader.limits, rawStart, payload.end);
         raw.offset = payload.end;
         children.push(raw.node("Raw payload", rawStart, { kind: "bytes" }));
         // Large payloads remain inspectable as bytes; speculative decoding is bounded.
         if (length <= 65_536) {
           try {
             const decoded = text(
-              new Reader(reader.bytes, reader.sourceId, reader.budget, rawStart, payload.end),
+              new Reader(reader.bytes, reader.sourceId, reader.limits, rawStart, payload.end),
             );
             children.push(
               raw.node(
@@ -222,7 +222,7 @@ function fields(
 
 export function parse(bytes: Uint8Array, sourceId: string): VisualizationDocument {
   const doc = document("Protobuf", summary);
-  const reader = new Reader(bytes, sourceId, new Budget("protobuf"));
+  const reader = new Reader(bytes, sourceId, new DocumentLimits("protobuf"));
   try {
     fields(reader, doc.roots, 0);
   } catch (error) {

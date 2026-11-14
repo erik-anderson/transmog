@@ -75,14 +75,17 @@ In flattened deep views, container rows expose their full wire bytes for copying
 their decoded descendants appear as separate rows, rather than an empty subtree.
 The host's HTTP decoding and expansion limits still apply to compressed bodies.
 
-Other readers limit each selected decoded body to 2 MiB. Additional work, nesting, node,
-collection and total text limits bound parsing and speculative probes. Protobuf
+Other readers limit each selected decoded body to 2 MiB. Nesting, node,
+collection and total text limits bound materialized output and speculative probes. Protobuf
 text/nested-message probes consider payloads up to 64 KiB. Text values preview
 up to 1,024 UTF-16 code units; larger values remain available through their byte
 ranges. Wide integers use exact decimal strings; nonfinite floating point values
 use `NaN`/`Infinity` text, and negative zero uses `-0` text to preserve its sign
 through JSON. Captured strings are inert. No related traffic or live
 subscription is requested. **ⓘ** explains schema limitations and parser diagnostics.
+
+For an authoring walkthrough and local checks, see the
+[binary extension source guide](../extensions/binary/README.md).
 
 gRPC framing/compression, schema imports, schema inference and message editing
 are deferred. These visualizers do not add a dependency on the retired Bond

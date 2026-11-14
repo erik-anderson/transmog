@@ -179,11 +179,17 @@ async function smokePackagedBinary(call, evaluate, screenshotPath, tracePath, se
     if(!shared.querySelector('.visualizer-outcome')?.textContent.includes('field findings'))throw new Error('Native field counts are hidden');
     if(shared.querySelector('.visualizer-node option[value=hex]'))throw new Error('Native result offered Hex without sources');
     for(const node of c.comparisonFields.document.roots)await shared.toggleNode(node.id);
-    for(const format of ['cbor','bson']){
+    for(const format of ['bond','cbor','bson']){
       const a=await find(format),b=await find(format+'-right');
       const snapshot=await invoke('compare_evidence',{input:{operationId:'binary-compare-'+format,left:{kind:'exchange',id:a},right:{kind:'exchange',id:b}}});
       const fields=await invoke('comparison_fields',{id:snapshot.id,section:'Response',format,pageId:await invoke('visualizer_page'),operationId:'binary-fields-'+format});
-      if(fields.document.status!=='complete'||!fields.document.roots.some(node=>node.name.includes('greeting')))throw new Error('Native '+format+' comparison failed');
+      const changedField=format==='bond'?'Field 1':'greeting';
+      if(fields.document.status!=='complete'||!fields.document.roots.some(node=>node.name.includes(changedField)))throw new Error('Native '+format+' comparison failed');
+      if(format==='bond'){
+        const walk=node=>[node,...(node.children??[]).flatMap(walk)];
+        const values=fields.document.roots.flatMap(walk).map(node=>node.value?.value);
+        if(!values.includes('3.0')||!values.includes('3.1'))throw new Error('Native Bond comparison lost the changed values');
+      }
       if(await invoke('comparison_fields',{id:snapshot.id,section:'Response',format,pageId:'0',operationId:'binary-stale-'+format}).then(()=>false,()=>true)!==true)throw new Error('Expired page started a native field reader');
       await invoke('cancel_comparison',{operationId:'binary-queued-'+format});
       if(await invoke('comparison_fields',{id:snapshot.id,section:'Response',format,pageId:await invoke('visualizer_page'),operationId:'binary-queued-'+format}).then(()=>false,()=>true)!==true)throw new Error('Pre-start field cancellation was forgotten');
@@ -263,6 +269,7 @@ async function smokePackagedBinary(call, evaluate, screenshotPath, tracePath, se
           localService: qualification,
           productionServiceCaptures: "not supplied",
           nativeComparison: true,
+          bondComparison: true,
           sharedPresentation: true,
           viewportAndKeyboard: true,
           stalePageRejected: true,

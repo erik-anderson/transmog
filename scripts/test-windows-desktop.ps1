@@ -9,6 +9,7 @@ param(
     [switch]$StartupOnly,
     [switch]$FormatConverterChecks,
     [switch]$AuthChecks,
+    [switch]$BinaryChecks,
     [switch]$ScriptDiagnosticsChecks,
     [switch]$ScriptDebuggerChecks,
     [switch]$WindowGeometryChecks,
@@ -34,6 +35,7 @@ if ($ExecutablePath) {
     $executable = (Resolve-Path -LiteralPath $ExecutablePath).Path
 }
 if ($StartupOnly -and $SoakMinutes) { throw 'StartupOnly cannot claim a soak.' }
+if ($BinaryChecks -and ($StartupOnly -or $AuthChecks -or $ScriptDiagnosticsChecks -or $ScriptDebuggerChecks -or $ViewerChecks -or $PortableCaseChecks -or $FormatConverterChecks -or $WindowGeometryChecks -or $KeyRecoveryChecks -or $SoakMinutes)) { throw 'BinaryChecks is an isolated binary inspection flow.' }
 if (($ScriptDiagnosticsChecks -or $ScriptDebuggerChecks) -and ($StartupOnly -or $AuthChecks -or $ViewerChecks -or $PortableCaseChecks -or $FormatConverterChecks -or $WindowGeometryChecks -or $KeyRecoveryChecks -or $SoakMinutes)) { throw 'ScriptDiagnosticsChecks is an isolated sandbox and imported-evidence flow.' }
 if ($AuthChecks -and ($StartupOnly -or $ViewerChecks -or $PortableCaseChecks -or $FormatConverterChecks -or $WindowGeometryChecks -or $KeyRecoveryChecks -or $SoakMinutes)) { throw 'AuthChecks is an isolated read-only imported-evidence flow.' }
 if ($FormatConverterChecks -and ($StartupOnly -or $ViewerChecks -or $PortableCaseChecks -or $WindowGeometryChecks -or $KeyRecoveryChecks -or $SoakMinutes)) { throw 'FormatConverterChecks is an isolated converter-window flow.' }
@@ -98,7 +100,7 @@ $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $debugArguments
 $probeRoot = Join-Path $repositoryRoot ('artifacts\windows-desktop-validation\' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path (Join-Path $probeRoot 'profile') | Out-Null
 . (Join-Path $PSScriptRoot 'test-output-run.ps1')
-$outputGroup = "startup=$StartupOnly;auth=$AuthChecks;scriptDiagnostics=$ScriptDiagnosticsChecks;scriptDebugger=$ScriptDebuggerChecks;cases=$PortableCaseChecks;converter=$FormatConverterChecks;viewer=$ViewerChecks;body=$BodySourceChecks;trace=$TraceSaveChecks;keys=$KeyRecoveryChecks"
+$outputGroup = "startup=$StartupOnly;auth=$AuthChecks;binary=$BinaryChecks;scriptDiagnostics=$ScriptDiagnosticsChecks;scriptDebugger=$ScriptDebuggerChecks;cases=$PortableCaseChecks;converter=$FormatConverterChecks;viewer=$ViewerChecks;body=$BodySourceChecks;trace=$TraceSaveChecks;keys=$KeyRecoveryChecks"
 $outputLease = Start-TestOutputRun $probeRoot $outputGroup
 $outputPassed = $false
 $outputStopped = $false
@@ -106,7 +108,7 @@ try {
 $env:LOCALAPPDATA = Join-Path $probeRoot 'profile'
 $extensionSource = $null
 $visualizerTrace = $null
-if (-not $ViewerChecks -and -not $PortableCaseChecks -and -not $StartupOnly -and -not $AuthChecks) {
+if (-not $ViewerChecks -and -not $PortableCaseChecks -and -not $StartupOnly -and -not $AuthChecks -and -not $BinaryChecks) {
     $extensionSource = Join-Path $probeRoot 'extension-source'
     $extensionRegistry = Join-Path $env:LOCALAPPDATA 'Transmog/extensions-v1'
     New-Item -ItemType Directory -Force -Path $extensionSource, $extensionRegistry | Out-Null
@@ -327,6 +329,17 @@ try {
         } finally { Pop-Location }
         $outputPassed = $true
         return [pscustomobject]@{ ScriptDiagnosticsVerified = $true; EvidenceRoot = $probeRoot }
+    }
+    if ($BinaryChecks) {
+        . (Join-Path $PSScriptRoot 'python-tools.ps1')
+        Invoke-TransmogPython 'generate-binary-native-fixture.py' @((Join-Path $probeRoot 'binary-fixture.saz'))
+        Push-Location $desktopUi
+        try {
+            & node scripts/smoke-binary-checks.mjs --port "$DevToolsPort" --output $probeRoot
+            if ($LASTEXITCODE -ne 0) { throw 'Native binary inspection checks failed.' }
+        } finally { Pop-Location }
+        $outputPassed = $true
+        return [pscustomobject]@{ BinaryInspectionVerified = $true; EvidenceRoot = $probeRoot }
     }
     if ($AuthChecks) {
         $mapiCopyFixture = Join-Path $probeRoot 'mapi-copy.saz'

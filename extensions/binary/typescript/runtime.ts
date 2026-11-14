@@ -7,6 +7,12 @@ import type {
   VisualizationDocument,
 } from "transmog:extensions/v1";
 import { notice } from "./reader.js";
+import {
+  MAX_BINARY_INPUT_BYTES,
+  MAX_HEADER_VALUE_BYTES,
+  MAX_INPUT_PAGE_BYTES,
+  MEBIBYTE,
+} from "./limits.js";
 
 type Pending = { kind: "bytes" | "decoded"; token: string; count: number };
 
@@ -14,7 +20,7 @@ type Pending = { kind: "bytes" | "decoded"; token: string; count: number };
 export function visualizer(
   title: string,
   parse: (bytes: Uint8Array, sourceId: string, input?: Input) => VisualizationDocument,
-  maximumBytes = 2 * 1024 * 1024,
+  maximumBytes = MAX_BINARY_INPUT_BYTES,
 ) {
   let body: BodyReference | undefined;
   let bytes = new Uint8Array(0);
@@ -45,7 +51,7 @@ export function visualizer(
       );
     }
     if (offset < bytes.length) {
-      const count = Math.min(65_536, bytes.length - offset);
+      const count = Math.min(MAX_INPUT_PAGE_BYTES, bytes.length - offset);
       const token = `binary.${++sequence}`;
       pending = { kind: "bytes", token, count };
       return {
@@ -81,7 +87,7 @@ export function visualizer(
     if (length > BigInt(maximumBytes)) {
       return show(
         "limited",
-        `The body exceeds the visualizer's ${maximumBytes / (1024 * 1024)} MiB input limit. Inspect the retained bytes in Hex.`,
+        `The body exceeds the visualizer's ${maximumBytes / MEBIBYTE} MiB input limit. Inspect the retained bytes in Hex.`,
       );
     }
     bytes = new Uint8Array(Number(length));
@@ -110,7 +116,7 @@ export function visualizer(
         (identity &&
           !identity.redacted &&
           identity.value &&
-          identity.value.length <= 256 &&
+          identity.value.length <= MAX_HEADER_VALUE_BYTES &&
           /^[\t ]*identity[\t ]*$/i.test(String.fromCharCode(...identity.value)))
       ) {
         return begin(body);

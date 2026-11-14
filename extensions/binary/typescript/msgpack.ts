@@ -15,7 +15,7 @@ import {
 } from "./values.js";
 
 function read(reader: Reader, name: string, depth: number): Node {
-  reader.budget.depth(depth, reader.offset);
+  reader.limits.depth(depth, reader.offset);
   const start = reader.offset;
   const tag = reader.byte();
   let value: Value;

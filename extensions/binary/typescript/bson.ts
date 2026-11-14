@@ -26,7 +26,7 @@ function cstring(reader: Reader): { value: string; clipped: boolean } {
   while (reader.byte() !== 0) {
     /* The bounded reader enforces the terminator. */
   }
-  return text(new Reader(reader.bytes, reader.sourceId, reader.budget, start, reader.offset - 1));
+  return text(new Reader(reader.bytes, reader.sourceId, reader.limits, start, reader.offset - 1));
 }
 
 function bsonString(reader: Reader): Value {
@@ -152,7 +152,7 @@ function field(reader: Reader, type: number, name: string, depth: number): Node 
     const incrementReader = new Reader(
       reader.bytes,
       reader.sourceId,
-      reader.budget,
+      reader.limits,
       start,
       start + 4,
     );
@@ -173,7 +173,7 @@ function field(reader: Reader, type: number, name: string, depth: number): Node 
 }
 
 function readDocument(reader: Reader, name: string, depth: number, array = false): Node {
-  reader.budget.depth(depth, reader.offset);
+  reader.limits.depth(depth, reader.offset);
   const start = reader.offset,
     size = length(reader);
   if (size < 5) {

@@ -1,12 +1,13 @@
 import type { BytePage, HttpDecodeResult, Input, Step } from "transmog:extensions/v1";
-import { BondIndexViewer } from "./bond-index.js";
+import { BondIndexViewer } from "./bond-viewer.js";
 import { visualizer } from "./runtime.js";
+import { MAX_BOND_INPUT_BYTES } from "./bond-limits.js";
 
 const indexed = new BondIndexViewer();
 const viewer = visualizer(
   "Bond Compact Binary",
   (bytes, sourceId) => indexed.parse(bytes, sourceId),
-  16 * 1024 * 1024,
+  MAX_BOND_INPUT_BYTES,
 );
 let incompleteEvidence = false;
 export function visualize(input: Input): Step {

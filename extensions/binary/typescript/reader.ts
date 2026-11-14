@@ -1,45 +1,37 @@
 import type { Node, ParseStatus, Value, VisualizationDocument } from "transmog:extensions/v1";
+import { MAX_INLINE_DEPTH, MAX_INLINE_NODES, MAX_INLINE_TEXT_UNITS } from "./limits.js";
 
-export class ParseError extends Error {
-  partial?: Node;
-  constructor(
-    readonly status: "malformed" | "limited",
-    message: string,
-    readonly offset: number,
-  ) {
-    super(`${message} (byte ${offset}).`);
-  }
-}
+import { ParseError } from "./parse-error.js";
+import { scanText } from "./unicode.js";
+export { ParseError } from "./parse-error.js";
 
-/** Shared by speculative interpretations too: failed probes still consume work. */
-export class Budget {
-  private work = 0;
+const VARINT_GROUP_BITS = 7;
+const VARINT_DATA_MASK = 0x7f;
+const VARINT_CONTINUATION_BIT = 0x80;
+const BITS_PER_BYTE = 8;
+const FLOAT32_BYTES = 4;
+
+/** Bounds materialized output; byte limits and the host isolate bound parser execution. */
+export class DocumentLimits {
   private nodes = 0;
   private characters = 0;
 
   constructor(readonly prefix: string) {}
 
-  step(offset: number, cost = 1): void {
-    this.work += cost;
-    if (this.work > 200_000) {
-      throw new ParseError("limited", "Parser work limit reached", offset);
-    }
-  }
-
   depth(depth: number, offset: number): void {
-    if (depth > 10) {
+    if (depth > MAX_INLINE_DEPTH) {
       throw new ParseError("limited", "Nesting limit reached", offset);
     }
   }
 
   node(name: string, reader: Reader, start: number, value?: Value, children: Node[] = []): Node {
     this.nodes++;
-    if (this.nodes > 4_000) {
+    if (this.nodes > MAX_INLINE_NODES) {
       throw new ParseError("limited", "Field display limit reached", start);
     }
     if (value?.kind === "string") {
       this.characters += value.value.length;
-      if (this.characters > 65_536) {
+      if (this.characters > MAX_INLINE_TEXT_UNITS) {
         throw new ParseError("limited", "Text display limit reached", start);
       }
     }
@@ -61,7 +53,7 @@ export class Reader {
   constructor(
     readonly bytes: Uint8Array,
     readonly sourceId: string,
-    readonly budget: Budget,
+    readonly limits: DocumentLimits,
     readonly start = 0,
     readonly end = bytes.length,
   ) {
@@ -79,7 +71,6 @@ export class Reader {
   }
 
   byte(): number {
-    this.budget.step(this.offset);
     this.require(1);
     return this.bytes[this.offset++]!;
   }
@@ -87,13 +78,13 @@ export class Reader {
   varint(bits = 64): bigint {
     const start = this.offset;
     let value = 0n;
-    for (let shift = 0; shift < bits; shift += 7) {
+    for (let shift = 0; shift < bits; shift += VARINT_GROUP_BITS) {
       const byte = this.byte();
-      value |= BigInt(byte & 127) << BigInt(shift);
+      value |= BigInt(byte & VARINT_DATA_MASK) << BigInt(shift);
       if (value >= 1n << BigInt(bits)) {
         break;
       }
-      if (byte < 128) {
+      if (byte < VARINT_CONTINUATION_BIT) {
         return value;
       }
     }
@@ -104,7 +95,7 @@ export class Reader {
     this.require(width);
     let value = 0n;
     for (let index = 0; index < width; index++) {
-      value |= BigInt(this.byte()) << BigInt(index * 8);
+      value |= BigInt(this.byte()) << BigInt(index * BITS_PER_BYTE);
     }
     return value;
   }
@@ -113,7 +104,7 @@ export class Reader {
     this.require(width);
     const view = new DataView(this.bytes.buffer, this.bytes.byteOffset + this.offset, width);
     this.offset += width;
-    return width === 4 ? view.getFloat32(0, true) : view.getFloat64(0, true);
+    return width === FLOAT32_BYTES ? view.getFloat32(0, true) : view.getFloat64(0, true);
   }
 
   take(length: number): Reader {
@@ -121,7 +112,7 @@ export class Reader {
     const child = new Reader(
       this.bytes,
       this.sourceId,
-      this.budget,
+      this.limits,
       this.offset,
       this.offset + length,
     );
@@ -130,7 +121,7 @@ export class Reader {
   }
 
   node(name: string, start: number, value?: Value, children: Node[] = []): Node {
-    return this.budget.node(name, this, start, value, children);
+    return this.limits.node(name, this, start, value, children);
   }
 }
 
@@ -148,60 +139,11 @@ export function floating(value: number): Value {
     : { kind: "string", value: Number.isNaN(value) ? "NaN" : value < 0 ? "-Infinity" : "Infinity" };
 }
 
-/** Strict Unicode decoding without depending on DOM APIs in the isolated worker. */
+/** Validate the entire value, retaining only a bounded display preview. */
 export function text(reader: Reader, wide = false): { value: string; clipped: boolean } {
-  let value = "";
-  let clipped = false;
-  while (reader.remaining) {
-    const start = reader.offset;
-    let point = reader.byte();
-    if (wide) {
-      point |= reader.byte() << 8;
-      if (point >= 0xd800 && point <= 0xdbff) {
-        const low = reader.byte() | (reader.byte() << 8);
-        if (low < 0xdc00 || low > 0xdfff) {
-          throw new ParseError("malformed", "Invalid UTF-16 surrogate pair", start);
-        }
-        point = 0x10000 + ((point - 0xd800) << 10) + low - 0xdc00;
-      } else if (point >= 0xdc00 && point <= 0xdfff) {
-        throw new ParseError("malformed", "Unpaired UTF-16 surrogate", start);
-      }
-    } else if (point >= 128) {
-      const count =
-        point >= 0xc2 && point <= 0xdf
-          ? 1
-          : point >= 0xe0 && point <= 0xef
-            ? 2
-            : point >= 0xf0 && point <= 0xf4
-              ? 3
-              : -1;
-      if (count < 0) {
-        throw new ParseError("malformed", "Invalid UTF-8 leading byte", start);
-      }
-      point &= (1 << (6 - count)) - 1;
-      for (let index = 0; index < count; index++) {
-        const next = reader.byte();
-        if ((next & 0xc0) !== 0x80) {
-          throw new ParseError("malformed", "Invalid UTF-8 continuation", start);
-        }
-        point = (point << 6) | (next & 63);
-      }
-      if (
-        point < [0, 0x80, 0x800, 0x10000][count]! ||
-        point > 0x10ffff ||
-        (point >= 0xd800 && point <= 0xdfff)
-      ) {
-        throw new ParseError("malformed", "Invalid UTF-8 code point", start);
-      }
-    }
-    const character = String.fromCodePoint(point);
-    if (!clipped && value.length + character.length <= 1_024) {
-      value += character;
-    } else {
-      clipped = true;
-    }
-  }
-  return { value, clipped };
+  const result = scanText(reader.bytes, reader.offset, reader.end, wide, "validate-and-preview");
+  reader.offset = reader.end;
+  return result;
 }
 
 export function document(title: string, summary: string): VisualizationDocument {
@@ -230,7 +172,7 @@ export function failure(
   doc.diagnostics!.push({ code: error.status, message: error.message });
   // Keep earlier complete fields and expose the rest as exact source bytes.
   doc.roots.push({
-    id: `${reader.budget.prefix}.remainder`,
+    id: `${reader.limits.prefix}.remainder`,
     name: "Unparsed bytes",
     value: { kind: "bytes" },
     spans: [

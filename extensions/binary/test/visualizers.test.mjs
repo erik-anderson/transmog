@@ -186,6 +186,37 @@ const bondHeader = (version) => [0x43, 0x42, version, 0];
 const bondStruct = (version, fields) =>
   version === 1 ? [...fields, 0] : [...varint(fields.length + 1), ...fields, 0];
 
+test("bounded text validates the entire value beyond its display preview", async () => {
+  const LONG_TEXT_UNITS = 250_000;
+  const value = "a".repeat(LONG_TEXT_UNITS);
+  for (const [kind, payload] of [
+    [
+      "bond",
+      binary(
+        bondHeader(1),
+        [9],
+        varint(LONG_TEXT_UNITS),
+        Array(LONG_TEXT_UNITS).fill("a".charCodeAt(0)),
+        [0],
+      ),
+    ],
+    ["msgpack", pack({ text: value })],
+    ["cbor", cbor({ text: value })],
+    ["bson", BSON.serialize({ text: value })],
+  ]) {
+    assert.equal((await host(kind, payload)).document.status, "complete", `${kind} valid text`);
+    const malformed = Uint8Array.from(payload);
+    const finalCharacter = malformed.lastIndexOf("a".charCodeAt(0));
+    assert.ok(finalCharacter >= LONG_TEXT_UNITS);
+    malformed[finalCharacter] = 0xff;
+    assert.equal(
+      (await host(kind, malformed)).document.status,
+      "malformed",
+      `${kind} invalid tail`,
+    );
+  }
+});
+
 test("map key previews preserve Unicode characters at native label boundaries", async () => {
   const key = "x".repeat(70) + "😀".repeat(100);
   for (const [kind, payload] of [
@@ -753,7 +784,7 @@ test("large Bond record and field ranges reach the final values with bounded doc
   }
 });
 
-test("wide Bond branches cannot consume the projection budget before a later range opens", async () => {
+test("wide Bond branches cannot consume the display limit before a later range opens", async () => {
   const tree = (depth) =>
     depth === 0
       ? Array.from({ length: 6 }, (_, id) => [id * 32 + 3, id])
@@ -899,6 +930,27 @@ test("Bond deep descendants remain inspectable with honest depth labels and fini
   const pending = nodes(result.document).find((node) => node.childrenToken);
   result.call("visualize", result.input);
   assert.throws(() => result.call("expand", pending.childrenToken), /Expired Bond range/);
+});
+
+test("Bond range tokens stay expired after a replacement body finishes parsing", async () => {
+  const DEPTH = 16;
+  const bytes = binary(bondHeader(1), Array(DEPTH).fill(10), [0x23, 42], Array(DEPTH + 1).fill(0));
+  const result = await host("bond", bytes);
+  const previous = nodes(result.document).find((node) => node.childrenToken).childrenToken;
+  let step = result.call("visualize", result.input);
+  while (step.kind === "needInput") {
+    const read = step.reads[0];
+    step = result.call("resume", step.token, [
+      {
+        sourceId: read.sourceId,
+        offset: read.offset,
+        bytes: Array.from(bytes.slice(Number(read.offset), Number(read.offset) + read.maxBytes)),
+      },
+    ]);
+  }
+  assert.equal(step.kind, "document");
+  assert.ok(nodes(step.document).some((node) => node.childrenToken));
+  assert.throws(() => result.call("expand", previous), /Expired Bond range/);
 });
 
 test("Bond accepts its full 16 MiB body ceiling without materializing byte-list items", async () => {
@@ -1240,7 +1292,7 @@ test("negative zero survives the JSON boundary for Protobuf and Bond floats", as
   );
 });
 
-test("large collections, text, repeated fields and nesting hit explicit budgets", async () => {
+test("large collections, text, repeated fields and nesting hit explicit safeguards", async () => {
   const repeated = await host(
     "protobuf",
     binary(Array.from({ length: 5_000 }, () => [8, 2]).flat()),

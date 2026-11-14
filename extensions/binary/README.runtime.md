@@ -45,7 +45,7 @@ separate rows. Fixed-width lists retain byte ranges without allocating a node
 for every item. Full strings are validated even when only a preview is shown.
 Use Hex for complete value bytes;
 copy a smaller range when a whole subtree cannot be materialized.
-Other readers accept bodies up to 2 MiB, with separate work, nesting, node and text limits.
+Other readers accept bodies up to 2 MiB, with nesting, node, collection and text limits.
 Text previews show at most 1,024 UTF-16 code units. Negative zero is displayed as
 `-0` text so JSON cannot erase its sign. Missing, malformed, incomplete
 and limited input is reported explicitly; a complete parse does not establish a
