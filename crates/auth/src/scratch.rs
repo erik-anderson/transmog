@@ -147,10 +147,14 @@ fn documents(
         name.eq_ignore_ascii_case("Authentication-Info")
             || name.eq_ignore_ascii_case("Proxy-Authentication-Info")
     });
-    let first = value.split_ascii_whitespace().next().unwrap_or("");
+    let first = value
+        .trim_start_matches([' ', '\t', ','])
+        .split([' ', '\t', ','])
+        .next()
+        .unwrap_or("");
     let known_scheme = ["Basic", "Digest", "Bearer", "NTLM", "Negotiate"]
         .iter()
-        .any(|scheme| scheme.eq_ignore_ascii_case(first.trim_end_matches(',')));
+        .any(|scheme| scheme.eq_ignore_ascii_case(first));
     let header_envelope = header.is_some_and(|name| {
         [
             "Authorization",

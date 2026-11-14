@@ -1,4 +1,5 @@
-//! RFC 9110 challenge grammar. Commas inside quoted values are not challenge boundaries.
+//! [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html#section-11.3) challenge grammar.
+//! Commas inside quoted values are not challenge boundaries.
 use crate::limits::{MAX_HTTP_ENVELOPES, MAX_HTTP_PARAMETERS};
 use crate::{Context, Finding, Source};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -24,6 +25,15 @@ fn space(bytes: &[u8], at: &mut usize) {
         *at += 1;
     }
 }
+// Empty entries are ignored within the caller's existing byte and collection bounds.
+fn list_separators(bytes: &[u8], at: &mut usize) {
+    while bytes.get(*at).is_some_and(|byte| b" \t,".contains(byte)) {
+        *at += 1;
+    }
+}
+fn quoted_octet(byte: u8) -> bool {
+    byte == b'\t' || !byte.is_ascii_control()
+}
 fn word(bytes: &[u8], at: &mut usize) -> String {
     let start = *at;
     while bytes.get(*at).is_some_and(|b| token(*b)) {
@@ -36,17 +46,14 @@ pub(crate) fn parse(value: &str) -> Vec<Envelope> {
     let mut at = 0;
     let mut result = vec![];
     while at < bytes.len() && result.len() < MAX_HTTP_ENVELOPES {
-        space(bytes, &mut at);
-        if bytes.get(at) == Some(&b',') {
-            at += 1;
-            continue;
-        }
+        list_separators(bytes, &mut at);
         let start = at;
         let scheme = word(bytes, &mut at);
         if scheme.is_empty() {
             break;
         }
         let separated = bytes.get(at).is_none_or(|b| b" \t,".contains(b));
+        let has_argument_separator = bytes.get(at).is_some_and(|byte| b" \t".contains(byte));
         space(bytes, &mut at);
         let mut item = Envelope {
             scheme,
@@ -58,12 +65,17 @@ pub(crate) fn parse(value: &str) -> Vec<Envelope> {
             end: at,
             original: String::new(),
         };
-        if at < bytes.len() && bytes[at] != b',' {
+        if at < bytes.len() {
             let mark = at;
-            let mut probe = at;
+            let mut parameter_start = at;
+            if has_argument_separator {
+                list_separators(bytes, &mut parameter_start);
+            }
+            let mut probe = parameter_start;
             word(bytes, &mut probe);
             space(bytes, &mut probe);
-            let parameter = bytes.get(probe) == Some(&b'=')
+            let parameter = has_argument_separator
+                && bytes.get(probe) == Some(&b'=')
                 && bytes
                     .get(probe + 1)
                     .is_some_and(|b| *b != b'=' && *b != b',')
@@ -71,6 +83,7 @@ pub(crate) fn parse(value: &str) -> Vec<Envelope> {
                     .iter()
                     .all(|b| *b == b'=' || b.is_ascii_whitespace());
             if parameter {
+                at = parameter_start;
                 loop {
                     let key = word(bytes, &mut at);
                     space(bytes, &mut at);
@@ -96,9 +109,11 @@ pub(crate) fn parse(value: &str) -> Vec<Envelope> {
                                 if at == bytes.len() {
                                     break;
                                 }
+                                item.malformed |= !quoted_octet(bytes[at]);
                                 quoted.push(bytes[at]);
                                 at += 1;
                             } else {
+                                item.malformed |= !quoted_octet(b);
                                 quoted.push(b);
                             }
                         }
@@ -117,7 +132,8 @@ pub(crate) fn parse(value: &str) -> Vec<Envelope> {
                     }
                     let comma = at;
                     probe = at + 1;
-                    space(bytes, &mut probe);
+                    list_separators(bytes, &mut probe);
+                    let next_parameter = probe;
                     word(bytes, &mut probe);
                     space(bytes, &mut probe);
                     if bytes.get(probe) != Some(&b'=') {
@@ -129,14 +145,13 @@ pub(crate) fn parse(value: &str) -> Vec<Envelope> {
                         at = bytes.len();
                         break;
                     }
-                    at = comma + 1;
-                    space(bytes, &mut at);
+                    at = next_parameter;
                 }
-            } else {
+            } else if bytes[at] != b',' {
                 while at < bytes.len() && bytes[at] != b',' {
                     at += 1;
                 }
-                let raw = value[mark..at].trim();
+                let raw = value[mark..at].trim_matches([' ', '\t']);
                 let core = raw.trim_end_matches('=');
                 item.malformed |= core.is_empty()
                     || !core

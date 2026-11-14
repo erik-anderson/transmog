@@ -21,6 +21,98 @@ fn header(name: &str, value: &str) -> Header {
 }
 
 #[test]
+fn http_empty_list_entries_preserve_parameters_and_challenges() {
+    for value in [
+        r#"Digest realm="outer", , nonce="private-nonce",, qop=auth, , Basic realm="next""#,
+        r#"Digest , , realm="outer", nonce="private-nonce", qop=auth, Basic realm="next""#,
+        r#", Digest realm="outer", nonce="private-nonce", qop=auth, , Basic realm="next",,"#,
+    ] {
+        let inspection = run(vec![header("WWW-Authenticate", value)], None);
+        assert_eq!(inspection.findings.len(), 2, "Unexpected split in {value}");
+        let digest = &inspection.findings[0];
+        assert_eq!(digest.format, "Digest");
+        assert_eq!(digest.status, "decoded");
+        let nonce = digest
+            .fields
+            .iter()
+            .find(|field| field.name == "nonce")
+            .unwrap();
+        assert_eq!(inspection.value(&nonce.id), Some("private-nonce"));
+        assert_eq!(inspection.findings[1].format, "Basic");
+        assert_eq!(inspection.findings[1].source.offset, value.find("Basic"));
+        assert!(
+            !serde_json::to_string(&inspection)
+                .unwrap()
+                .contains("private-nonce")
+        );
+        let conversion = decode_authentication(value, "auth-decode", &AtomicBool::new(false));
+        assert!(
+            conversion.is_ok(),
+            "Unexpected conversion for {value}: {conversion:?}"
+        );
+    }
+}
+
+#[test]
+fn http_quoted_values_reject_controls_and_preserve_the_evidence() {
+    for control in ['\t', '\0', '\r', '\n', '\u{b}', '\u{7f}'] {
+        for escape in ["", "\\"] {
+            let value = format!("Digest realm=\"before{escape}{control}after\", Basic realm=next");
+            let inspection = run(vec![header("WWW-Authenticate", &value)], None);
+            assert_eq!(inspection.findings.len(), 2);
+            assert_eq!(
+                inspection.findings[0].status,
+                if control == '\t' {
+                    "decoded"
+                } else {
+                    "malformed"
+                }
+            );
+            let realm = inspection.findings[0]
+                .fields
+                .iter()
+                .find(|field| field.name == "realm")
+                .unwrap();
+            assert_eq!(
+                inspection.value(&realm.id),
+                Some(format!("before{control}after").as_str())
+            );
+            assert_eq!(inspection.findings[1].format, "Basic");
+        }
+    }
+}
+
+#[test]
+fn http_credentials_trim_only_http_whitespace() {
+    for (suffix, allowed) in [
+        (" ", true),
+        ("\t", true),
+        ("\r", false),
+        ("\n", false),
+        ("\u{b}", false),
+        ("\u{a0}", false),
+    ] {
+        let inspection = run(
+            vec![header("Authorization", &format!("Bearer opaque{suffix}"))],
+            None,
+        );
+        let finding = &inspection.findings[0];
+        assert_eq!(finding.status, if allowed { "opaque" } else { "malformed" });
+        let original = finding
+            .fields
+            .iter()
+            .find(|field| field.name == "Original credential")
+            .unwrap();
+        let expected = if allowed {
+            "opaque".into()
+        } else {
+            format!("opaque{suffix}")
+        };
+        assert_eq!(inspection.value(&original.id), Some(expected.as_str()));
+    }
+}
+
+#[test]
 fn http_envelope_limits_accept_the_exact_boundary() {
     for count in [limits::MAX_HTTP_ENVELOPES, limits::MAX_HTTP_ENVELOPES + 1] {
         let value = vec!["Negotiate"; count].join(", ");
