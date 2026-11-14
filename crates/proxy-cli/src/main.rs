@@ -63,6 +63,10 @@ use transmog_tls::{
 };
 
 fn main() {
+    #[cfg(windows)]
+    if let Some(code) = transmog_host_windows::recovery_command_exit_code() {
+        std::process::exit(code);
+    }
     let mcp_stdio = env::args().nth(1).as_deref() == Some("mcp")
         && env::args().nth(2).as_deref() == Some("serve");
     let diagnostics = mcp_stdio.then(mcp_logging::Diagnostics::new);

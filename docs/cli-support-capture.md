@@ -104,7 +104,10 @@ ownership records live separately from the desktop in
 `%LOCALAPPDATA%\Transmog-cli`. Windows proxy recovery also has its own CLI journal.
 
 If the process is killed or you dismiss a removal prompt, the next recording
-restores interrupted Windows proxy settings. Recordings with HTTPS decryption
+restores interrupted Windows proxy settings. Before applying proxy settings,
+the CLI also attempts to register current-user logon recovery; a registration
+failure does not prevent capture. Successful restoration removes that task.
+Recordings with HTTPS decryption
 also retry old-root removal; `--no-decrypt-https` leaves certificate cleanup for
 a later decrypting recording or `roots cleanup`. Failed removal keeps the exact
 identities needed for later cleanup. Cleanup does not require an old ephemeral

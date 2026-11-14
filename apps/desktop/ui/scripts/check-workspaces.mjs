@@ -94,6 +94,7 @@ import { checkConnectTunnels } from "./check-connect-tunnels.mjs";
 import { checkUserAgentOverrides } from "./check-user-agent-overrides.mjs";
 import { checkUserAgentPresets } from "./check-user-agent-presets.mjs";
 import { checkLoopback } from "./check-loopback.mjs";
+import { checkProxyRecovery } from "./check-proxy-recovery.mjs";
 import { checkUpdateOwnership } from "./check-update-ownership.mjs";
 
 // Use the repository's existing, locked browser test installation.
@@ -2611,7 +2612,7 @@ await page.addInitScript(
                 ? "127.0.0.1:8888"
                 : null,
               summary: state.statusSummary ?? "Proxy " + state.lifecycle,
-              hostRestorePending: false,
+              hostRestorePending: state.hostRestorePending ?? false,
               ...processStatus(),
             };
           case "list_running_processes":
@@ -2670,6 +2671,12 @@ await page.addInitScript(
               hostRestorePending: false,
               ...processStatus(),
             };
+          case "recover_windows_proxy":
+            if (state.holdProxyRecovery)
+              await new Promise((resolve) => (state.releaseProxyRecovery = resolve));
+            if (state.failProxyRecovery) throw new Error("Fixture recovery failed");
+            state.hostRestorePending = false;
+            return true;
           case "search_traffic": {
             const request = args.request;
             state.lastContentSearch = structuredClone(request);
@@ -4942,6 +4949,15 @@ const cancelRule = async () => {
 const runBrowserCheck = createBrowserCheckRunner();
 
 try {
+  if (process.argv.includes("--proxy-recovery-only")) {
+    await page.goto("https://workspace.test/");
+    await page.waitForFunction(() => document.querySelector("app-shell")?.traffic?.queryLoaded);
+    await runBrowserCheck(checkProxyRecovery, page, root);
+    assert.deepEqual(errors, []);
+    await browser.close();
+    process.stdout.write("Pending proxy recovery, focus preservation and retry verified.\n");
+    process.exit(0);
+  }
   if (process.argv.includes("--client-certificates-only")) {
     await page.goto("https://workspace.test/");
     await page.waitForFunction(() => document.querySelector("app-shell")?.traffic?.queryLoaded);
@@ -5545,6 +5561,9 @@ try {
     process.stdout.write("Network profile interactions and responsive layouts verified.\n");
     process.exit(0);
   }
+  await page.goto("https://workspace.test/");
+  await page.waitForFunction(() => document.querySelector("app-shell")?.traffic?.queryLoaded);
+  await runBrowserCheck(checkProxyRecovery, page, root);
   const startupNavigationRequests = requests.length;
   await page.goto("https://workspace.test/");
   await page.waitForFunction(() =>

@@ -319,7 +319,21 @@ fn app_status(
     state: State<'_, DesktopState>,
 ) -> Result<AppStatus, AppError> {
     let application = state.window_application(&window)?;
-    Ok(application.status())
+    let status = application.status();
+    Ok(with_host_recovery_status(
+        status,
+        window.label() == "main" && state.host.recovery_pending(),
+    ))
+}
+
+fn with_host_recovery_status(mut status: AppStatus, pending: bool) -> AppStatus {
+    if matches!(
+        status.lifecycle,
+        AppLifecycle::Stopped | AppLifecycle::Failed
+    ) {
+        status.host_restore_pending |= pending;
+    }
+    status
 }
 
 #[tauri::command]
@@ -622,7 +636,9 @@ fn desktop_bootstrap(
         ca_status_error: certificate.error,
         owned_ca_sha256: certificate.sha256,
         owned_ca_trusted: certificate.trusted,
-        host_restore_pending: state.host.recovery_pending(),
+        host_restore_pending: window.label() == "main"
+            && with_host_recovery_status(state.application.status(), state.host.recovery_pending())
+                .host_restore_pending,
         diagnostics_path: state.diagnostics_path.clone(),
     })
 }
@@ -1449,11 +1465,22 @@ async fn retry_host_restore(state: State<'_, DesktopState>) -> Result<AppStatus,
 }
 
 #[tauri::command]
-fn recover_windows_proxy(state: State<'_, DesktopState>) -> Result<bool, String> {
-    state
-        .host
-        .recover_pending()
-        .map_err(|error| error.to_string())
+async fn recover_windows_proxy(state: State<'_, DesktopState>) -> Result<bool, String> {
+    let host = Arc::clone(&state.host);
+    let application = state.application.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        // A failed stop retains its token and lease. Retry through the service
+        // that owns it rather than competing for that lease as crash recovery.
+        if application.status().host_restore_pending {
+            tauri::async_runtime::block_on(application.retry_host_restore())
+                .map(|_| true)
+                .map_err(|error| error.to_string())
+        } else {
+            host.recover_pending().map_err(|error| error.to_string())
+        }
+    })
+    .await
+    .map_err(|_| "Windows proxy recovery could not complete.".to_owned())?
 }
 
 #[tauri::command]
@@ -2698,9 +2725,14 @@ pub fn run() {
     crate::installed_updates::cleanup(application.clone());
     let renderer = AppRenderer::new().expect("embedded WebUI assets must be valid");
     let initial_window = application.product_state().window;
-    let host = Arc::new(WindowsProxyIntegration::system(
-        state_root.join("proxy-recovery-v1.json"),
-    ));
+    let host = Arc::new(
+        WindowsProxyIntegration::system(state_root.join("proxy-recovery-v1.json"))
+            .with_diagnostics(application.diagnostic_recorder(
+                DiagnosticLevel::Warning,
+                "desktop",
+                "proxy-login-recovery-task-failed",
+            )),
+    );
     if let Err(error) = host.recover_pending() {
         application.record_diagnostic(
             DiagnosticLevel::Error,
@@ -3218,8 +3250,7 @@ pub fn run() {
                     persist_window_state(&application, &window);
                     let agents_closed = window.state::<mcp::AgentState>().shutdown().await.is_ok();
                     if agents_closed && application.shutdown().await.is_ok()
-                        && host.recover_pending().is_ok()
-                        && !host.recovery_pending()
+                        && host.recover_for_exit().is_ok()
                     {
                         if let Err(error) = application.discard_traffic() {
                             application.record_diagnostic(
@@ -3243,7 +3274,7 @@ pub fn run() {
         if matches!(
             event,
             tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
-        ) && let Err(error) = exit_host.recover_pending()
+        ) && let Err(error) = exit_host.recover_for_exit()
         {
             exit_application.record_diagnostic(
                 DiagnosticLevel::Error,
@@ -3314,6 +3345,9 @@ fn exit_for_maintenance_if_requested() {
 }
 
 fn maintenance_exit_code() -> Option<i32> {
+    if let Some(code) = transmog_host_windows::recovery_command_exit_code() {
+        return Some(code);
+    }
     if let Some(code) = crate::installed_updates::maintenance_exit_code() {
         return Some(code);
     }
@@ -3350,6 +3384,12 @@ fn run_maintenance(uninstall: bool) -> Result<(), ()> {
     WindowsProxyIntegration::system(state_root.join("proxy-recovery-v1.json"))
         .recover_pending()
         .map_err(|_| ())?;
+    if let Ok(executable) = std::env::current_exe() {
+        for executable in [executable.with_file_name("transmog-cli.exe"), executable] {
+            transmog_host_windows::ScheduledProxyRecovery::recover_for_executable(&executable)
+                .map_err(|_| ())?;
+        }
+    }
     if !uninstall {
         return Ok(());
     }
@@ -3407,6 +3447,9 @@ fn remove_owned_app_data(state_root: &std::path::Path) -> Result<(), ()> {
                 | "diagnostics.jsonl.1"
                 | "certificate-ownership-v1.json"
                 | "proxy-recovery-v1.json"
+                | "proxy-recovery-v1.lock"
+                | "proxy-owner-v1.json"
+                | "proxy-owner-v1.lock"
                 | "mcp-access.json"
                 | "mcp-endpoint.json"
         ) || is_owned_preference_generation(&name)
@@ -3420,6 +3463,7 @@ fn remove_owned_app_data(state_root: &std::path::Path) -> Result<(), ()> {
                     | "scripts-v1.lock"
             )
             || name.starts_with("certificate-ownership-v1.tmp-")
+            || (name.starts_with(".transmog-proxy-") && name.ends_with(".tmp"))
             || (name.starts_with(".transmog-state-") && name.ends_with(".tmp"));
         if owned {
             std::fs::remove_file(path).map_err(|_| ())?;
@@ -3588,6 +3632,28 @@ fn into_tauri_response(result: Result<UiResponse, UiError>) -> Response<Vec<u8>>
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn status_keeps_interrupted_host_recovery_visible_without_flagging_a_live_run() {
+        use transmog_app::{AppConfig, AppLifecycle, Application};
+        let status = Application::new(AppConfig::default()).unwrap().status();
+        for lifecycle in [
+            AppLifecycle::Stopped,
+            AppLifecycle::Failed,
+            AppLifecycle::Running,
+            AppLifecycle::Draining,
+            AppLifecycle::Stopping,
+        ] {
+            let mut input = status.clone();
+            input.lifecycle = lifecycle;
+            input.host_restore_pending = false;
+            let recovered = super::with_host_recovery_status(input, true);
+            assert_eq!(
+                recovered.host_restore_pending,
+                matches!(lifecycle, AppLifecycle::Stopped | AppLifecycle::Failed)
+            );
+        }
+    }
+
     #[test]
     fn tunnel_mode_bootstrap_tolerates_unavailable_ownership_and_trust_metadata() {
         let root = tempfile::tempdir().unwrap();

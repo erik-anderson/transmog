@@ -78,7 +78,19 @@ requests** while admitted requests, TLS handshakes and upgraded connections
 finish. Idle clients do not delay shutdown. **Start proxy** during this state
 resumes the same listener without disrupting active work. Closing the app uses
 its shutdown flow; a journal restores interrupted host configuration on the next
-launch after a hard termination. Setup and recovery actions are in Settings →
+launch after a hard termination. Before changing proxy settings, Transmog also
+attempts to register a current-user logon recovery task. It restores the saved
+settings after an interrupted run even if Transmog is not reopened. A live proxy
+run prevents background recovery from changing its settings. Registration or task
+cleanup failures are diagnostic warnings and do not block proxy use. Successful
+restoration removes the task; failed restoration retains the journal for retry.
+Desktop and CLI captures share current-user ownership across their journals.
+A new run first recovers an interrupted owner; recovery and normal stop preserve
+subsequent proxy, VPN, enable and bypass changes instead of replaying obsolete
+settings over them.
+An idle desktop can close or capture with manual routing while a separate CLI
+run owns the Windows proxy; that live run is not reported as abandoned recovery.
+Setup and recovery actions are in Settings →
 Connection. Certificate paths and exact removal are under **Interception
 certificate**.
 

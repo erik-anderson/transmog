@@ -6783,6 +6783,7 @@ version = "0.1.26"
 dependencies = [
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.21",
  "transmog-session",
 ]

@@ -768,10 +768,15 @@ export class SettingsWorkspace extends WorkspaceElement {
   }
 
   async recoverProxy(): Promise<void> {
+    await this.runProxyChange("recovering", () => this.recoverProxyNow());
+  }
+
+  private async recoverProxyNow(): Promise<void> {
+    this.setProxyOutput("Recovering Windows proxy settings…", "progress");
     try {
       const restored = await invoke<boolean>("recover_windows_proxy");
       const message = restored
-        ? "The exact journaled Windows proxy settings were restored."
+        ? "Windows proxy recovery completed."
         : "No Windows proxy recovery journal was present.";
       this.setProxyOutput(message, "success");
       this.diagnostic = message;

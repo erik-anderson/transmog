@@ -1121,6 +1121,22 @@ impl Application {
         self.diagnostics.record(level, component, code, message);
     }
 
+    /// Creates an adapter diagnostic callback without retaining application state.
+    ///
+    /// Host integrations owned by a proxy run can retain this callback without
+    /// keeping the application or its session service alive.
+    pub fn diagnostic_recorder(
+        &self,
+        level: DiagnosticLevel,
+        component: &str,
+        code: &str,
+    ) -> impl Fn(&str) + Send + Sync + 'static {
+        let diagnostics = self.diagnostics.clone();
+        let component = component.to_owned();
+        let code = code.to_owned();
+        move |message| diagnostics.record(level, &component, &code, message)
+    }
+
     /// Creates a privacy-safe, create-new support bundle.
     ///
     /// # Errors
@@ -3186,6 +3202,28 @@ mod tests {
         let events = std::fs::read_to_string(&path).unwrap();
         assert!(events.contains("\"code\":\"form-handler-failed\""));
         std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn adapter_diagnostic_recorder_does_not_retain_application_state() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("diagnostics.jsonl");
+        let application = Application::new(AppConfig {
+            diagnostics_log_path: Some(path.clone()),
+            ..AppConfig::default()
+        })
+        .unwrap();
+        let application_state = Arc::downgrade(&application.proxy_certificate);
+        let record = application.diagnostic_recorder(
+            DiagnosticLevel::Warning,
+            "desktop",
+            "proxy-login-recovery-task-failed",
+        );
+        drop(application);
+        assert!(application_state.upgrade().is_none());
+        record("Task Scheduler is unavailable");
+        let events = std::fs::read_to_string(path).unwrap();
+        assert!(events.contains("\"code\":\"proxy-login-recovery-task-failed\""));
     }
 
     #[tokio::test]

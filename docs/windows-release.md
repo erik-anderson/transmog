@@ -640,7 +640,13 @@ prevents creation of a publishable draft.
   unresolved system-proxy or trust-store state is never hidden by deleting the
   executable.
 - Maintenance mode restores only an existing Transmog proxy journal. Uninstall
-  removes only the exact SHA-256 certificate in
+  and update maintenance also attempt to remove its logon recovery task, including
+  a stale task without a journal. Proxy restoration failures still abort removal;
+  task cleanup failures alone do not. Task actions use the installed executable's
+  headless recovery mode, without WebView initialization or certificate prompts.
+  Maintenance also recovers tasks belonging to the installed desktop and CLI,
+  including captures using custom CLI state directories. Uninstall removes only
+  the exact SHA-256 certificate in
   `certificate-ownership-v1.json`; a similarly named or otherwise unrecorded
   root is never touched.
 
@@ -648,8 +654,8 @@ prevents creation of a publishable draft.
 
 The installer owns its executable, shortcuts and uninstall registration.
 Uninstall also removes recognized app data under `%LOCALAPPDATA%\Transmog`:
-proxy/certificate recovery records, the default app-managed CA, preference and
-update-preference generations, automation/script state, diagnostics, owned
+proxy/certificate recovery records, proxy ownership and lease files, the default app-managed
+CA, preference and update-preference generations, automation/script state, diagnostics, owned
 temporary files, and the body-cache/response-asset directories. Exact filename
 recognition belongs to [desktop cleanup](../apps/desktop/src/windows.rs) and
 [update-policy cleanup](../apps/desktop/src/update_policy.rs).

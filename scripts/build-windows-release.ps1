@@ -96,6 +96,7 @@ try {
         # Keep one feature graph for workspace tests and the opt-in native fixtures.
         & cargo test --workspace --all-features --locked --test windows_client_certificates -- --ignored
         & cargo test --workspace --all-features --locked --test client_authentication -- --ignored
+        & cargo test --workspace --all-features --locked --test proxy_recovery_task -- --ignored
         & cargo build --workspace --all-features --locked
         & (Join-Path $PSScriptRoot 'test-windows-client-certificate-ui.ps1') -SkipBuild -HostedRunnerDevToolsPolicy:$HostedRunnerDevToolsPolicy
     }

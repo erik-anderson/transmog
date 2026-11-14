@@ -159,8 +159,10 @@ fn recover_proxy(ledger: &RootLedger) -> Result<(), Box<dyn Error>> {
     let host = transmog_host_windows::WindowsProxyIntegration::system(
         ledger.directory().join("proxy-recovery.json"),
     );
-    if host.recover_pending()? {
-        println!("Restored Windows proxy settings from an interrupted CLI capture.");
+    // Manual-routing captures must not create host state just to check recovery.
+    // Stale tasks without a journal remove themselves at logon or maintenance.
+    if host.recovery_pending() && host.recover_pending()? {
+        println!("Recovered Windows proxy settings from an interrupted CLI capture.");
     }
     Ok(())
 }

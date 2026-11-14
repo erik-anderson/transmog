@@ -78,6 +78,30 @@ separate from Windows outputs. Logs, source/toolchain provenance, and staged SDK
 archives go to `.local/sdk-linux-qualification/`. See
 [the SDK guide](../sdk/README.md#verification) for scope and prerequisites.
 
+## Windows proxy login recovery
+
+The host adapter unit tests cover registration failures, failed restoration and
+rollback, stale tasks, and exclusion of live proxy runs. The opt-in native test
+registers a real current-user logon task and calls `IRegisteredTask.Run` through
+the Task Scheduler COM API. It verifies the headless executable restores the
+exact proxy snapshot and removes its journal and task, and that maintenance
+removes stale tasks. It temporarily adds a reserved `.invalid` hostname to the
+proxy bypass list and restores the original settings even if an assertion fails.
+The action also exercises literal environment/parameter syntax in paths, and
+maintenance recognizes hidden tasks and tasks saved by an earlier launcher.
+Directory-junction fixtures also verify cleanup uses the original registration
+path, including when the recovery snapshot was already consumed.
+
+```powershell
+python scripts/dev-env.py --run cargo test --locked -p transmog-host-windows
+python scripts/dev-env.py --run cargo test --locked -p transmog-desktop --test proxy_recovery_task -- --ignored
+```
+
+The native test requires an interactive Windows user with Task Scheduler access;
+it deliberately fails if task registration is unavailable. The application itself
+continues capture when registration fails. This test also runs in the native
+release qualification phase.
+
 ## Local MCP access
 
 The MCP, application and session suites cover authentication, scope, revocation,
