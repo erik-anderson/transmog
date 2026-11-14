@@ -5,6 +5,9 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use quick_xml::{NsReader, events::Event, name::ResolveResult};
 use std::io::Read as _;
 
+const ARTIFACT_TYPE_0004_BYTES: usize = 44;
+const ARTIFACT_TYPE_0004: [u8; 2] = [0, 4];
+
 pub(crate) fn parameter(context: &mut Context, pair: &Pair, items: &[Pair]) -> Finding {
     let mut source = pair.source.clone();
     source.transforms.push("Base64".into());
@@ -17,9 +20,11 @@ pub(crate) fn parameter(context: &mut Context, pair: &Pair, items: &[Pair]) -> F
         );
         return finding;
     }
-    context.field(&mut finding, "Original encoded field", &pair.original, true, "Exact binding representation, including original URL/form escaping; signature not checked.");
     if pair.name == "SAMLart" {
         finding.status = "opaque".into();
+    }
+    context.field(&mut finding, "Original encoded field", &pair.original, true, "Exact binding representation, including original URL/form escaping; signature not checked.");
+    if pair.name == "SAMLart" {
         context.field(
             &mut finding,
             "Artifact",
@@ -35,7 +40,7 @@ pub(crate) fn parameter(context: &mut Context, pair: &Pair, items: &[Pair]) -> F
                 false,
                 "Decoded artifact length.",
             );
-            if bytes.len() == 44 && bytes.starts_with(&[0, 4]) {
+            if bytes.len() == ARTIFACT_TYPE_0004_BYTES && bytes.starts_with(&ARTIFACT_TYPE_0004) {
                 context.field(&mut finding, "Artifact type", "0x0004", false, "SAML 2.0 artifact with endpoint index, source ID and message handle; not redeemed.");
             }
         }
@@ -46,7 +51,10 @@ pub(crate) fn parameter(context: &mut Context, pair: &Pair, items: &[Pair]) -> F
         return finding;
     };
     if !context.reserve_bytes(bytes.len()) {
-        finding.status = "limited".into();
+        finding.issue(
+            "limited",
+            "SAML binding decoding exceeded the inspection byte limit.",
+        );
         return finding;
     }
     if ["query", "redirect query", "redirect fragment"].contains(&pair.source.kind.as_str()) {
@@ -331,8 +339,7 @@ pub(crate) fn xml(context: &mut Context, bytes: &[u8], mut source: Source) -> Op
     finding.source = source;
     context.field(&mut finding, "Decoded XML", String::from_utf8_lossy(bytes), true, "Exact decoded XML text; gated because it includes assertions, signatures and personal data. No precise mapping to compressed bytes is claimed.");
     if encrypted {
-        finding.status = "encrypted".into();
-        finding.diagnostics.push("Encrypted assertions/IDs or cipher data are opaque; only exposed outer metadata is readable.".into());
+        finding.issue("encrypted", "Encrypted assertions/IDs or cipher data are opaque; only exposed outer metadata is readable.");
     }
     if let Some((status, note)) = failure {
         finding.issue(status, note);

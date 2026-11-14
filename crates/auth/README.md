@@ -41,8 +41,11 @@ serialization. Reserve bytes before retaining additional decoder-owned buffers;
 `field` reserves its own value storage.
 
 Report malformed, unsupported or incomplete evidence through `Finding::issue`.
-Decoding does not establish trust. Keep diagnostics free of captured secrets and
-preserve duplicate fields and exact number spellings.
+It preserves stronger outcomes such as a size limit when encrypted content is
+also present. Submit top-level findings through `Context::push` so limits in
+nested findings also mark source coverage as partial. Decoding does not establish
+trust. Keep diagnostics free of captured secrets and preserve duplicate fields
+and exact number spellings.
 
 Add meaningful fixtures with values and ranges, malformed lengths, cancellation
 and recovery. Use the existing protocol tests and fuzz target for additional

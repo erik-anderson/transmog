@@ -24,6 +24,7 @@ pub(crate) const MAX_PREVIEW_BYTES: usize = 8 * KIBIBYTE;
 pub(crate) const MAX_FIELD_NAME_BYTES: usize = 256;
 pub(crate) const MAX_COVERAGE_DETAIL_BYTES: usize = KIBIBYTE;
 pub(crate) const MAX_SOURCE_LABEL_BYTES: usize = 128;
+pub(crate) const MAX_JSON_PATH_PREVIEW_BYTES: usize = 512;
 pub(crate) const MAX_PARAMETERS: usize = 2048;
 pub(crate) const MAX_HTTP_ENVELOPES: usize = 64;
 pub(crate) const MAX_HTTP_PARAMETERS: usize = 256;

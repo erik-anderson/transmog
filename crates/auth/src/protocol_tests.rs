@@ -3,6 +3,107 @@ use base64::Engine as _;
 use std::io::Write as _;
 
 #[test]
+fn finding_limit_keeps_body_and_query_coverage_partial() {
+    for count in [limits::MAX_FINDINGS, limits::MAX_FINDINGS + 1] {
+        let parameters = (0..count)
+            .map(|index| format!("access_token=private-{index}"))
+            .collect::<Vec<_>>()
+            .join("&");
+        let from_body = body(
+            "application/x-www-form-urlencoded",
+            parameters.as_bytes().into(),
+        );
+        let from_query = inspect(
+            Input {
+                headers: vec![],
+                target: Some(format!("/?{parameters}")),
+                body: None,
+                body_status: "skipped".into(),
+                captured_at: None,
+            },
+            Arc::new(AtomicBool::new(false)),
+        );
+        for (source, inspection) in [("body", from_body), ("query", from_query)] {
+            assert_eq!(inspection.findings.len(), limits::MAX_FINDINGS);
+            assert_eq!(
+                inspection
+                    .coverage
+                    .iter()
+                    .find(|coverage| coverage.source == source)
+                    .unwrap()
+                    .status,
+                if count > limits::MAX_FINDINGS {
+                    "limited"
+                } else {
+                    "complete"
+                },
+                "Unexpected {source} coverage after {count} auth findings"
+            );
+        }
+    }
+}
+
+#[test]
+fn field_limits_keep_plain_and_encrypted_saml_coverage_partial() {
+    for encrypted_subject in ["", "<a:Subject><a:EncryptedID/></a:Subject>"] {
+        let xml = format!(
+            "<a:Assertion xmlns:a='urn:oasis:names:tc:SAML:2.0:assertion'>{encrypted_subject}{}</a:Assertion>",
+            "<a:AttributeValue>private-field-marker</a:AttributeValue>".repeat(MAX_FIELDS + 1)
+        );
+        for (mime, bytes, format) in [
+            ("application/xml", xml.as_bytes().to_vec(), "auto"),
+            ("application/xml", xml.as_bytes().to_vec(), "saml"),
+            (
+                "application/x-www-form-urlencoded",
+                format!(
+                    "SAMLResponse={}",
+                    base64::engine::general_purpose::STANDARD
+                        .encode(&xml)
+                        .replace('+', "%2B")
+                )
+                .into_bytes(),
+                "auto",
+            ),
+        ] {
+            let inspection = inspect_as(
+                Input {
+                    headers: vec![],
+                    target: None,
+                    body: Some(Body {
+                        bytes,
+                        media_type: mime.into(),
+                        transforms: vec![],
+                    }),
+                    body_status: "complete".into(),
+                    captured_at: None,
+                },
+                Arc::new(AtomicBool::new(false)),
+                format,
+            );
+            let root = &inspection.findings[0];
+            let xml_finding = root.children.first().unwrap_or(root);
+            assert_eq!(xml_finding.status, "limited");
+            assert!(!xml_finding.complete);
+            assert!(inspection.values.len() <= MAX_FIELDS);
+            assert_eq!(
+                inspection
+                    .coverage
+                    .iter()
+                    .find(|coverage| coverage.source == "body")
+                    .unwrap()
+                    .status,
+                "limited"
+            );
+            assert!(
+                !serde_json::to_string(&inspection)
+                    .unwrap()
+                    .contains("private-field-marker")
+            );
+        }
+    }
+}
+
+#[test]
 fn bounded_html_finds_auth_fields_after_many_unrelated_elements() {
     const UNRELATED_ELEMENTS: usize = 60_000;
     let token = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1c2VyIn0.";

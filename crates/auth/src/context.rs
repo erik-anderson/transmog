@@ -76,12 +76,15 @@ impl<'a> Context<'a> {
     ) {
         if self.result.values.len() >= MAX_FIELDS || self.is_canceled() {
             self.limited();
-            finding.status = "limited".into();
+            finding.issue(
+                "limited",
+                "Inspection stopped before all fields were retained.",
+            );
             return;
         }
         let value = value.into();
         if value.len() > MAX_CANDIDATE || !self.reserve_bytes(value.len()) {
-            finding.status = "limited".into();
+            finding.issue("limited", "A field exceeded the retained value size limit.");
             return;
         }
         let id = format!("v{}", self.result.values.len());
@@ -117,13 +120,27 @@ impl<'a> Context<'a> {
         }
     }
     pub(crate) fn push(&mut self, mut finding: Finding) {
+        fn has_limit(finding: &Finding) -> bool {
+            finding.status == "limited" || finding.children.iter().any(has_limit)
+        }
         fn name_children(finding: &mut Finding) {
             for (index, child) in finding.children.iter_mut().enumerate() {
                 child.id = format!("{}.{index}", finding.id);
                 name_children(child);
             }
         }
-        if self.result.findings.len() >= MAX_FINDINGS {
+        let finding_limit_reached = self.result.findings.len() >= MAX_FINDINGS;
+        if finding_limit_reached || has_limit(&finding) {
+            let source = finding.source.coverage_source();
+            if !source.is_empty() {
+                self.coverage(
+                    source,
+                    "limited",
+                    "Some auth findings or fields exceeded inspection limits; coverage is partial.",
+                );
+            }
+        }
+        if finding_limit_reached {
             self.limited();
             return;
         }

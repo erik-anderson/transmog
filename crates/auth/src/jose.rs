@@ -2,6 +2,9 @@
 use crate::{Context, Finding, MAX_CANDIDATE, Source, json};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 
+const JWS_SEGMENTS: usize = 3;
+const JWE_SEGMENTS: usize = 5;
+
 /// Accept a complete token or a Bearer header value, retaining its source offset.
 pub(crate) fn candidate(raw: &str) -> (&str, usize) {
     let trimmed = raw.trim_ascii();
@@ -36,31 +39,12 @@ pub fn decode_jwt(raw: &str) -> Result<String, &'static str> {
     crate::scratch::jwt(raw, &std::sync::atomic::AtomicBool::new(false))
 }
 
-pub(crate) fn decode(context: &mut Context, raw: &str, source: Source) -> Option<Finding> {
-    let finding = decode_compact(context, raw, source)?;
-    if finding.status == "limited" {
-        let source = if finding.source.header_index.is_some() || finding.source.kind == "header" {
-            "headers"
-        } else {
-            &finding.source.kind
-        };
-        if !source.is_empty() {
-            context.coverage(
-                source,
-                "limited",
-                "A compact JOSE token exceeded an input size, JSON depth or field limit.",
-            );
-        }
-    }
-    Some(finding)
-}
-
-fn decode_compact(context: &mut Context, raw: &str, mut source: Source) -> Option<Finding> {
+pub(crate) fn decode(context: &mut Context, raw: &str, mut source: Source) -> Option<Finding> {
     if raw.len() > MAX_CANDIDATE {
         return None;
     }
-    let parts: Vec<_> = raw.split('.').take(6).collect();
-    if parts.len() != 3 && parts.len() != 5 {
+    let parts: Vec<_> = raw.split('.').take(JWE_SEGMENTS + 1).collect();
+    if parts.len() != JWS_SEGMENTS && parts.len() != JWE_SEGMENTS {
         return None;
     }
     let header_bytes = URL_SAFE_NO_PAD.decode(parts[0]).ok()?;
@@ -68,7 +52,11 @@ fn decode_compact(context: &mut Context, raw: &str, mut source: Source) -> Optio
         .transforms
         .push("Base64url (compact JOSE; no padding)".into());
     let mut finding = Finding::new(
-        if parts.len() == 5 { "JWE" } else { "JWS" },
+        if parts.len() == JWE_SEGMENTS {
+            "JWE"
+        } else {
+            "JWS"
+        },
         "compact token",
         source,
     );
@@ -123,7 +111,7 @@ fn decode_compact(context: &mut Context, raw: &str, mut source: Source) -> Optio
     context.token(
         &mut finding,
         raw,
-        if parts.len() == 5 {
+        if parts.len() == JWE_SEGMENTS {
             "jwe-inspect"
         } else {
             "jws-decode"
@@ -147,7 +135,7 @@ fn decode_compact(context: &mut Context, raw: &str, mut source: Source) -> Optio
             "Critical JOSE extensions are exposed but not implemented or validated.",
         );
     }
-    if parts.len() == 5 {
+    if parts.len() == JWE_SEGMENTS {
         if header.get("enc").and_then(json::Node::string).is_none() {
             finding.issue(
                 "malformed",
@@ -212,7 +200,10 @@ fn decode_compact(context: &mut Context, raw: &str, mut source: Source) -> Optio
         return Some(finding);
     };
     if !context.reserve_bytes(payload.len()) {
-        finding.status = "limited".into();
+        finding.issue(
+            "limited",
+            "JOSE payload decoding exceeded the inspection byte limit.",
+        );
         return Some(finding);
     }
     match URL_SAFE_NO_PAD.decode(parts[2]) {

@@ -135,6 +135,7 @@ pub(crate) fn parameters(context: &mut Context, items: &[Pair]) {
         ["access_token", "refresh_token", "client_assertion"].contains(&p.name.as_str())
     }) {
         let mut finding = Finding::new("Auth parameter", &pair.name, pair.source.clone());
+        finding.status = "opaque".into();
         context.field(
             &mut finding,
             &pair.name,
@@ -153,7 +154,6 @@ pub(crate) fn parameters(context: &mut Context, items: &[Pair]) {
                 "The parameter had no '=' delimiter."
             },
         );
-        finding.status = "opaque".into();
         if let Some(child) = crate::jose::decode(context, &pair.value, pair.source.clone()) {
             finding.children.push(child);
         }

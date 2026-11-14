@@ -348,7 +348,10 @@ pub(crate) fn decode(
                                 crate::windows::decode(context, &bytes, source, name == "NTLM");
                             finding.children.push(child);
                         } else {
-                            finding.status = "limited".into();
+                            finding.issue(
+                                "limited",
+                                "Windows token decoding exceeded the inspection byte limit.",
+                            );
                         }
                     }
                     Err(_) => finding.issue(

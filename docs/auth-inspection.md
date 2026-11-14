@@ -140,8 +140,9 @@ Finite bounds include 1 MiB per encoded candidate/explicit interpretation,
 aggregate analysis/value material. An inspection has at most 64 top-level
 artifacts, 2,048 fields and depth 24. JSON has 2,048 syntax nodes, HTML has 256
 hidden controls and 128 attributes per tag, and NTLM target-info has 256 AV pairs.
-Public field previews shorten at 8 KiB;
-explicit value retrieval remains bounded. Exhaustion means partial coverage.
+Public field previews shorten at 8 KiB; explicit value retrieval remains bounded.
+If a finding or field limit omits results, the affected source has limited
+coverage, including limits reached inside a nested protocol wrapper.
 
 The [native auth source guide](../crates/auth/README.md) describes parser
 boundaries, named safeguards and verification commands.

@@ -1,5 +1,5 @@
 //! Selected-message text extraction. HTML is tokenized inertly, never executed or rendered.
-use crate::limits::{MAX_ELEMENT_ATTRIBUTES, MAX_HTML_CONTROLS};
+use crate::limits::{MAX_ELEMENT_ATTRIBUTES, MAX_HTML_CONTROLS, MAX_JSON_PATH_PREVIEW_BYTES};
 use crate::{
     Body, Context, MAX_DEPTH, Source,
     extract::{self, Pair},
@@ -187,7 +187,7 @@ fn json_groups(
                 return;
             }
             let mut source = source.clone();
-            source.label = format!("JSON {}", crate::clip(path, 512));
+            source.label = format!("JSON {}", crate::clip(path, MAX_JSON_PATH_PREVIEW_BYTES));
             source.transforms.push("JSON scalar extraction".into());
             if let Some(mut finding) = crate::jose::decode(context, value, source) {
                 finding.role = "Compact JOSE structure in JSON scalar".into();

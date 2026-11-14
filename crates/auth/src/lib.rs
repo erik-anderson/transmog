@@ -44,6 +44,15 @@ pub struct Source {
     pub transforms: Vec<String>,
 }
 impl Source {
+    /// Header-derived parameters still belong to the retained header scan.
+    pub(crate) fn coverage_source(&self) -> &str {
+        if self.header_index.is_some() || self.kind == "header" {
+            "headers"
+        } else {
+            &self.kind
+        }
+    }
+
     /// Decoder transformations may differ while referring to the same original occurrence/range.
     pub(crate) fn same_range(&self, other: &Self) -> bool {
         self.kind == other.kind
