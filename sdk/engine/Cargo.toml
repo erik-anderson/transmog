@@ -17,5 +17,8 @@ transmog-script-diagnostics = { path = "../../crates/script-diagnostics" }
 serde.workspace = true
 serde_json.workspace = true
 
+[lints.cargo]
+unused_dependencies = "deny"
+
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

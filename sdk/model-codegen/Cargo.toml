@@ -10,3 +10,6 @@ publish.workspace = true
 syn = { version = "2", features = ["full"] }
 quote = "1"
 serde_json.workspace = true
+
+[lints]
+workspace = true

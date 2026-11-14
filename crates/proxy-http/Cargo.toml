@@ -23,7 +23,6 @@ thiserror.workspace = true
 tokio.workspace = true
 tokio-boring.workspace = true
 tower-service.workspace = true
-tracing.workspace = true
 
 [lints]
 workspace = true

@@ -13,6 +13,9 @@ transmog-core = { version = "=0.1.26", path = "../proxy-core" }
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, features = ["Win32_System_ProcessStatus"] }
 
+[lints.cargo]
+unused_dependencies = "deny"
+
 [lints.rust]
 # This crate is the single audited endpoint/process attribution FFI boundary.
 # Every unsafe block documents its buffer, pointer, handle, and lifetime invariants.

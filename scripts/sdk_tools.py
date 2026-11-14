@@ -44,7 +44,7 @@ def verify_selections():
                 value["path"] = str((base / value["path"]).resolve())
         if actual != expected:
             raise ValueError(f"SDK {name} override differs from the app/CLI selection")
-    for name in ("http", "serde", "serde_json", "tokio"):
+    for name in ("serde", "serde_json", "tokio"):
         if sdk["workspace"]["dependencies"][name] != root["workspace"]["dependencies"][name]:
             raise ValueError(f"SDK {name} dependency differs from the repository selection")
     toolchain = tomllib.loads((ROOT / "rust-toolchain.toml").read_text(encoding="utf-8"))

@@ -19,6 +19,9 @@ url = "=2.5.8"
 cc = "=1.6.0"
 serde_json.workspace = true
 
+[lints.cargo]
+unused_dependencies = "deny"
+
 [lints.rust]
 # Native certificate hooks use the same BoringSSL instance, owned credential
 # references and synchronous borrowed callback pointers.

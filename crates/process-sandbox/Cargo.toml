@@ -10,6 +10,9 @@ repository.workspace = true
 [target.'cfg(windows)'.dependencies]
 windows-sys.workspace = true
 
+[lints.cargo]
+unused_dependencies = "deny"
+
 [lints.rust]
 # This is the audited process-sandbox Win32 FFI boundary. Every unsafe block documents
 # the exact handle, pointer, lifetime, and structure invariant it relies on.

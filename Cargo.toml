@@ -133,6 +133,10 @@ boring-sys = { git = "https://github.com/cloudflare/boring", rev = "2bea8245d9b2
 hyper-boring = { git = "https://github.com/cloudflare/boring", rev = "2bea8245d9b21776bc9f767b4e82dc2a78a5a262" }
 tokio-boring = { git = "https://github.com/cloudflare/boring", rev = "2bea8245d9b21776bc9f767b4e82dc2a78a5a262" }
 
+[workspace.lints.cargo]
+unused_dependencies = "deny"
+unused_workspace_dependencies = "deny"
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 missing_docs = "warn"

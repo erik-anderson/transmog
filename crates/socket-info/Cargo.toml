@@ -16,6 +16,9 @@ windows-sys.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 libc.workspace = true
 
+[lints.cargo]
+unused_dependencies = "deny"
+
 [lints.rust]
 # Read-only, synchronous socket queries. Borrowed handles cannot outlive sockets.
 # Every unsafe block documents buffer initialization, bounds and lifetime.

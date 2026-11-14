@@ -9,6 +9,15 @@ dot-source `scripts/dev-env.ps1` in PowerShell. `TRANSMOG_PYTHON` can select an
 explicit interpreter for wrappers. Do not rely on a Windows Store alias that
 cannot execute Python.
 
+Keep Cargo's `unused_dependencies` and `unused_workspace_dependencies` lints at
+`deny`. Workspace members must inherit the policy or repeat it when they need
+their own Rust safety lints. When changing Rust code or dependencies, run the
+[unused-dependency audit](docs/building.md#unused-dependency-audits) for the affected
+workspaces and review first-party candidates hidden by Cargo's feature-activation
+and dev-dependency heuristics. Check shared test helpers, supported targets and
+optional features before removing a dependency; comment intentional feature-only
+dependencies.
+
 For TypeScript or `.mjs` changes, install the root tooling with
 `npm ci --ignore-scripts` and run `npm run check` from the repository root.
 `npm run lint:fix` applies TypeScript ESLint fixes and Prettier formatting across

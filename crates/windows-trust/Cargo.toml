@@ -18,6 +18,9 @@ windows-sys = { workspace = true, features = ["Win32_Security_Cryptography", "Wi
 boring.workspace = true
 windows-sys = { workspace = true, features = ["Win32_System_Registry"] }
 
+[lints.cargo]
+unused_dependencies = "deny"
+
 [lints.rust]
 # This small adapter owns the Windows certificate-store/event boundary. Public
 # callers receive copied DER and typed state, never native handles or pointers.

@@ -53,6 +53,37 @@ modified state, including untracked files. Direct Cargo calls retain the source
 commit but report the modified state as unavailable, because Cargo's cached
 build scripts cannot detect newly created untracked files.
 
+## Unused-dependency audits
+
+Cargo's `unused_dependencies` and `unused_workspace_dependencies` lints are
+errors in the main, SDK and fuzz workspaces. Members inherit the workspace
+policy; crates with their own Rust safety lint settings declare the Cargo policy
+explicitly. Normal Cargo checks and CI builds enforce the applicable lints.
+
+When changing Rust code or dependencies, also review Cargo's diagnostic audit. It exposes
+candidates suppressed because they might activate transitive features, and
+supplements the review of dev dependencies:
+
+```powershell
+$env:CARGO_LOG = 'cargo::diagnostics::rules::unused_dependencies=debug'
+python scripts/dev-env.py --run cargo check --workspace --all-targets --all-features --locked
+python scripts/dev-env.py --run cargo check --manifest-path sdk/Cargo.toml --workspace --all-targets --all-features --locked
+python scripts/dev-env.py --run cargo check --manifest-path fuzz/Cargo.toml --all-targets --locked
+Remove-Item Env:CARGO_LOG
+```
+
+For the SDK bindings check, set `TRANSMOG_SDK_GLUE` to the generated `glue.rs`
+from a prior [SDK build](../sdk/README.md#build-and-consume). On POSIX shells, use
+`export CARGO_LOG=cargo::diagnostics::rules::unused_dependencies=debug` before
+the same Python commands and `unset CARGO_LOG` afterward.
+
+Review candidates from maintained packages, including shared test helpers,
+platform-specific code and optional features. Dependencies kept only to activate
+features need a comment explaining the requirement, such as Linux's vendored
+D-Bus dependency. Check that removals preserve required resolved features and run
+the affected tests. Cargo does not automatically reject every suppressed
+candidate or unused dev dependency.
+
 ## Development cache maintenance
 
 The toolchain is pinned to Rust 1.100.0. Cache maintenance supports its per-unit

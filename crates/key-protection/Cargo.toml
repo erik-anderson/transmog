@@ -26,6 +26,9 @@ keyring = { version = "=3.6.3", features = ["sync-secret-service", "crypto-rust"
 # Vendor D-Bus alone; keyring's combined vendoring feature also resolves OpenSSL.
 dbus = { version = "=0.9.12", features = ["vendored"] }
 
+[lints.cargo]
+unused_dependencies = "deny"
+
 [lints.rust]
 # The only unsafe operations are synchronous DPAPI calls and freeing their buffers.
 # Each block documents its pointer, length, ownership and lifetime invariants.

@@ -13,6 +13,9 @@ sha2.workspace = true
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, features = ["Win32_Security_Cryptography"] }
 
+[lints.cargo]
+unused_dependencies = "deny"
+
 [lints.rust]
 # Only this crate crosses the Windows certificate/CNG boundary. Handles are local
 # to synchronous calls; all pointer, buffer and ownership invariants are documented.

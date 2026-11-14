@@ -6751,7 +6751,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.1",
- "tempfile",
  "thiserror 2.0.21",
  "transmog-package-zip",
  "transmog-script-diagnostics",
@@ -6771,7 +6770,6 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tokio-boring",
- "tracing",
  "transmog-core",
  "transmog-http",
  "transmog-network",
@@ -6807,7 +6805,6 @@ dependencies = [
  "tokio",
  "tokio-boring",
  "tower-service",
- "tracing",
  "transmog-core",
  "transmog-network",
  "transmog-tls",
@@ -6908,7 +6905,6 @@ version = "0.1.26"
 dependencies = [
  "base64 0.22.1",
  "crc32fast",
- "flate2",
  "hex",
  "rustix 1.1.6",
  "serde",
@@ -6972,7 +6968,6 @@ name = "transmog-saz"
 version = "0.1.26"
 dependencies = [
  "boring",
- "flate2",
  "http",
  "httparse",
  "quick-xml",
@@ -7106,7 +7101,6 @@ dependencies = [
  "prost",
  "quiche",
  "rustls-native-certs",
- "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",

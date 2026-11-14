@@ -13,3 +13,6 @@ doctest = false
 
 [dependencies]
 transmog-sdk-facade = { path = "../facade" }
+
+[lints]
+workspace = true

@@ -8,3 +8,6 @@ publish.workspace = true
 
 [dependencies]
 transmog-sdk-engine = { path = "../engine" }
+
+[lints]
+workspace = true

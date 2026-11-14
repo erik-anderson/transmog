@@ -31,6 +31,9 @@ required-features = ["inspector-probe"]
 name = "debugger-benchmark"
 required-features = ["debugger"]
 
+[lints.cargo]
+unused_dependencies = "deny"
+
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
 missing_docs = "warn"

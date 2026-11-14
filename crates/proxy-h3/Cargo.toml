@@ -16,7 +16,6 @@ transmog-network = { version = "=0.1.26", path = "../network" }
 transmog-tls = { version = "=0.1.26", path = "../proxy-tls" }
 thiserror.workspace = true
 tokio.workspace = true
-tracing.workspace = true
 
 [lints]
 workspace = true
