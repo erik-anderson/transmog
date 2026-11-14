@@ -576,18 +576,20 @@ Hex clears its byte selection without closing details. Collapsing an ancestor
 selects that branch. If a live update removes the selected field, the tree returns
 to the result root and restores focus only when it was in the disappearing details.
 A small information button opens the visualizer's identity, summary and
-diagnostics in a bounded popover without consuming inspection space. Copy diagnostics
-copies that extension-provided text for troubleshooting; review it before sharing.
-The bundled MAPI parser reports work, field and nesting limits separately for the
-selected message, paired request and earlier context. Its summaries include input
-and decoded sizes, work categories and the largest operation, without copying
-captured field values. Each phase has a finite work ceiling; exhausting context
-does not consume the selected message's budget. Decompression failures reference
-the enclosing encoded bytes and report encoded and declared decoded sizes. Close or
-Escape returns focus to that button. Extensions settings keeps management actions
-visible. Corresponding request and response viewers share one entry with a short
-access summary. Identical matching conditions appear once as **Request and
-response**; differing conditions retain their direction. Long lists show the media
+diagnostics in a bounded popover without consuming inspection space. Close or
+Escape returns focus to that button. Copy diagnostics copies the extension's
+messages for troubleshooting; review them before sharing.
+
+The bundled MAPI parser limits input, decoded data, fields and nesting. Context
+and paired-request parsing have separate field allowances from the selected
+message. Its diagnostics describe parse issues and limits; decompression failures
+identify the encoded region and the encoded and declared decoded sizes. See the
+[MAPI source guide](../extensions/mapi/typescript/README.md#safeguards-and-presentation).
+
+Extensions settings keeps management actions visible. Corresponding request and
+response viewers share one entry with a short access summary. Identical matching
+conditions appear once as **Request and response**; differing conditions retain
+their direction. Long lists show the media
 types and number of displayed matching rules in a disclosure. **Full declarations**
 preserves exact input access, direction-specific differences, input matching, live
 updates and related context; shared values appear once. Debugging actions still
@@ -607,7 +609,7 @@ AppContainer initialization, retained byte continuations, expansion, denied sour
 reads and unloading. The bundled MAPI acceptance additionally checks synthetic
 binary messages, exact values, scoped retained context, transformed sources and
 concurrent contributions. The [MAPI guide](../extensions/mapi/README.md#qualification)
-records protocol comparisons, host acceptance and manual verification.
+describes protocol comparisons and host acceptance checks.
 The native live fixture also sends controlled HTTP exchanges through the proxy
 to the production sandbox, checking response-body continuation, origin and
 content-type filtering, explicit opt-in, stopping and inactive unloading.

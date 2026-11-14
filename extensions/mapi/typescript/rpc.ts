@@ -1,3 +1,5 @@
+import { rpcFlags, mapiXorMask, wireSizes } from "./wire.js";
+import { parserLimits } from "./limits.js";
 import { bounded, nested, readEnum } from "./common.js";
 import type { Conversation } from "./conversation.js";
 import { readAuxiliaryBody } from "./auxiliary.js";
@@ -8,12 +10,25 @@ import { RecordReader } from "./record.js";
 import { readRop, ropName } from "./rops.js";
 import type { RopPayloadReaders } from "./rops.js";
 
+const lz77 = {
+  flagBits: 32,
+  matchFlag: 0x80000000,
+  distanceShift: 3,
+  lengthMask: 7,
+  minimumMatch: 3,
+  nibbleBits: 4,
+  nibbleMask: 15,
+  nibbleExtension: 10,
+  byteExtension: 25,
+  wordExtension: 280,
+} as const;
+
 /** MS-XCA LZ77: flags, literal bytes and overlapping backward matches. */
 export function decompressLz77(reader: BinaryReader, expectedLength: number): number[] {
   if (
     !Number.isSafeInteger(expectedLength) ||
     expectedLength < 0 ||
-    expectedLength > 8 * 1024 * 1024
+    expectedLength > parserLimits.derivedBytes
   ) {
     throw new ParseError("limit", "Decompressed buffer size limit exceeded", reader.range());
   }
@@ -22,13 +37,12 @@ export function decompressLz77(reader: BinaryReader, expectedLength: number): nu
   let remainingFlags = 0;
   let highNibble: number | undefined;
   while (reader.remaining !== 0) {
-    reader.budget.step(reader.range(), 1, "loops");
     if (remainingFlags === 0) {
       flags = reader.integer("u32");
-      remainingFlags = 32;
+      remainingFlags = lz77.flagBits;
       continue;
     }
-    const match = (flags & 0x80000000) !== 0;
+    const match = (flags & lz77.matchFlag) !== 0;
     flags = flags << 1;
     remainingFlags--;
     if (!match) {
@@ -43,28 +57,27 @@ export function decompressLz77(reader: BinaryReader, expectedLength: number): nu
       continue;
     }
     const token = reader.integer("u16");
-    const distance = (token >> 3) + 1;
-    let length = (token & 7) + 3;
-    if (length === 10) {
+    const distance = (token >> lz77.distanceShift) + 1;
+    let length = (token & lz77.lengthMask) + lz77.minimumMatch;
+    if (length === lz77.nibbleExtension) {
       if (highNibble === undefined) {
         const byte = reader.integer("u8");
-        length += byte & 15;
-        highNibble = byte >> 4;
+        length += byte & lz77.nibbleMask;
+        highNibble = byte >> lz77.nibbleBits;
       } else {
         length += highNibble;
         highNibble = undefined;
       }
     }
-    if (length === 25) {
+    if (length === lz77.byteExtension) {
       length += reader.integer("u8");
     }
-    if (length === 280) {
-      length = reader.integer("u16") + 3;
+    if (length === lz77.wordExtension) {
+      length = reader.integer("u16") + lz77.minimumMatch;
     }
     if (distance > output.length || length > expectedLength - output.length) {
       throw new ParseError("malformed", "Invalid LZ77 backward match", reader.range());
     }
-    reader.budget.step(reader.range(), length, "decodedBytes");
     for (let index = 0; index < length; index++) {
       output.push(output[output.length - distance]!);
     }
@@ -128,19 +141,26 @@ export class RpcDecoder {
   ): BinaryReader {
     const parent = reader.range(reader.offset, size);
     const encoded = reader.child(size);
-    if ((flags & 3) === 0) {
+    if ((flags & (rpcFlags.compressed | rpcFlags.xor)) === 0) {
       if (size !== actualSize) {
         throw new ParseError("malformed", "Plain RPC payload sizes differ", parent);
       }
       return encoded;
     }
-    let bytes = encoded.take(encoded.remaining);
-    if ((flags & 2) !== 0) {
-      bytes = bytes.map((value) => value ^ 0xa5);
+    // Check the declared expansion before allocating or decompressing a buffer.
+    if (
+      this.derivedSources.length >= parserLimits.derivedSources ||
+      actualSize > parserLimits.derivedBytes - this.derivedBytes
+    ) {
+      throw new ParseError("limit", "Derived RPC source limit exceeded", parent);
     }
-    if ((flags & 1) !== 0) {
+    let bytes = encoded.take(encoded.remaining);
+    if ((flags & rpcFlags.xor) !== 0) {
+      bytes = bytes.map((value) => value ^ mapiXorMask);
+    }
+    if ((flags & rpcFlags.compressed) !== 0) {
       try {
-        bytes = decompressLz77(new BinaryReader(bytes, parent.sourceId, reader.budget), actualSize);
+        bytes = decompressLz77(new BinaryReader(bytes, parent.sourceId, reader.limits), actualSize);
       } catch (error) {
         if (!(error instanceof ParseError)) {
           throw error;
@@ -158,16 +178,12 @@ export class RpcDecoder {
       throw new ParseError("malformed", "XOR payload size differs from RPC header", parent);
     }
     this.derivedBytes += bytes.length;
-    if (this.derivedSources.length >= 128 || this.derivedBytes > 8 * 1024 * 1024) {
-      throw new ParseError("limit", "Derived RPC source limit exceeded", parent);
-    }
     const id = `mapi-derived.${this.derivedSources.length}`;
-    reader.budget.transformed(size, bytes.length);
     const transforms: string[] = [];
-    if ((flags & 2) !== 0) {
+    if ((flags & rpcFlags.xor) !== 0) {
       transforms.push("MAPI XOR 0xA5");
     }
-    if ((flags & 1) !== 0) {
+    if ((flags & rpcFlags.compressed) !== 0) {
       transforms.push("MAPI LZ77");
     }
     this.derivedSources.push({
@@ -175,21 +191,21 @@ export class RpcDecoder {
       bytes,
       parents: [parent],
       transform: transforms.join(" then "),
-      exactMapping: (flags & 1) === 0,
+      exactMapping: (flags & rpcFlags.compressed) === 0,
     });
-    return new BinaryReader(bytes, id, reader.budget);
+    return new BinaryReader(bytes, id, reader.limits);
   }
 
   private readRops(record: RecordReader, direction: Direction): void {
     const start = record.reader.offset;
     const size = record.integer("RopSize", "u16");
-    if (size < 2 || size > record.reader.end - start) {
+    if (size < wireSizes.ropSize || size > record.reader.end - start) {
       throw new ParseError("malformed", "Invalid ROP list size", record.reader.range());
     }
-    const rops = record.reader.child(size - 2);
+    const rops = record.reader.child(size - wireSizes.ropSize);
     const handles: number[] = [];
     const handleFields = new RecordReader(record.reader, "ServerObjectHandleTable");
-    if (record.reader.remaining % 4 !== 0) {
+    if (record.reader.remaining % wireSizes.handle !== 0) {
       throw new ParseError("malformed", "Incomplete server handle table", record.reader.range());
     }
     while (record.reader.remaining !== 0) {
@@ -200,10 +216,8 @@ export class RpcDecoder {
       while (rops.remaining !== 0) {
         const position = rops.offset;
         const name = ropName(rops.peekUInt8(), direction);
-        rops.budget.track(name, rops.range(), () => {
-          nested(operations, name, (operation) => {
-            readRop(operation, direction, handles, this.conversation, this.payloadReaders);
-          });
+        nested(operations, name, (operation) => {
+          readRop(operation, direction, handles, this.conversation, this.payloadReaders);
         });
         if (rops.offset <= position) {
           throw new ParseError("malformed", "ROP did not consume input", rops.range());
@@ -218,7 +232,7 @@ export class RpcDecoder {
   private readAuxiliary(record: RecordReader): void {
     while (record.reader.remaining !== 0) {
       const size = record.reader.peekUInt8() + record.reader.peekUInt8(1) * 256;
-      if (size < 4) {
+      if (size < wireSizes.auxiliaryHeader) {
         throw new ParseError(
           "malformed",
           "Auxiliary block is smaller than its header",

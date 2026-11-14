@@ -1,25 +1,31 @@
+import { notificationFlags, tableEvents } from "./wire.js";
 import { bounded, nested, readEnum, readObjectId, repeat } from "./common.js";
 import type { Conversation } from "./conversation.js";
 import { ParseError } from "./model.js";
 import { readPropertyRow, readPropertyTag } from "./properties.js";
 import type { RecordReader } from "./record.js";
 
+const unspecifiedTagCount = 0xffff;
+
 export function readNotification(record: RecordReader, conversation: Conversation): void {
   const handle = record.integer("NotificationHandle", "u32");
   record.integer("LogonId", "u8");
   const flags = readEnum(record, "NotificationFlags", "NotificationTypes");
-  const message = (flags & 0x8000) !== 0;
-  const searchFolder = (flags & 0x4000) !== 0;
-  const created = (flags & 0x0004) !== 0;
-  const deleted = (flags & 0x0008) !== 0;
-  const modified = (flags & 0x0010) !== 0;
-  const movedOrCopied = (flags & 0x0060) !== 0;
-  const tableModified = (flags & 0x0100) !== 0;
-  const extended = (flags & 0x0400) !== 0;
+  const message = (flags & notificationFlags.message) !== 0;
+  const searchFolder = (flags & notificationFlags.searchFolder) !== 0;
+  const created = (flags & notificationFlags.created) !== 0;
+  const deleted = (flags & notificationFlags.deleted) !== 0;
+  const modified = (flags & notificationFlags.modified) !== 0;
+  const movedOrCopied = (flags & (notificationFlags.moved | notificationFlags.copied)) !== 0;
+  const tableModified = (flags & notificationFlags.tableModified) !== 0;
+  const extended = (flags & notificationFlags.extended) !== 0;
   if (tableModified) {
     const event = readEnum(record, "TableEventType", "TableEventType");
-    const rowChanged = event === 3 || event === 4 || event === 5;
-    const rowHasData = event === 3 || event === 5;
+    const rowChanged =
+      event === tableEvents.added ||
+      event === tableEvents.deleted ||
+      event === tableEvents.modified;
+    const rowHasData = event === tableEvents.added || event === tableEvents.modified;
     if (rowChanged) {
       nested(record, "TableRowFolderID", readObjectId);
       if (message) {
@@ -63,17 +69,17 @@ export function readNotification(record: RecordReader, conversation: Conversatio
   }
   if (created || modified) {
     const count = record.integer("TagCount", "u16");
-    if (count !== 0xffff) {
+    if (count !== unspecifiedTagCount) {
       repeat(record, count, () => nested(record, "Tag", readPropertyTag), 4);
     }
   }
-  if ((flags & 0x1000) !== 0) {
+  if ((flags & notificationFlags.totalCount) !== 0) {
     record.integer("TotalMessageCount", "u32");
   }
-  if ((flags & 0x2000) !== 0) {
+  if ((flags & notificationFlags.unreadCount) !== 0) {
     record.integer("UnreadMessageCount", "u32");
   }
-  if ((flags & 0x0002) !== 0) {
+  if ((flags & notificationFlags.newMail) !== 0) {
     record.integer("MessageFlags", "u32");
     const unicode = record.integer("UnicodeFlag", "u8");
     if (unicode !== 0 && unicode !== 1) {

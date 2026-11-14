@@ -1,4 +1,4 @@
-/** Wire layouts for fixed ROP fields. Variable payloads live in rops.ts. */
+/** Fixed ROP fields; variable payloads live in rop-requests.ts and rop-responses.ts. */
 export type WireLayout = Readonly<Record<string, string>>;
 
 const input = { InputHandleIndex: "u8" };

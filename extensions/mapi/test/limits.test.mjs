@@ -3,8 +3,10 @@ import { test } from "node:test";
 import { decode } from "../dist/decode.js";
 import { enums } from "../dist/constants.js";
 import { present } from "../dist/view.js";
-import { ParseBudget } from "../dist/model.js";
+import { parserLimits } from "../dist/limits.js";
 import { BinaryReader } from "../dist/reader.js";
+import { RecordReader } from "../dist/record.js";
+import { readRestriction } from "../dist/properties.js";
 import { decompressLz77 } from "../dist/rpc.js";
 
 const u16 = (value) => [value & 255, value >>> 8];
@@ -62,7 +64,7 @@ function history(count, length) {
   }));
 }
 
-test("a 14.9 KiB Execute response does not inherit reader work spent replaying earlier messages", () => {
+test("a 14.9 KiB Execute response remains complete after replaying earlier messages", () => {
   const message = selected(33);
   assert.ok(
     message.response.bytes.length > 14.8 * 1024 && message.response.bytes.length < 15 * 1024,
@@ -70,24 +72,21 @@ test("a 14.9 KiB Execute response does not inherit reader work spent replaying e
   const result = decode([...history(32, 4096), message], message.id, "response");
   assert.ok(fields(result.root).every((field) => !field.issue));
   assert.ok(fields(result.root).some((field) => field.value?.value === "A".repeat(7600)));
-  const report = result.budgets.find((budget) => budget.phase === "Selected response");
-  assert.equal(report.inputBytes, message.response.bytes.length);
-  assert.ok(report.work < 100000);
   const view = present(
     result,
     [["selected-response", message.response.bytes.length]],
     "Execute",
     [],
   ).step;
-  assert.equal(view.document.status, "complete", "Informational counters changed parse status");
-  const summaries = view.document.diagnostics.filter((item) => item.code === "mapi-parser-budget");
-  assert.equal(summaries.length, 3);
-  assert.ok(
-    summaries.every((item) => item.message.length < 2048 && !item.message.includes("AAAAAA")),
+  assert.equal(
+    view.document.status,
+    "complete",
+    "Retained context changed the selected parse status",
   );
+  assert.deepEqual(view.document.diagnostics, []);
 });
 
-test("a small compressed Execute can legitimately require more than 100,000 reader operations", () => {
+test("small compressed messages retain complete decoded values without work accounting", () => {
   const characters = 30000;
   const payload = rpcPayload(responseRop(characters));
   const prefix = payload.slice(0, payload.length - characters * 2 - 6);
@@ -134,19 +133,23 @@ test("a small compressed Execute can legitimately require more than 100,000 read
     ),
   );
   assert.equal(result.derivedSources.length, 4);
-  const report = result.budgets.find((budget) => budget.phase === "Selected response");
-  assert.equal(report.expandedBytes, payload.length * 4);
-  assert.equal(report.encodedBytes, compressed.length * 4);
-  assert.ok(report.work > 100000 && report.work < report.maximumWork);
   assert.equal(
     fields(result.root).filter((field) => field.value?.value === "A".repeat(characters)).length,
     4,
   );
 });
 
-test("bounded history exhaustion retains selected fields and identifies the exhausted phase", () => {
+test("field-heavy context cannot consume selected-message structural limits", () => {
   const message = selected(65, 50);
-  const result = decode([...history(64, 20000), message], message.id, "response");
+  const context = Array.from({ length: 64 }, (_, index) => ({
+    id: index + 1,
+    requestType: "Execute",
+    request: {
+      sourceId: "context-" + index,
+      bytes: execute(plainRpc(Array.from({ length: 1000 }, () => requestRop).flat()), false),
+    },
+  }));
+  const result = decode([...context, message], message.id, "response");
   assert.ok(fields(result.root).some((field) => field.value?.value === "A".repeat(50)));
   assert.ok(
     fields(result.root).some(
@@ -155,61 +158,54 @@ test("bounded history exhaustion retains selected fields and identifies the exha
   );
 });
 
-test("LZ77 output copying consumes the finite work budget before performing the copy", () => {
-  const budget = new ParseBudget(100, 48, 20);
-  // Three literals followed by an overlapping match require 30 output bytes.
-  const bytes = [0, 0, 0, 16, 65, 66, 67, 23, 0, 10];
+test("LZ77 rejects oversized output before reading or allocating it", () => {
+  const reader = new BinaryReader([], "compressed");
   assert.throws(
-    () => decompressLz77(new BinaryReader(bytes, "compressed", budget), 30),
-    (error) => error.kind === "limit" && error.message.includes("20/20"),
+    () => decompressLz77(reader, parserLimits.derivedBytes + 1),
+    (error) => error.kind === "limit",
   );
-  assert.equal(budget.report().work, 20);
+  assert.equal(reader.offset, 0);
 });
 
-test("a compressed work-limit issue refers to its enclosing encoded payload", () => {
-  const characters = 30000;
-  const payload = rpcPayload(responseRop(characters));
-  const prefix = payload.slice(0, payload.length - characters * 2 - 6);
-  prefix.push(65, 0);
-  const compressed = [
-    ...u32(2 ** (31 - prefix.length)),
-    ...prefix,
-    15,
-    0,
-    15,
-    255,
-    ...u16(characters * 2 - 5),
-    0,
-    0,
-    ...u32(0x12345678),
-  ];
-  const count = 12;
-  const buffers = Array.from({ length: count }, (_, index) => [
-    ...u16(0),
-    ...u16(index === count - 1 ? 5 : 1),
-    ...u16(compressed.length),
-    ...u16(payload.length),
-    ...compressed,
-  ]).flat();
-  const message = {
-    id: 1,
-    requestType: "Execute",
-    request: {
-      sourceId: "request",
-      bytes: execute(plainRpc(Array.from({ length: count }, () => requestRop).flat()), false),
-    },
-    response: { sourceId: "response", bytes: execute(buffers, true) },
-  };
-  const result = decode([message], 1, "response");
-  const issue = fields(result.root).find(
-    (field) => field.type === "Parse issue" && field.issue?.kind === "limit",
+test("deep restrictions stop at the nesting safeguard and unwind their scopes", () => {
+  const nestedRestrictions = Array(parserLimits.depth + 1).fill(2); // NOT restriction.
+  const record = new RecordReader(
+    new BinaryReader([...nestedRestrictions, 8, ...u32(0)], "restriction"),
+    "Restriction",
   );
-  assert.ok(issue, "Compressed work must remain bounded");
-  const payloadOffset = 18 + (count - 1) * (8 + compressed.length) + 8;
+  assert.throws(
+    () => readRestriction(record),
+    (error) => error.kind === "limit" && error.message.includes("nesting"),
+  );
+  // A failed nested parse must not strand the shared reader at its maximum depth.
+  record.structure("Recovery", () => {});
+});
+
+test("RPC source exhaustion refers to the enclosing encoded payload", () => {
+  const payload = rpcPayload(responseRop(1));
+  const xorFlag = 2;
+  const lastBufferFlag = 4;
+  const xorMask = 0xa5;
+  const buffers = Array.from({ length: parserLimits.derivedSources + 1 }, (_, index) => [
+    ...u16(0),
+    ...u16(xorFlag | (index === parserLimits.derivedSources ? lastBufferFlag : 0)),
+    ...u16(payload.length),
+    ...u16(payload.length),
+    ...payload.map((byte) => byte ^ xorMask),
+  ]).flat();
+  const message = selected(1, 1);
+  message.response.bytes = execute(buffers, true);
+  const result = decode([message], 1, "response");
+  const issue = fields(result.root).find((field) => field.type === "Parse issue");
+  assert.equal(issue?.issue?.kind, "limit");
+  const executeResponsePrefixBytes = 18;
+  const rpcHeaderBytes = 8;
   assert.deepEqual(issue.range, {
-    sourceId: "response",
-    offset: payloadOffset,
-    length: compressed.length,
+    sourceId: "selected-response",
+    offset:
+      executeResponsePrefixBytes +
+      parserLimits.derivedSources * (rpcHeaderBytes + payload.length) +
+      rpcHeaderBytes,
+    length: payload.length,
   });
-  assert.match(issue.issue.message, /32 encoded bytes, 60020 declared decoded bytes/);
 });

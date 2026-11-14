@@ -34,7 +34,7 @@ def main():
     wrong=bytes([0x12,7,0,0])+struct.pack("<H",1)+struct.pack("<I",0x3001000b)
     messages[3][1]["request"]=base64.b64encode(corpus.execute_request(wrong,0x12345678)).decode()
     foreign_columns = messages[3][1]
-    # A valid, modest selected response must not inherit work spent on history.
+    # A valid selected response remains complete alongside retained history.
     history = {
         "requestType": "Connect",
         "request": base64.b64encode(b"A" * 4096 + b"\0" + bytes(20)).decode(),
@@ -43,7 +43,7 @@ def main():
     request_rop = bytes([8, 7, 0]) + corpus.u16(65535) + corpus.u16(1)
     def response_rop(characters):
         return bytes([8, 0]) + corpus.u32(0) + corpus.u16(1) + corpus.u32(0x0037001f) + corpus.wide("A" * characters)
-    messages.append(("budget-14kb", {
+    messages.append(("selected-long-string", {
         "requestType": "Execute",
         "request": base64.b64encode(corpus.execute_request(request_rop,0x12345678)).decode(),
         "response": base64.b64encode(corpus.execute_response(response_rop(7600))).decode(),
@@ -56,7 +56,7 @@ def main():
     compressed = (corpus.u32(1 << (31 - len(prefix))) + prefix + bytes([15, 0, 15, 255]) +
                   corpus.u16(characters * 2 - 5) + bytes(2) + corpus.u32(0x12345678))
     buffers = b"".join(struct.pack("<HHHH", 0, 5 if index == 3 else 1, len(compressed), len(payload)) + compressed for index in range(4))
-    messages.append(("budget-compressed", {
+    messages.append(("compressed-long-strings", {
         "requestType": "Execute",
         "request": base64.b64encode(corpus.execute_request(request_rop * 4,0x12345678)).decode(),
         "response": base64.b64encode(b"\r\n" + corpus.u32(0) * 3 + corpus.u32(len(buffers)) + buffers + corpus.u32(0)).decode(),

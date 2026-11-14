@@ -1,3 +1,4 @@
+import { auxiliaryVersions } from "./wire.js";
 import { readEnum } from "./common.js";
 import { enums } from "./constants.js";
 import { ParseError } from "./model.js";
@@ -127,7 +128,7 @@ const strings: Readonly<Record<string, readonly string[]>> = {
 
 /** Offsets are relative to the bounded AUX_HEADER, never a capture or a file. */
 export function readAuxiliaryBody(record: RecordReader, type: number, version: number): void {
-  if (version !== 1 && version !== 2) {
+  if (version !== auxiliaryVersions.original && version !== auxiliaryVersions.extended) {
     record.bytes("Auxiliary data", record.reader.remaining);
     record.field.issue = {
       kind: "unsupported",
@@ -135,11 +136,14 @@ export function readAuxiliaryBody(record: RecordReader, type: number, version: n
     };
     return;
   }
-  const definition = enums[version === 1 ? "AuxiliaryBlockType_1" : "AuxiliaryBlockType_2"]!;
+  const definition =
+    enums[
+      version === auxiliaryVersions.original ? "AuxiliaryBlockType_1" : "AuxiliaryBlockType_2"
+    ]!;
   const symbolic = Object.entries(definition.values).find(([, value]) => value === type)?.[0];
   let name = symbolic?.replace("AUX_TYPE_", "AUX_").replace(/_PERF_(?:BG|FG)_/, "_PERF_");
   if (
-    version === 2 &&
+    version === auxiliaryVersions.extended &&
     name &&
     [
       "AUX_PERF_FAILURE",

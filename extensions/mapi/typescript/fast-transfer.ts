@@ -1,3 +1,5 @@
+import { propertyTypes, propertyIds, namedPropertyIdStart, propertyNameKinds } from "./wire.js";
+import { parserLimits } from "./limits.js";
 import {
   bounded,
   nested,
@@ -20,17 +22,11 @@ interface Fragment {
   readonly range: ByteRange;
 }
 
+/** Identifies emitted stream payloads that can depend on earlier fragments. */
+export const fastTransferStreamType = "FastTransfer stream";
+
 const markers = new Set(Object.values(enums.Markers!.values));
 const metaProperties = new Set(Object.values(enums.MetaProperties!.values));
-
-function uint32Ahead(reader: BinaryReader): number {
-  return (
-    reader.peekUInt8() +
-    reader.peekUInt8(1) * 256 +
-    reader.peekUInt8(2) * 65536 +
-    reader.peekUInt8(3) * 16777216
-  );
-}
 
 function readVariableValue(record: RecordReader, type: number, id?: number): void {
   const length = record.integer("Length", "i32");
@@ -38,13 +34,13 @@ function readVariableValue(record: RecordReader, type: number, id?: number): voi
     return;
   }
   bounded(record, "Value", length, (value) => {
-    if (type === 0x001f || type === enums.CodePageType!.values.PtypCodePageUnicode) {
+    if (type === propertyTypes.string || type === enums.CodePageType!.values.PtypCodePageUnicode) {
       value.string("String", true, length);
     } else if (type === enums.CodePageType!.values.PtypCodePageUnicodeBigendian) {
       value.encodedString("String", "utf-16be", length);
     } else if (type === enums.CodePageType!.values.PtypCodePageWesternEuropean) {
       value.encodedString("String", "windows-1252", length);
-    } else if (type === 0x001e) {
+    } else if (type === propertyTypes.string8) {
       value.string("String", false, length);
     } else {
       value.bytes("Bytes", length);
@@ -53,7 +49,7 @@ function readVariableValue(record: RecordReader, type: number, id?: number): voi
 }
 
 function readElement(record: RecordReader): void {
-  const tag = uint32Ahead(record.reader);
+  const tag = record.reader.fork().integer("u32");
   if (markers.has(tag)) {
     readEnum(record, "Marker", "Markers");
     return;
@@ -79,13 +75,13 @@ function readElement(record: RecordReader): void {
   }
 
   const property = readPropertyTag(record);
-  if (property.id >= 0x8000) {
+  if (property.id >= namedPropertyIdStart) {
     nested(record, "Named property", (name) => {
       name.scalar("PropertySet", "guid");
       const kind = readEnum(name, "Kind", "KindEnum");
-      if (kind === 0) {
+      if (kind === propertyNameKinds.numeric) {
         name.integer("Dispid", "u32");
-      } else if (kind === 1) {
+      } else if (kind === propertyNameKinds.string) {
         name.string("Name", true);
       } else {
         throw new ParseError("malformed", "Invalid named property kind", name.reader.range());
@@ -93,13 +89,15 @@ function readElement(record: RecordReader): void {
     });
   }
 
-  if ((property.type & 0x1000) !== 0) {
+  if ((property.type & propertyTypes.multiValue) !== 0) {
     const count = record.integer("Length", "i32");
-    const elementType = property.type & ~0x1000;
+    const elementType = property.type & ~propertyTypes.multiValue;
     repeat(record, count, () =>
       nested(record, "Value", (value) => {
         if (
-          [0x001e, 0x001f, 0x0102].includes(elementType) ||
+          [propertyTypes.string8, propertyTypes.string, propertyTypes.binary].includes(
+            elementType,
+          ) ||
           Object.values(enums.CodePageType!.values).includes(elementType)
         ) {
           readVariableValue(value, elementType);
@@ -109,20 +107,22 @@ function readElement(record: RecordReader): void {
       }),
     );
   } else if (
-    [0x000d, 0x001e, 0x001f, 0x00fb, 0x0102].includes(property.type) ||
+    [
+      propertyTypes.object,
+      propertyTypes.string8,
+      propertyTypes.string,
+      propertyTypes.serverId,
+      propertyTypes.binary,
+    ].includes(property.type) ||
     Object.values(enums.CodePageType!.values).includes(property.type) ||
     property.id === enums.PidTagPropertyEnum!.values.MetaTagIdsetGiven
   ) {
     readVariableValue(record, property.type, property.id);
-  } else if (property.type === 0x000b) {
+  } else if (property.type === propertyTypes.boolean) {
     record.boolean("Value", "u16");
   } else if (
-    property.type === 0x0014 &&
-    [
-      enums.PidTagPropertyEnum!.values.PidTagMid,
-      enums.PidTagPropertyEnum!.values.PidTagFolderId,
-      0x6714,
-    ].includes(property.id)
+    property.type === propertyTypes.integer64 &&
+    [propertyIds.message, propertyIds.folder, propertyIds.additionalObjectId].includes(property.id)
   ) {
     nested(record, "Identifier", readObjectId);
   } else {
@@ -153,7 +153,7 @@ function remainingFragments(fragments: readonly Fragment[], consumed: number): F
 export class FastTransferDecoder {
   readonly derivedSources: DerivedSource[] = [];
   private readonly pending = new Map<string, readonly Fragment[]>();
-  private assemblyWork = 0;
+  private assembledBytes = 0;
 
   read(record: RecordReader, length: number, operation: string, handle: number): void {
     const chunk = record.reader.child(length);
@@ -164,7 +164,7 @@ export class FastTransferDecoder {
     if (previous?.length) {
       const current = chunk.take(chunk.remaining);
       fragments = [...previous, { bytes: current, range: chunk.range(chunk.start, length) }];
-      if (fragments.length > 64) {
+      if (fragments.length > parserLimits.transferFragments) {
         throw new ParseError(
           "limit",
           "FastTransfer continuation has too many source fragments",
@@ -172,8 +172,11 @@ export class FastTransferDecoder {
         );
       }
       const count = fragments.reduce((total, fragment) => total + fragment.bytes.length, 0);
-      this.assemblyWork += count;
-      if (this.assemblyWork > 8 * 1024 * 1024 || this.derivedSources.length >= 128) {
+      this.assembledBytes += count;
+      if (
+        this.assembledBytes > parserLimits.derivedBytes ||
+        this.derivedSources.length >= parserLimits.derivedSources
+      ) {
         throw new ParseError("limit", "FastTransfer assembly limit exceeded", chunk.range());
       }
       const bytes = fragments.flatMap((fragment) => Array.from(fragment.bytes));
@@ -185,13 +188,13 @@ export class FastTransferDecoder {
         transform: "FastTransfer continuation (concatenated)",
         exactMapping: false,
       });
-      reader = new BinaryReader(bytes, id, chunk.budget);
+      reader = new BinaryReader(bytes, id, chunk.limits);
     } else {
       const bytes = chunk.fork().take(chunk.remaining);
       fragments = [{ bytes, range: chunk.range(chunk.start, length) }];
     }
     this.pending.delete(key);
-    const output = new RecordReader(reader, "FastTransfer stream");
+    const output = new RecordReader(reader, fastTransferStreamType);
     try {
       while (reader.remaining !== 0) {
         const attempt = reader.fork();

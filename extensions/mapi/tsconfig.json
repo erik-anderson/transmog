@@ -16,5 +16,8 @@
     "sourceMap": false,
     "newLine": "lf"
   },
-  "include": ["typescript/**/*.ts"]
+  "include": [
+    "typescript/**/*.ts",
+    "../../crates/extensions/sdk/transmog-extensions.d.ts"
+  ]
 }

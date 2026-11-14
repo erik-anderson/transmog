@@ -1,7 +1,8 @@
+import { inputLimits, StructureLimits } from "./limits.js";
 import { Conversation } from "./conversation.js";
 import { FastTransferDecoder } from "./fast-transfer.js";
 import { readHttpMessage } from "./http.js";
-import { ParseBudget, ParseError } from "./model.js";
+import { ParseError } from "./model.js";
 import type { DecodeResult, Direction, Exchange, MessageBody, ParsedField } from "./model.js";
 import { BinaryReader } from "./reader.js";
 import { RecordReader } from "./record.js";
@@ -11,9 +12,9 @@ import { RpcDecoder } from "./rpc.js";
 export class DecodeSession {
   readonly conversation = new Conversation();
   readonly transfer = new FastTransferDecoder();
-  readonly budget: ParseBudget;
-  private readonly historyBudget = new ParseBudget(50_000, 48, 1_000_000, "Related context");
-  private readonly requestBudget = new ParseBudget(50_000, 48, 1_000_000, "Paired request");
+  readonly limits: StructureLimits;
+  private readonly historyLimits = new StructureLimits("Related context");
+  private readonly requestLimits = new StructureLimits("Paired request");
   private readonly preparationIssues: ParseError[] = [];
   readonly selected: Exchange;
   readonly body: MessageBody;
@@ -35,7 +36,7 @@ export class DecodeSession {
     if (direction !== "request" && direction !== "response") {
       throw new Error("Invalid message direction");
     }
-    if (exchanges.length === 0 || exchanges.length > 257) {
+    if (exchanges.length === 0 || exchanges.length > inputLimits.decoderExchanges) {
       throw new Error("Context limit");
     }
     const identities = new Set<number>();
@@ -46,7 +47,7 @@ export class DecodeSession {
       }
       identities.add(exchange.id);
       inputBytes += (exchange.request?.bytes.length ?? 0) + (exchange.response?.bytes.length ?? 0);
-      if (inputBytes > 8 * 1024 * 1024) {
+      if (inputBytes > inputLimits.snapshotBytes) {
         throw new Error("Input limit");
       }
     }
@@ -57,8 +58,7 @@ export class DecodeSession {
     }
     this.selected = selected;
     this.body = body;
-    this.budget = new ParseBudget(50_000, 48, 1_000_000, `Selected ${direction}`);
-    this.budget.input(body.bytes.length);
+    this.limits = new StructureLimits(`Selected ${direction}`);
   }
 
   prepare(includeSelectedRequest: boolean): void {
@@ -67,31 +67,29 @@ export class DecodeSession {
         break;
       }
       this.conversation.beginExchange();
-      if (!this.replay(exchange, "request", this.historyBudget)) {
+      if (!this.replay(exchange, "request", this.historyLimits)) {
         break;
       }
-      if (!this.replay(exchange, "response", this.historyBudget)) {
+      if (!this.replay(exchange, "response", this.historyLimits)) {
         break;
       }
     }
     this.conversation.beginExchange();
     if (includeSelectedRequest) {
-      this.replay(this.selected, "request", this.requestBudget);
+      this.replay(this.selected, "request", this.requestLimits);
     }
   }
 
   record(name: string, offset = 0, count?: number): RecordReader {
     const end = count === undefined ? this.body.bytes.length : offset + count;
-    const reader = new BinaryReader(this.body.bytes, this.body.sourceId, this.budget, offset, end);
+    const reader = new BinaryReader(this.body.bytes, this.body.sourceId, this.limits, offset, end);
     return new RecordReader(reader, name);
   }
 
   readMessage(record: RecordReader, operation: string, direction: Direction): void {
-    record.reader.budget.track(`${operation} ${direction}`, record.reader.range(), () => {
-      readHttpMessage(record, operation, direction, {
-        auxiliary: (record, length) => this.rpc.read(record, length, true, direction),
-        rops: (record, length, side) => this.rpc.read(record, length, false, side),
-      });
+    readHttpMessage(record, operation, direction, {
+      auxiliary: (record, length) => this.rpc.read(record, length, true, direction),
+      rops: (record, length, side) => this.rpc.read(record, length, false, side),
     });
   }
 
@@ -130,13 +128,12 @@ export class DecodeSession {
     return this.result(record);
   }
 
-  private replay(exchange: Exchange, side: Direction, budget: ParseBudget): boolean {
+  private replay(exchange: Exchange, side: Direction, limits: StructureLimits): boolean {
     const body = exchange[side];
     if (!body?.bytes.length) {
       return true;
     }
-    budget.input(body.bytes.length);
-    const reader = new BinaryReader(body.bytes, body.sourceId, budget);
+    const reader = new BinaryReader(body.bytes, body.sourceId, limits);
     try {
       const record = new RecordReader(reader, `${exchange.requestType} ${side}`);
       this.readMessage(record, exchange.requestType, side);
@@ -176,9 +173,6 @@ export class DecodeSession {
     return {
       root,
       derivedSources: sources.filter((source) => needed.has(source.id)),
-      budgets: [this.historyBudget, this.requestBudget, this.budget]
-        .map((budget) => budget.report())
-        .filter((report) => report.inputBytes > 0),
     };
   }
 }

@@ -1,11 +1,11 @@
-import type { BinaryReader } from "./reader.js";
-import type { IntegerType } from "./reader.js";
+import type { BinaryReader, IntegerType } from "./reader.js";
 import type { FieldValue, ParsedField } from "./model.js";
 
 export type ScalarType = IntegerType | "u64" | "i64" | "f32" | "f64" | "bool" | "guid";
 
 export interface EnumDefinition {
-  readonly wire: IntegerType | "u64" | "i64";
+  /** The pinned MAPI enum tables use 8-, 16- or 32-bit discriminators. */
+  readonly wire: IntegerType;
   readonly flags: boolean;
   readonly values: Readonly<Record<string, number>>;
 }
@@ -19,7 +19,7 @@ export class RecordReader {
     name: string,
     type = name,
   ) {
-    reader.budget.field(reader.range());
+    reader.limits.field(reader.range());
     this.field = { name, type, range: reader.range(), children: [] };
   }
 
@@ -38,6 +38,14 @@ export class RecordReader {
   }
 
   scalar(name: string, type: ScalarType): number | bigint | boolean | string {
+    return this.scalarField(name, type).value;
+  }
+
+  /** Return the emitted field when its protocol meaning needs units or a timestamp. */
+  scalarField(
+    name: string,
+    type: ScalarType,
+  ): { value: number | bigint | boolean | string; field: ParsedField } {
     const start = this.reader.offset;
     let value: number | bigint | boolean | string;
     let parsed: FieldValue;
@@ -64,8 +72,7 @@ export class RecordReader {
         value = this.reader.integer(type);
         parsed = { kind: "integer", value: String(value) };
     }
-    this.value(name, type, start, parsed);
-    return value;
+    return { value, field: this.value(name, type, start, parsed) };
   }
 
   integer(name: string, type: IntegerType): number {
@@ -81,15 +88,13 @@ export class RecordReader {
 
   enumeration(name: string, type: string, definition: EnumDefinition): number {
     const start = this.reader.offset;
-    const raw = definition.wire.endsWith("64")
-      ? this.reader.integer64(definition.wire === "i64")
-      : this.reader.integer(definition.wire as IntegerType);
-    const value = Number(raw);
-    const exact = Object.entries(definition.values).find(([, candidate]) => candidate === value);
+    const value = this.reader.integer(definition.wire);
+    const entries = Object.entries(definition.values);
+    const exact = entries.find(([, candidate]) => candidate === value);
     const names = exact
       ? [exact[0]]
       : definition.flags
-        ? Object.entries(definition.values)
+        ? entries
             .filter(
               ([, candidate]) =>
                 candidate !== 0 && (BigInt(value) & BigInt(candidate)) === BigInt(candidate),
@@ -98,7 +103,7 @@ export class RecordReader {
         : [];
     this.value(name, type, start, {
       kind: "enum",
-      value: raw.toString(),
+      value: value.toString(),
       names,
       flags: definition.flags,
     });
@@ -143,21 +148,20 @@ export class RecordReader {
   }
 
   structure(name: string, parse: (record: RecordReader) => void, type = name): ParsedField {
-    this.reader.budget.enter(this.reader.range());
     const child = new RecordReader(this.reader, name, type);
+    this.reader.limits.enter(this.reader.range());
     try {
       parse(child);
     } finally {
-      this.reader.budget.leave();
+      this.reader.limits.leave();
       this.add(child.finish());
     }
-    const field = child.finish();
-    return field;
+    return child.finish();
   }
 
   private value(name: string, type: string, start: number, value: FieldValue): ParsedField {
     const range = this.reader.range(start, this.reader.offset - start);
-    this.reader.budget.field(range);
+    this.reader.limits.field(range);
     const field: ParsedField = { name, type, value, range, children: [] };
     this.add(field);
     return field;

@@ -1,62 +1,98 @@
-# MAPI parser architecture
+# Reading and extending the MAPI visualizer
 
-This is the authoring source for the bundled MAPI decoder. It is written in
-strict TypeScript and compiles to ordinary ES2022 modules. The extension host
-does not compile TypeScript, load .NET, or provide browser or network APIs.
+The MAPI visualizer is a strict TypeScript extension compiled to ES2022 modules.
+It interprets protocol data and returns documents; Transmog supplies the UI,
+granted inputs, sandbox and worker lifetime.
 
-The boundaries are deliberately small:
+## Start with the extension contract
 
-- `reader.ts` reads wire data with explicit bounds and shared work limits.
-- `model.ts` describes protocol fields, values, source ranges and parse issues.
-- Protocol modules interpret MAPI HTTP envelopes, ROPs, properties, address-book
-  messages and FastTransfer streams. Conversation state belongs to one decode;
-  there is no global session navigator or mutable protocol singleton.
-- The extension adapter obtains only host-granted input and translates protocol
-  fields to the host's existing visualization contract. The host owns the UI.
-- The pinned Microsoft inspector is a developer-only behavioral reference.
-  Synthetic inputs and reference outputs remain independent test evidence.
+Read these files in order:
 
-Do not transliterate the reference's parser class hierarchy or retain its UI
-layout as a protocol contract. Compare wire facts, values, boundaries, operation
-dispatch and continuation behavior. Presentation differences should be explicit
-in the tests; unsupported input must be reported rather than presented as a
-complete parse.
+1. [manifest.json](../manifest.json) declares matching rules, inputs, entry points
+   and host limits. Request and response viewers run in separate workers.
+2. [headers.ts](headers.ts) is the smallest complete example: read granted headers
+   and return a final tree document without loading the binary parser.
+3. [body.ts](body.ts) exposes synchronous callbacks typed with the public
+   [API 1 SDK](../../../crates/extensions/sdk/transmog-extensions.d.ts).
+   Type-only imports add no runtime dependency.
+4. [body-session.ts](body-session.ts) requests bytes, HTTP decoding or context
+   through `needInput`, `needDecoded` and `needContext`. Resume callbacks validate
+   continuation tokens; live updates reject stale revisions.
+5. [body-input.ts](body-input.ts) retains granted pages, prioritizes the selected
+   body and assembles the decoder snapshot.
+6. [decode.ts](decode.ts) enters the parser. [view.ts](view.ts) translates its
+   results into host documents and deferred expansion tokens.
 
-Keep the reader and field model local until another extension demonstrates a
-shared need. A future authoring library can reuse them without adding host
-capabilities or changing the sandbox contract.
+Follow a Connect request from `visualize` through body acquisition to
+`readHttpMessage` in [http.ts](http.ts). The Connect branch reads UserDn and
+numeric fields in wire order. [record.ts](record.ts) records their values and
+byte ranges; `present` converts them into a tree. Protocol code needs no access
+to the UI or capture store.
 
-Run `node extensions/mapi/build.mjs` from the repository root to compile with
-the repository's pinned TypeScript dependency. Compiled modules are build
-artifacts and are never checked in. Packaging compiles the project with the
-pinned compiler. Tests under `test` exercise boundary conditions and the
-independent reference corpus.
+## Add an operation
 
-Source formatting uses Prettier 3.6.2 and the adjacent `.prettierrc.json`.
-Protocol enum tables contain data only; `generate-mapi-constants.py` checks their
-provenance against the pinned source. No parser behavior is generated from C#.
+1. Add HTTP layouts in [http.ts](http.ts), or fixed ROP fields in
+   [rop-layouts.ts](rop-layouts.ts), in wire order.
+2. Add variable ROP payloads in [rop-requests.ts](rop-requests.ts) or
+   [rop-responses.ts](rop-responses.ts). [rops.ts](rops.ts) dispatches and pairs
+   operations. Use captured request parameters, not emitted field names, to
+   interpret responses; `requestParameter` checks required parameters.
+3. Use `nested` for structures, `bounded` for length-delimited regions and
+   `repeat` for declared counts. Name flags, sentinels and meaningful sizes in
+   [wire.ts](wire.ts) or beside the algorithm that owns them. Reuse generated enums.
+4. Add fixtures with meaningful values and exact ranges. Cover malformed input,
+   missing context and recovery in the same worker. Update manifest matching
+   rules when adding an HTTP operation.
+5. Run the [qualification checks](../README.md#qualification).
 
-The differential runner compares wire values and ranges, not the inspector's UI
-nodes. Known UI omissions are checked against explicit protocol field positions.
-The old OptionsData response shape is invalid: the reference omits reading its
-return code and the generated probe includes a large padding tail. It remains
-an archived malformed-input regression; independent valid success/failure tests
-verify the new parser's status and payload handling.
+Use a message's own flags to choose its layout when available. Report required
+but absent state as `missing-context`, and unknown layouts as `unsupported`.
+Expected wire failures use `ParseError`; unexpected exceptions reach host
+diagnostics and the debugger.
 
-FastTransfer continuation uses bounded byte fragments per stream/handle. The
-parser reassembles a complete wire element before decoding it, preserving all
-chunk ranges as parents of a derived source. It displays a complete value rather
-than the reference's final text fragment. The corpus checks the concatenated
-bytes, decoded Unicode/binary/integer values and every parent range independently.
-MetaTagEcWarning is an unsigned error code in both directions; the reference's
-download path displays its bits as a signed integer. Per-element lengths for
-variable multivalues follow the protocol's lexical grammar, independently of the
-reference's null-terminated multivalue helper.
-See Microsoft's [FastTransfer lexical structure](https://learn.microsoft.com/en-us/openspecs/exchange_server_protocols/ms-oxcfxics/bafa8ce0-ff31-4c36-b464-8e8852d22a10).
+## Protocol boundaries
 
-The production manifest selects the compiled body and header ES module bundles.
-Native named exports preserve API 1 handler names, including bundler aliases;
-no CommonJS interop helpers or export wrappers are needed.
-The build rejects binary-parser dependencies in the header bundle. The separate
-`testing.ts` reference bridge is never imported by production or packaged.
-See [qualification and developer commands](../README.md).
+[reader.ts](reader.ts) owns bounds, encodings, signedness and exact 64-bit reads.
+[model.ts](model.ts) describes fields, values, ranges and issues independently
+of the host API. Use `scalarField` when a value also needs units or a timestamp.
+
+[decoder-state.ts](decoder-state.ts) owns one decode snapshot, replaying earlier
+exchanges and the selected response's paired request. [conversation.ts](conversation.ts)
+retains logon flags, table columns and request queues. Context acquisition is
+triggered by missing state or an actual FastTransfer stream payload.
+
+[fast-transfer.ts](fast-transfer.ts) assembles complete elements from fragments
+keyed by operation and handle. Derived sources retain every contributing chunk
+as a parent. RPC XOR/LZ77 decoding also separates decoded offsets from encoded
+parents; compression records enclosing provenance rather than an exact mapping.
+
+## Safeguards and presentation
+
+[limits.ts](limits.ts) names input, collection, nesting, field and derived data
+limits. Context, paired-request and selected-message parsing have separate field
+and depth limits. The parser has no work-unit accounting; the host enforces
+execution deadlines, memory limits, capabilities and output validation.
+
+[view-fields.ts](view-fields.ts) converts values and determines status.
+[view-limits.ts](view-limits.ts) names display limits. `view.ts` preserves node IDs
+and expanded sections across unrelated field additions without retaining older
+decoded trees. It reduces oversized output in a loop that shrinks or terminates.
+
+Clipped output reports Limited and discloses omitted diagnostics.
+[text.ts](text.ts) clips text without splitting Unicode code points. Input-limit
+diagnostics also report Limited. When context is unavailable, available fields
+can still be shown. Only a complete body interpretation of complete input declares
+`updates: "final"`. Original retained bytes remain available in Hex.
+
+## Build and reference evidence
+
+See [authoring and packaging](../README.md#authoring-and-packaging) for build
+commands. The build checks that the header bundle has no binary-parser imports.
+[testing.ts](testing.ts) is a developer-only bridge excluded from production entries
+and packages.
+
+[constants.ts](constants.ts) contains generated enum data, not parser behavior.
+The pinned Microsoft inspector supplies independent wire-fact evidence.
+[Qualification notes](../README.md#qualification) describe the checks and deliberate
+corrections to reference behavior. Keep parser utilities local until another
+extension demonstrates a shared need.

@@ -9,6 +9,8 @@ import { readSynchronizationBinary } from "../dist/synchronization.js";
 import { readAuxiliaryBody } from "../dist/auxiliary.js";
 import { enums } from "../dist/constants.js";
 import { FastTransferDecoder } from "../dist/fast-transfer.js";
+import { readNamedProperty } from "../dist/properties.js";
+import { mailboxLogonFolderCount, privateMailboxFlag, wireSizes } from "../dist/wire.js";
 
 function uint32(value) {
   return [value & 255, (value >>> 8) & 255, (value >>> 16) & 255, value >>> 24];
@@ -41,6 +43,157 @@ function execute(rop, response) {
 function fields(root) {
   return [root, ...root.children.flatMap(fields)];
 }
+
+test("logon responses use their own flags when the paired request is unavailable", () => {
+  const opcode = enums.RopIdType.values.RopLogon;
+  const guid = [
+    0x33, 0x22, 0x11, 0, 0x55, 0x44, 0x77, 0x66, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+  ];
+  for (const flags of [0, privateMailboxFlag]) {
+    const privateMailbox = (flags & privateMailboxFlag) !== 0;
+    const response = execute(
+      [
+        opcode,
+        0,
+        ...uint32(0),
+        flags,
+        ...Array(mailboxLogonFolderCount * wireSizes.objectId).fill(0),
+        ...(privateMailbox ? [0, ...guid] : []),
+        ...uint16(7),
+        ...guid,
+        ...(privateMailbox
+          ? [30, 20, 10, 1, 14, 11, ...uint16(2026), ...Array(8).fill(0), ...uint32(5)]
+          : guid),
+      ],
+      true,
+    );
+    const result = decode(
+      [{ id: 1, requestType: "Execute", response: { sourceId: "logon", bytes: response } }],
+      1,
+      "response",
+    );
+    assert.ok(fields(result.root).every((field) => !field.issue));
+    const parsedGuid = fields(result.root).find(
+      (field) => field.name === (privateMailbox ? "MailboxGuid" : "PerUserGuid"),
+    );
+    assert.ok(
+      parsedGuid,
+      `Missing GUID for flags ${flags}: ${fields(result.root)
+        .map((field) => field.name)
+        .join(", ")}`,
+    );
+    assert.equal(parsedGuid.value.value, "00112233-4455-6677-8899-aabbccddeeff");
+    if (privateMailbox) {
+      assert.equal(
+        fields(result.root).find((field) => field.name === "StoreState").value.value,
+        "5",
+      );
+    }
+  }
+});
+
+test("first per-user writes require logon context while later fragments do not", () => {
+  const logonId = 7;
+  const replicaGuid = [
+    0x33, 0x22, 0x11, 0, 0x55, 0x44, 0x77, 0x66, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+  ];
+  const data = [0xaa, 0xbb];
+  const followingRop = [enums.RopIdType.values.RopRelease, logonId, 0];
+  const write = (offset, flags) =>
+    execute(
+      [
+        enums.RopIdType.values.RopWritePerUserInformation,
+        logonId,
+        0,
+        ...Array(wireSizes.longTermId).fill(0),
+        1,
+        ...uint32(offset),
+        ...uint16(data.length),
+        ...data,
+        ...(offset === 0 && (flags & privateMailboxFlag) !== 0 ? replicaGuid : []),
+        ...followingRop,
+      ],
+      false,
+    );
+  const selected = (offset, flags) => ({
+    id: 2,
+    requestType: "Execute",
+    request: { sourceId: "write", bytes: write(offset, flags) },
+  });
+  const missing = decode([selected(0, 0)], 2, "request");
+  assert.equal(missing.root.issue?.kind, "missing-context");
+  assert.ok(
+    fields(missing.root).some(
+      (field) => field.name === "Data" && field.range.length === data.length,
+    ),
+  );
+  assert.ok(fields(missing.root).every((field) => field.name !== "RopRelease request"));
+
+  for (const flags of [0, privateMailboxFlag]) {
+    const history = {
+      id: 1,
+      requestType: "Execute",
+      request: {
+        sourceId: "logon",
+        bytes: execute(
+          [
+            enums.RopIdType.values.RopLogon,
+            logonId,
+            0,
+            flags,
+            ...uint32(0),
+            ...uint32(0),
+            ...uint16(0),
+          ],
+          false,
+        ),
+      },
+    };
+    const result = decode([history, selected(0, flags)], 2, "request");
+    const parsed = fields(result.root);
+    assert.ok(parsed.every((field) => !field.issue));
+    assert.ok(parsed.some((field) => field.name === "RopRelease request"));
+    const guid = parsed.find((field) => field.name === "ReplGuid");
+    assert.equal(
+      guid?.value.value,
+      flags === 0 ? undefined : "00112233-4455-6677-8899-aabbccddeeff",
+    );
+  }
+  const continuation = decode([selected(data.length, 0)], 2, "request");
+  assert.ok(fields(continuation.root).every((field) => !field.issue));
+  assert.ok(fields(continuation.root).some((field) => field.name === "RopRelease request"));
+});
+
+test("named properties distinguish the no-name sentinel from unknown kinds", () => {
+  const noName = enums.KindEnum.values.NoPropertyName;
+  const followingByte = 0xaa;
+  const absent = new RecordReader(new BinaryReader([noName, followingByte], "names"), "Name");
+  readNamedProperty(absent);
+  assert.equal(absent.reader.offset, 1);
+  assert.equal(absent.reader.peekUInt8(), followingByte);
+  assert.deepEqual(absent.field.children[0].value.names, ["NoPropertyName"]);
+
+  for (const kind of [2, 127, 254]) {
+    const record = new RecordReader(new BinaryReader([kind, followingByte], "names"), "Name");
+    assert.throws(
+      () => readNamedProperty(record),
+      (error) => error.kind === "unsupported" && error.message.includes("named property kind"),
+    );
+    assert.equal(record.reader.offset, 1, "An unknown layout consumed the following field");
+    assert.equal(record.reader.peekUInt8(), followingByte);
+  }
+
+  const opcode = enums.RopIdType.values.RopGetNamesFromPropertyIds;
+  for (const kind of [noName, 2]) {
+    const response = execute([opcode, 0, ...uint32(0), ...uint16(1), kind], true);
+    const result = decode(
+      [{ id: 1, requestType: "Execute", response: { sourceId: "names", bytes: response } }],
+      1,
+      "response",
+    );
+    assert.equal(result.root.issue?.kind, kind === noName ? undefined : "unsupported");
+  }
+});
 
 test("OptionsData reads its real return status and bounded success fields", () => {
   for (const status of [0, 0x8004010f]) {

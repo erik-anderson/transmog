@@ -68,9 +68,13 @@ def main():
     response["updates"]=[dict(response["message"],revision=1,responseHeaders={"x-responsecode":"7"})]
     changed=run([response])[0]
     if changed["document"]["status"]!="partial" or changed["document"]["roots"] or changed["reads"]!=1:raise AssertionError("Changed live status kept a stale parsed body or read rejected data")
-    bounded=copy.deepcopy(connect);bounded["message"]["order"]=1000
-    bounded["updates"]=[{"order":index,"requestType":"Execute","revision":1} for index in range(1,131)]
-    bounded_live=run([bounded])[0]
+    irrelevant=copy.deepcopy(connect);irrelevant["message"]["order"]=1000
+    irrelevant["message"]["requestAvailability"]="capturing"
+    irrelevant["updates"]=[{"order":index,"requestType":"Execute","revision":1} for index in range(1,131)]
+    bounded=copy.deepcopy(irrelevant);bounded["message"]["requestType"]="Execute"
+    bounded["message"]["request"]=base64.b64encode(parity.corpus.execute_request(bytes([1,7,0]))).decode("ascii")
+    unchanged_live,bounded_live=run([irrelevant,bounded])
+    if unchanged_live["reads"]!=1 or unchanged_live["document"]["status"]!="partial" or any(item["code"]!="body-incomplete" for item in unchanged_live["document"].get("diagnostics",[])):raise AssertionError("Irrelevant live context changed a Connect view")
     if bounded_live["reads"]!=1 or not any(item["code"]=="live-context-limit" for item in bounded_live["document"].get("diagnostics",[])):raise AssertionError("Live context did not remain bounded")
     print(f"MAPI production visualizers: {len(fixtures)} corpus cases, header-only loading, HTTP decoding/failure and selected live updates passed")
 

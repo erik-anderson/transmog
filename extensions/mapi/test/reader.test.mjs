@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { BinaryReader } from "../dist/reader.js";
-import { ParseBudget, ParseError } from "../dist/model.js";
+import { ParseError } from "../dist/model.js";
 
 test("little-endian scalars preserve signedness and all 64 bits", () => {
   const reader = new BinaryReader([255, 255, 255, 255, 1, 0, 0, 0, 0, 0, 32, 0], "body");
@@ -38,15 +38,8 @@ test("strings, CRLF and GUID byte order are explicit", () => {
   assert.throws(() => new BinaryReader([65], "broken").utf16(1), ParseError);
 });
 
-test("IEEE-754 and reader work share a bounded budget", () => {
+test("IEEE-754 scalars retain their numeric value", () => {
   assert.equal(new BinaryReader([0, 0, 128, 63], "float").floatingPoint(4), 1);
-  const reader = new BinaryReader([1, 2], "body", new ParseBudget(10, 4, 2));
-  const child = reader.child(1);
-  assert.equal(child.integer("u8"), 1);
-  assert.throws(
-    () => reader.integer("u8"),
-    (error) => error.kind === "limit",
-  );
 });
 
 test("declared code pages preserve non-ASCII characters and byte order", () => {

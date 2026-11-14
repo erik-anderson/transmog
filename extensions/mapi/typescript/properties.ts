@@ -1,3 +1,10 @@
+import {
+  propertyTypes,
+  restrictionTypes,
+  propertyNameKinds,
+  propertyRowFlags,
+  wireSizes,
+} from "./wire.js";
 import { bounded, filetime, nested, readEnum, readObjectId, repeat } from "./common.js";
 import { enums } from "./constants.js";
 import { ParseError } from "./model.js";
@@ -12,16 +19,16 @@ export interface PropertyTag {
 }
 
 const scalarProperties: Readonly<Record<number, ScalarType>> = {
-  0x0002: "i16",
-  0x0003: "i32",
-  0x0004: "f32",
-  0x0005: "f64",
-  0x0006: "i64",
-  0x0007: "f64",
-  0x000b: "bool",
-  0x0014: "i64",
-  0x0040: "u64",
-  0x0048: "guid",
+  [propertyTypes.integer16]: "i16",
+  [propertyTypes.integer32]: "i32",
+  [propertyTypes.float32]: "f32",
+  [propertyTypes.float64]: "f64",
+  [propertyTypes.currency]: "i64",
+  [propertyTypes.floatingTime]: "f64",
+  [propertyTypes.boolean]: "bool",
+  [propertyTypes.integer64]: "i64",
+  [propertyTypes.time]: "u64",
+  [propertyTypes.guid]: "guid",
 };
 
 export function readPropertyTag(record: RecordReader): PropertyTag {
@@ -40,7 +47,7 @@ export function readPropertyTags(record: RecordReader, large: boolean): Property
     () => {
       nested(record, "PropertyTag", (child) => tags.push(readPropertyTag(child)));
     },
-    4,
+    wireSizes.propertyTag,
   );
   return tags;
 }
@@ -59,11 +66,11 @@ export function readPropertyValue(
   context: PropertyContext = "rop",
   addressBookElement = false,
 ): void {
-  if ((type & 0x1000) !== 0) {
+  if ((type & propertyTypes.multiValue) !== 0) {
     const count = record.integer("Count", "u32");
     repeat(record, count, () => {
-      nested(record, propertyName(type & ~0x1000), (child) => {
-        readPropertyValue(child, type & ~0x1000, context, addressBookElement);
+      nested(record, propertyName(type & ~propertyTypes.multiValue), (child) => {
+        readPropertyValue(child, type & ~propertyTypes.multiValue, context, addressBookElement);
       });
     });
     return;
@@ -71,38 +78,38 @@ export function readPropertyValue(
 
   const scalar = scalarProperties[type];
   if (scalar) {
-    const value = record.scalar("Value", scalar);
-    if (type === 0x0006) {
-      record.field.children.at(-1)!.units = "1/10000 currency unit";
+    const { value, field } = record.scalarField("Value", scalar);
+    if (type === propertyTypes.currency) {
+      field.units = "1/10000 currency unit";
     }
-    if (type === 0x0007) {
-      record.field.children.at(-1)!.units = "OLE Automation DATE";
+    if (type === propertyTypes.floatingTime) {
+      field.units = "OLE Automation DATE";
     }
-    if (type === 0x0040) {
-      record.field.children.at(-1)!.units = "100 ns since 1601-01-01 UTC";
+    if (type === propertyTypes.time) {
+      field.units = "100 ns since 1601-01-01 UTC";
       const timestamp = filetime(value as bigint);
       if (timestamp) {
-        record.field.children.at(-1)!.timestamp = timestamp;
+        field.timestamp = timestamp;
       }
     }
     return;
   }
 
   switch (type) {
-    case 0x0000:
-    case 0x0001:
-    case 0x000d:
+    case propertyTypes.unspecified:
+    case propertyTypes.null:
+    case propertyTypes.object:
       return;
-    case 0x000a:
+    case propertyTypes.error:
       readEnum(record, "Value", "ErrorCodes");
       return;
-    case 0x001e:
-    case 0x001f:
+    case propertyTypes.string8:
+    case propertyTypes.string:
       if (!addressBookElement || record.boolean("HasValue")) {
-        record.string("Value", type === 0x001f);
+        record.string("Value", type === propertyTypes.string);
       }
       return;
-    case 0x0102: {
+    case propertyTypes.binary: {
       if (addressBookElement && !record.boolean("HasValue")) {
         return;
       }
@@ -110,7 +117,7 @@ export function readPropertyValue(
       record.bytes("Value", count);
       return;
     }
-    case 0x00fb: {
+    case propertyTypes.serverId: {
       const count = record.integer("Count", "u16");
       bounded(record, "ServerId", count, (child) => {
         if (child.integer("Ours", "u8") === 1) {
@@ -123,10 +130,10 @@ export function readPropertyValue(
       });
       return;
     }
-    case 0x00fd:
+    case propertyTypes.restriction:
       readRestriction(record, context);
       return;
-    case 0x00fe:
+    case propertyTypes.ruleAction:
       readRuleActions(record, context);
       return;
     default:
@@ -139,11 +146,13 @@ export function readPropertyValue(
 }
 
 export function readAddressBookValue(record: RecordReader, type: number): void {
-  const hasPresence = (type & 0x1000) !== 0 || [0x001e, 0x001f, 0x0102].includes(type);
+  const hasPresence =
+    (type & propertyTypes.multiValue) !== 0 ||
+    [propertyTypes.string8, propertyTypes.string, propertyTypes.binary].includes(type);
   if (!hasPresence || record.boolean("HasValue")) {
     nested(record, propertyName(type), (child) => {
       // Only multivalued variable-length elements have their own presence byte.
-      readPropertyValue(child, type, "address-book", (type & 0x1000) !== 0);
+      readPropertyValue(child, type, "address-book", (type & propertyTypes.multiValue) !== 0);
     });
   }
 }
@@ -169,7 +178,7 @@ export function readPropertyList(record: RecordReader, addressBook: boolean): vo
         readTaggedValue(child, addressBook ? "address-book" : "rop");
       });
     },
-    4,
+    wireSizes.propertyTag,
   );
 }
 
@@ -179,7 +188,7 @@ export function readPropertyRow(
   addressBook: boolean,
 ): void {
   const flag = record.integer(addressBook ? "Flags" : "Flag", "u8");
-  if (flag !== 0 && flag !== 1) {
+  if (flag !== propertyRowFlags.ordinary && flag !== propertyRowFlags.flagged) {
     throw new ParseError("malformed", "Unknown property row flag", record.reader.range());
   }
   repeat(
@@ -188,17 +197,17 @@ export function readPropertyRow(
     (index) => {
       const tag = tags[index]!;
       nested(record, `Property 0x${tag.id.toString(16)}`, (child) => {
-        let type = tag.type & ~0x2000;
-        if (type === 0) {
+        let type = tag.type & ~propertyTypes.multiValueInstance;
+        if (type === propertyTypes.unspecified) {
           type = readEnum(child, "PropertyType", "PropertyDataType");
         }
-        if (flag === 1) {
+        if (flag === propertyRowFlags.flagged) {
           const valueFlag = child.integer("Flag", "u8");
-          if (valueFlag === 1) {
+          if (valueFlag === propertyRowFlags.absent) {
             return;
           }
-          if (valueFlag === 0x0a) {
-            type = 0x000a;
+          if (valueFlag === propertyRowFlags.error) {
+            type = propertyTypes.error;
           } else if (valueFlag !== 0) {
             throw new ParseError("malformed", "Unknown property value flag", child.reader.range());
           }
@@ -216,14 +225,22 @@ export function readPropertyRow(
 
 export function readNamedProperty(record: RecordReader): void {
   const kind = readEnum(record, "Kind", "KindEnum");
-  if (kind === 0 || kind === 1) {
-    record.scalar("GUID", "guid");
-    if (kind === 0) {
-      record.integer("LID", "u32");
-    } else {
-      const size = record.integer("NameSize", "u8");
-      record.string("Name", true, size);
-    }
+  if (kind === propertyNameKinds.none) {
+    return;
+  }
+  if (kind !== propertyNameKinds.numeric && kind !== propertyNameKinds.string) {
+    throw new ParseError(
+      "unsupported",
+      `Unsupported named property kind ${kind}`,
+      record.reader.range(),
+    );
+  }
+  record.scalar("GUID", "guid");
+  if (kind === propertyNameKinds.numeric) {
+    record.integer("LID", "u32");
+  } else {
+    const size = record.integer("NameSize", "u8");
+    record.string("Name", true, size);
   }
 }
 
@@ -239,53 +256,53 @@ export function readRestriction(record: RecordReader, context: PropertyContext =
     return tag!;
   };
   switch (type) {
-    case 0:
-    case 1: {
+    case restrictionTypes.and:
+    case restrictionTypes.or: {
       const count = record.integer("RestrictCount", context === "rop" ? "u16" : "u32");
       repeat(record, count, () => readChild("Restriction"));
       return;
     }
-    case 2:
+    case restrictionTypes.not:
       readChild("Restriction");
       return;
-    case 3:
-    case 4: {
-      if (type === 3) {
+    case restrictionTypes.content:
+    case restrictionTypes.property: {
+      if (type === restrictionTypes.content) {
         readEnum(record, "FuzzyLevelLow", "FuzzyLevelLowEnum");
         readEnum(record, "FuzzyLevelHigh", "FuzzyLevelHighEnum");
       } else {
         readEnum(record, "RelOp", "RelOpType");
       }
-      const tag = readTag(type === 3 ? "PropertyTag" : "PropTag");
+      const tag = readTag(type === restrictionTypes.content ? "PropertyTag" : "PropTag");
       nested(record, "TaggedValue", (child) => {
         readPropertyTag(child);
-        readPropertyValue(child, tag.type & ~0x1000, context);
+        readPropertyValue(child, tag.type & ~propertyTypes.multiValue, context);
       });
       return;
     }
-    case 5:
+    case restrictionTypes.compareProperties:
       readEnum(record, "RelOp", "RelOpType");
       readTag("PropTag1");
       readTag("PropTag2");
       return;
-    case 6:
+    case restrictionTypes.bitMask:
       readEnum(record, "BitmapRelOp", "BitmapRelOpType");
       readTag("PropTag");
       record.integer("Mask", "u32");
       return;
-    case 7:
+    case restrictionTypes.size:
       readEnum(record, "RelOp", "RelOpType");
       readTag("PropTag");
       record.integer("Size", "u32");
       return;
-    case 8:
+    case restrictionTypes.exist:
       readTag("PropTag");
       return;
-    case 9:
+    case restrictionTypes.subObject:
       readTag("Subobject");
       readChild("Restriction");
       return;
-    case 10: {
+    case restrictionTypes.comment: {
       const count = record.integer("TaggedValuesCount", "u8");
       repeat(
         record,
@@ -298,7 +315,7 @@ export function readRestriction(record: RecordReader, context: PropertyContext =
       }
       return;
     }
-    case 11:
+    case restrictionTypes.count:
       record.integer("Count", "u32");
       readChild("SubRestriction");
       return;

@@ -1,3 +1,4 @@
+import { ruleActions, wireSizes } from "./wire.js";
 import { bounded, nested, readEnum, readFields, readObjectId, repeat } from "./common.js";
 import { ParseError } from "./model.js";
 import { readTaggedValue } from "./properties.js";
@@ -8,11 +9,11 @@ function entryId(record: RecordReader, message: boolean): void {
   readFields(record, { Flags: "u32", ProviderUID: "guid" });
   readEnum(record, message ? "MessageType" : "FolderType", "StoreObjectType");
   record.scalar("DatabaseGuid", "guid");
-  record.bytes("GlobalCounter", 6);
+  record.bytes("GlobalCounter", wireSizes.globalCounter);
   record.integer("Pad", "u16");
   if (message) {
     record.scalar("MessageDatabaseGuid", "guid");
-    record.bytes("MessageGlobalCounter", 6);
+    record.bytes("MessageGlobalCounter", wireSizes.globalCounter);
     record.integer("Pad2", "u16");
   }
 }
@@ -33,8 +34,8 @@ export function readRuleActions(record: RecordReader, context: PropertyContext):
       const type = readEnum(action, "ActionType", "ActionType");
       readFields(action, { ActionFlavor: "u32", ActionFlags: "u32" });
       switch (type) {
-        case 1:
-        case 2: {
+        case ruleActions.move:
+        case ruleActions.copy: {
           const sameStore = extended ? false : action.boolean("FolderInThisStore");
           countedBytes(action, "StoreEID", extended);
           const size = action.integer("FolderEIDSize", extended ? "u8" : "u16");
@@ -51,8 +52,8 @@ export function readRuleActions(record: RecordReader, context: PropertyContext):
           });
           return;
         }
-        case 3:
-        case 4:
+        case ruleActions.reply:
+        case ruleActions.outOfOfficeReply:
           if (extended) {
             const size = action.integer("MessageEIDSize", "u8");
             bounded(action, "ReplyTemplateMessageEID", size, (message) => entryId(message, true));
@@ -62,29 +63,35 @@ export function readRuleActions(record: RecordReader, context: PropertyContext):
           }
           action.scalar("ReplyTemplateGUID", "guid");
           return;
-        case 5:
+        case ruleActions.defer:
           action.bytes("Deferred action data", action.reader.remaining);
           return;
-        case 6:
+        case ruleActions.bounce:
           readEnum(action, "BounceCode", "BounceCodeEnum");
           return;
-        case 7:
-        case 8: {
+        case ruleActions.forward:
+        case ruleActions.delegate: {
           const count = action.integer("RecipientCount", "u16");
           repeat(action, count, () =>
             nested(action, "Recipient", (recipient) => {
               recipient.integer("Reserved", "u8");
               const count = recipient.integer("NoOfProperties", "u16");
-              repeat(recipient, count, () => nested(recipient, "Property", readTaggedValue), 4);
+              // Recipient blocks keep standard ROP property widths in extended actions too.
+              repeat(
+                recipient,
+                count,
+                () => nested(recipient, "Property", readTaggedValue),
+                wireSizes.propertyTag,
+              );
             }),
           );
           return;
         }
-        case 9:
+        case ruleActions.tag:
           nested(action, "Property", (property) => readTaggedValue(property, context));
           return;
-        case 10:
-        case 11:
+        case ruleActions.delete:
+        case ruleActions.markAsRead:
           return;
         default:
           throw new ParseError(

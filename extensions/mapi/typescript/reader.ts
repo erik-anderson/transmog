@@ -1,7 +1,13 @@
-import { ParseBudget, ParseError } from "./model.js";
+import { unicode } from "./shared.js";
+import { ParseError } from "./model.js";
+import { StructureLimits } from "./limits.js";
 import type { ByteRange } from "./model.js";
 
 export type IntegerType = "u8" | "i8" | "u16" | "i16" | "u32" | "i32";
+
+const windows1252ControlEnd = 0x9f;
+const carriageReturn = 13;
+const lineFeed = 10;
 
 const integerWidths: Record<IntegerType, number> = {
   u8: 1,
@@ -19,7 +25,7 @@ export class BinaryReader {
   constructor(
     private readonly bytes: readonly number[],
     readonly sourceId: string,
-    readonly budget = new ParseBudget(),
+    readonly limits = new StructureLimits(),
     readonly start = 0,
     readonly end = bytes.length,
   ) {
@@ -48,7 +54,6 @@ export class BinaryReader {
   }
 
   require(length: number): void {
-    this.budget.step(this.range());
     if (!Number.isSafeInteger(length) || length < 0 || length > this.remaining) {
       throw new ParseError(
         "malformed",
@@ -117,7 +122,7 @@ export class BinaryReader {
     const result = new BinaryReader(
       this.bytes,
       this.sourceId,
-      this.budget,
+      this.limits,
       this.position,
       this.position + length,
     );
@@ -126,20 +131,20 @@ export class BinaryReader {
   }
 
   fork(): BinaryReader {
-    return new BinaryReader(this.bytes, this.sourceId, this.budget, this.position, this.end);
+    return new BinaryReader(this.bytes, this.sourceId, this.limits, this.position, this.end);
   }
 
   at(offset: number): BinaryReader {
     if (!Number.isSafeInteger(offset) || offset < this.start || offset > this.end) {
       throw new ParseError("malformed", "Field offset is outside its structure", this.range());
     }
-    return new BinaryReader(this.bytes, this.sourceId, this.budget, offset, this.end);
+    return new BinaryReader(this.bytes, this.sourceId, this.limits, offset, this.end);
   }
 
   /** ASCII's replacement rule is deliberate; bytes are not decoded as UTF-8. */
   ascii(length: number): string {
     return this.take(length)
-      .map((value) => (value < 128 ? String.fromCharCode(value) : "?"))
+      .map((value) => (value < unicode.asciiEnd ? String.fromCharCode(value) : "?"))
       .join("");
   }
 
@@ -162,13 +167,17 @@ export class BinaryReader {
   private utf16Text(characters: string[], start: number): string {
     for (let index = 0; index < characters.length; index++) {
       const unit = characters[index]!.charCodeAt(0);
-      if (unit >= 0xd800 && unit <= 0xdbff) {
+      if (unit >= unicode.highSurrogateStart && unit < unicode.lowSurrogateStart) {
         const next = characters[index + 1]?.charCodeAt(0);
-        if (next !== undefined && next >= 0xdc00 && next <= 0xdfff) {
+        if (
+          next !== undefined &&
+          next >= unicode.lowSurrogateStart &&
+          next < unicode.surrogateEnd
+        ) {
           index++;
           continue;
         }
-      } else if (unit < 0xdc00 || unit > 0xdfff) {
+      } else if (unit < unicode.lowSurrogateStart || unit >= unicode.surrogateEnd) {
         continue;
       }
       throw new ParseError(
@@ -184,7 +193,9 @@ export class BinaryReader {
     const punctuation = "€\u0081‚ƒ„…†‡ˆ‰Š‹Œ\u008dŽ\u008f\u0090‘’“”•–—˜™š›œ\u009džŸ";
     return this.take(length)
       .map((value) =>
-        value >= 0x80 && value <= 0x9f ? punctuation[value - 0x80]! : String.fromCharCode(value),
+        value >= unicode.asciiEnd && value <= windows1252ControlEnd
+          ? punctuation[value - unicode.asciiEnd]!
+          : String.fromCharCode(value),
       )
       .join("");
   }
@@ -197,7 +208,7 @@ export class BinaryReader {
       if (value === 0) {
         return wide ? this.utf16Text(characters, start) : characters.join("");
       }
-      characters.push(wide || value < 128 ? String.fromCharCode(value) : "?");
+      characters.push(wide || value < unicode.asciiEnd ? String.fromCharCode(value) : "?");
     }
   }
 
@@ -208,11 +219,11 @@ export class BinaryReader {
       if (allowNull && value === 0) {
         return characters.join("");
       }
-      if (value === 13 && this.peekUInt8() === 10) {
+      if (value === carriageReturn && this.peekUInt8() === lineFeed) {
         this.skip(1);
         return characters.join("");
       }
-      characters.push(value < 128 ? String.fromCharCode(value) : "?");
+      characters.push(value < unicode.asciiEnd ? String.fromCharCode(value) : "?");
     }
   }
 

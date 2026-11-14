@@ -1,3 +1,4 @@
+import { ephemeralEntryIdType } from "./wire.js";
 import { bounded, nested, readEnum, readFields, repeat } from "./common.js";
 import { ParseError } from "./model.js";
 import type { Direction } from "./model.js";
@@ -87,7 +88,7 @@ function columnsAndRows(record: RecordReader, flag = "HasColsAndRows", name = "C
 function readEntryId(record: RecordReader): void {
   const size = record.integer("EntryIDSize", "u32");
   bounded(record, "EntryID", size, (child) => {
-    const ephemeral = child.reader.peekUInt8() === 0x87;
+    const ephemeral = child.reader.peekUInt8() === ephemeralEntryIdType;
     child.integer(ephemeral ? "Type" : "IDType", "u8");
     readFields(child, { R1: "u8", R2: "u8", R3: "u8", ProviderUID: "guid", R4: "u32" });
     readEnum(child, ephemeral ? "DisplayType" : "DisplayTypeString", "DisplayTypeValues");

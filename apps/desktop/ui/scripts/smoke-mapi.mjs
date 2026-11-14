@@ -50,11 +50,11 @@ export async function smokeMapi(call, evaluate, screenshotPath, tracePath) {
     if(!viewer.view.document.sources.some(source=>source.exactMapping===false))throw new Error('Transformed RPC lacks decoded evidence');
     ({viewer}=await show('http-gzip'));
     if(!viewer.view.sources.some(source=>source.httpDecoded?.codings.includes('gzip')))throw new Error('HTTP gzip lacks decoded evidence');
-    ({viewer}=await show('budget-14kb'));
+    ({viewer}=await show('selected-long-string'));
     if(!fields(viewer.view.document).some(node=>node.value?.value==='A'.repeat(7600)))throw new Error('14.9 KiB MAPI Execute lost its selected value');
-    ({viewer}=await show('budget-compressed'));
-    if(fields(viewer.view.document).filter(node=>node.value?.value==='A'.repeat(15000)).length!==4)throw new Error('Compressed MAPI work regression lost decoded values');
-    if(!viewer.view.document.diagnostics.some(item=>item.code==='mapi-parser-budget'&&item.message.includes('Selected response:')))throw new Error('MAPI parser budget context is unavailable');
+    ({viewer}=await show('compressed-long-strings'));
+    if(fields(viewer.view.document).filter(node=>node.value?.value==='A'.repeat(15000)).length!==4)throw new Error('Compressed MAPI input lost decoded values');
+    if(viewer.view.document.diagnostics.length!==0)throw new Error('Complete compressed MAPI input produced unexpected diagnostics');
     ({viewer}=await show('rows'));
     values=fields(viewer.view.document).map(node=>node.value?.value);
     if(!values.includes('9007199254740993')||!values.includes('Synthetic café Ω'))throw new Error('MAPI table context crossed origin/capture scope or lost its columns');
@@ -124,7 +124,7 @@ export async function smokeMapi(call, evaluate, screenshotPath, tracePath) {
     const columns=await invoke('classify_traffic_rows',{ids:[traffic.selectedSessionId],columns:['net.transmog.mapi:protocol']});
     if(!columns.some(row=>row.values['net.transmog.mapi:protocol']?.[0]==='MAPI/HTTP'))throw new Error('Bundled MAPI static classification missing');
     globalThis.__mapiProbe.concurrent=true;
-    return {properties:true,utcTicks:true,transformedRpc:true,httpGzip:true,budget14kb:true,budgetCompressed:true,retainedRows:true,scopedContext:true,byteSelection:true,tableSelection:true,concurrent:4,headersReadOnly:true,staticClassification:true,compactDetails:true,compactInformation:true,initialHandle:rowHandle};
+    return {properties:true,utcTicks:true,transformedRpc:true,httpGzip:true,selectedLongString:true,compressedStrings:true,retainedRows:true,scopedContext:true,byteSelection:true,tableSelection:true,concurrent:4,headersReadOnly:true,staticClassification:true,compactDetails:true,compactInformation:true,initialHandle:rowHandle};
   })()`);
   if (screenshotPath)
     await writeFile(
