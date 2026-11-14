@@ -36,13 +36,16 @@ pub(crate) fn scan(context: &mut Context, body: Body) {
         let items = extract::pairs(context, &text, &source, true);
         extract::parameters(context, &items);
     } else if mime == "application/json" || mime.ends_with("+json") {
-        let Some(node) = json::parse(text.as_bytes()) else {
-            context.coverage(
-                "body",
-                "incomplete",
-                "JSON is malformed or exceeds depth/node limits.",
-            );
-            return;
+        let node = match json::parse_bounded(text.as_bytes()) {
+            Ok(node) => node,
+            Err(json::ParseError::Malformed) => {
+                context.coverage("body", "incomplete", "JSON is malformed or incomplete.");
+                return;
+            }
+            Err(json::ParseError::Limited) => {
+                context.coverage("body", "limited", "JSON depth or node limit reached.");
+                return;
+            }
         };
         json_groups(context, &node, "$", &source, 0);
     } else if mime.ends_with("/xml") || mime.ends_with("+xml") {

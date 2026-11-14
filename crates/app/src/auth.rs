@@ -19,6 +19,7 @@ pub use related::{RelatedAuth, RelatedEntry};
 
 const MAX_AUTH_SLOTS: usize = 8;
 const MAX_SLOT_NAME_BYTES: usize = 64;
+const MAX_SOURCE_HEADERS: usize = 100_000;
 
 /// Exact active pane selection, resolved within the invoking application's workspace.
 #[derive(Clone, Deserialize)]
@@ -300,13 +301,13 @@ async fn input(
     });
     let mut used = target.as_ref().map_or(0, String::len);
     let mut retained = vec![];
-    for (ordinal, field) in headers.iter().enumerate().take(100_001) {
+    for (ordinal, field) in headers.iter().enumerate().take(MAX_SOURCE_HEADERS + 1) {
         // Preserve original ordinals even for unrelated headers; do not duplicate their large values.
         let oversized_name = field.name().len() > transmog_auth::MAX_CANDIDATE;
         let relevant = !oversized_name
             && std::str::from_utf8(field.name()).is_ok_and(transmog_auth::is_candidate_header);
         let field_bytes = field.name().len().saturating_add(field.value().len());
-        let limited = ordinal == 100_000
+        let limited = ordinal == MAX_SOURCE_HEADERS
             || oversized_name
             || relevant
                 && (field.value().len() > transmog_auth::MAX_CANDIDATE

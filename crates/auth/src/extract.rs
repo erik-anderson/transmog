@@ -1,7 +1,5 @@
 //! Source extraction preserves ordering, duplicates, empty values, and original encodings.
-use crate::limits::{
-    MAX_DECODED_BYTES, MAX_HTTP_ENVELOPES, MAX_PARAMETERS, MAX_SOURCE_LABEL_BYTES,
-};
+use crate::limits::{MAX_DECODED_BYTES, MAX_PARAMETERS, MAX_SOURCE_LABEL_BYTES};
 use crate::{Context, Finding, Input, MAX_CANDIDATE, Source, http};
 
 pub(crate) struct Pair {
@@ -80,13 +78,14 @@ pub(crate) fn pairs(context: &mut Context, text: &str, source: &Source, form: bo
             break;
         }
         let (key, value) = part.split_once('=').unwrap_or((part, ""));
-        if let (Some(name), Some(value)) = (
-            percent(key, form),
-            percent(
-                value,
-                form && (source.kind == "body" || key != "SAMLRequest" && key != "SAMLResponse"),
-            ),
-        ) {
+        let decoded = percent(key, form).and_then(|name| {
+            // Redirect Base64 keeps literal '+', including when the parameter name was escaped.
+            let saml_redirect =
+                source.kind != "body" && ["SAMLRequest", "SAMLResponse"].contains(&name.as_str());
+            let value = percent(value, form && !saml_redirect)?;
+            Some((name, value))
+        });
+        if let Some((name, value)) = decoded {
             let mut loc = source.clone();
             loc.occurrence = occurrence;
             loc.offset = Some(offset);
@@ -296,10 +295,6 @@ pub(crate) fn message(context: &mut Context, input: Input) {
             value.into()
         };
         let envelopes = http::parse(&value);
-        if envelopes.len() == MAX_HTTP_ENVELOPES {
-            headers_complete = false;
-            context.limited();
-        }
         for item in envelopes {
             let mut finding = http::decode(context, item, source.clone(), role);
             if key.ends_with("authentication-info") {

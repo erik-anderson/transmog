@@ -4,6 +4,66 @@ use std::fmt::Write as _;
 use std::io::Write as _;
 
 #[test]
+fn saml_redirect_encoded_parameter_names_preserve_base64_plus() {
+    const XML: &str = "<a:Assertion xmlns:a='urn:oasis:names:tc:SAML:2.0:assertion'><a:Issuer>synthetic>>>>>>issuer</a:Issuer></a:Assertion>";
+    let mut compressor =
+        flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::none());
+    compressor.write_all(XML.as_bytes()).unwrap();
+    let encoded = base64::engine::general_purpose::STANDARD.encode(compressor.finish().unwrap());
+    assert!(encoded.contains('+'), "Fixture needs a literal Base64 plus");
+    for name in ["SAMLResponse", "SAML%52esponse", "%53AMLResponse"] {
+        let inspection = inspect(
+            Input {
+                headers: vec![],
+                target: Some(format!("/?{name}={encoded}")),
+                body: None,
+                body_status: "skipped".into(),
+                captured_at: None,
+            },
+            Arc::new(AtomicBool::new(false)),
+        );
+        assert_eq!(inspection.findings.len(), 1);
+        let finding = &inspection.findings[0];
+        assert_eq!(finding.status, "decoded", "Unexpected result for {name}");
+        assert_eq!(finding.children[0].format, "SAML 2.0 XML");
+        assert_eq!(finding.children[0].status, "decoded");
+    }
+}
+
+#[test]
+fn json_body_limits_remain_distinct_from_malformed_data() {
+    const OBJECT_AND_ARRAY_NODES: usize = 2;
+    let maximum_items = MAX_FIELDS - OBJECT_AND_ARRAY_NODES;
+    for count in [maximum_items, maximum_items + 1] {
+        let json = format!(r#"{{"ignored":[{}]}}"#, vec!["0"; count].join(","));
+        let inspection = body("application/json", json.into_bytes());
+        assert_eq!(
+            inspection
+                .coverage
+                .iter()
+                .find(|coverage| coverage.source == "body")
+                .unwrap()
+                .status,
+            if count == maximum_items {
+                "complete"
+            } else {
+                "limited"
+            }
+        );
+    }
+    let malformed = body("application/json", br#"{"ignored":[0,]}"#.to_vec());
+    assert_eq!(
+        malformed
+            .coverage
+            .iter()
+            .find(|coverage| coverage.source == "body")
+            .unwrap()
+            .status,
+        "incomplete"
+    );
+}
+
+#[test]
 fn hidden_html_controls_exclude_raw_text_and_tag_attributes() {
     const REAL_CONTROL: &str = "<input type=hidden name=access_token value=retained-token>";
     const FALSE_CONTROL: &str = "<input type=hidden name=access_token value=not-a-control>";

@@ -112,11 +112,6 @@ pub(crate) fn parse(value: &str) -> Vec<Envelope> {
                     }
                     item.params.push((key, val));
                     space(bytes, &mut at);
-                    if item.params.len() >= MAX_HTTP_PARAMETERS && at < bytes.len() {
-                        item.limited = true;
-                        at = bytes.len();
-                        break;
-                    }
                     if bytes.get(at) != Some(&b',') {
                         break;
                     }
@@ -127,6 +122,11 @@ pub(crate) fn parse(value: &str) -> Vec<Envelope> {
                     space(bytes, &mut probe);
                     if bytes.get(probe) != Some(&b'=') {
                         at = comma;
+                        break;
+                    }
+                    if item.params.len() >= MAX_HTTP_PARAMETERS {
+                        item.limited = true;
+                        at = bytes.len();
                         break;
                     }
                     at = comma + 1;
@@ -159,7 +159,7 @@ pub(crate) fn parse(value: &str) -> Vec<Envelope> {
         }
     }
     if at < bytes.len() && !bytes[at..].iter().all(|b| b" \t,".contains(b)) {
-        let at_limit = result.len() == 64;
+        let at_limit = result.len() == MAX_HTTP_ENVELOPES;
         if let Some(last) = result.last_mut() {
             if at_limit {
                 last.limited = true;
@@ -208,7 +208,7 @@ pub(crate) fn decode(
     if item.limited {
         finding.issue(
             "limited",
-            "Authentication parameter budget reached; remaining envelope data was not interpreted.",
+            "Authentication envelope or parameter limit reached; remaining input was not interpreted.",
         );
     }
     let param_size = item

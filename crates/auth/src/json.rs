@@ -232,10 +232,6 @@ impl Parser<'_> {
         }
     }
 }
-pub(crate) fn parse(bytes: &[u8]) -> Option<Node> {
-    parse_bounded(bytes).ok()
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ParseError {
     Malformed,

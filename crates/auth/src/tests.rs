@@ -21,6 +21,63 @@ fn header(name: &str, value: &str) -> Header {
 }
 
 #[test]
+fn http_envelope_limits_accept_the_exact_boundary() {
+    for count in [limits::MAX_HTTP_ENVELOPES, limits::MAX_HTTP_ENVELOPES + 1] {
+        let value = vec!["Negotiate"; count].join(", ");
+        let inspection = run(vec![header("WWW-Authenticate", &value)], None);
+        assert_eq!(inspection.findings.len(), limits::MAX_HTTP_ENVELOPES);
+        assert_eq!(
+            inspection
+                .coverage
+                .iter()
+                .find(|coverage| coverage.source == "headers")
+                .unwrap()
+                .status,
+            if count == limits::MAX_HTTP_ENVELOPES {
+                "complete"
+            } else {
+                "limited"
+            }
+        );
+    }
+}
+
+#[test]
+fn http_parameter_limits_preserve_a_following_challenge() {
+    for count in [limits::MAX_HTTP_PARAMETERS, limits::MAX_HTTP_PARAMETERS + 1] {
+        let parameters = (0..count)
+            .map(|index| format!("parameter{index}=observed"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let value = format!("Digest {parameters}, Basic realm=next-challenge");
+        let inspection = run(vec![header("WWW-Authenticate", &value)], None);
+        let at_boundary = count == limits::MAX_HTTP_PARAMETERS;
+        assert_eq!(inspection.findings.len(), if at_boundary { 2 } else { 1 });
+        assert_eq!(
+            inspection.findings[0].status,
+            if at_boundary { "decoded" } else { "limited" }
+        );
+        assert_eq!(
+            inspection.findings[0]
+                .fields
+                .iter()
+                .filter(|field| field.name.starts_with("parameter"))
+                .count(),
+            limits::MAX_HTTP_PARAMETERS
+        );
+        if at_boundary {
+            assert_eq!(inspection.findings[1].format, "Basic");
+            assert!(
+                inspection.findings[1]
+                    .fields
+                    .iter()
+                    .any(|field| field.name == "realm" && field.value == "next-challenge")
+            );
+        }
+    }
+}
+
+#[test]
 fn custom_auth_access_and_token_headers_decode_jwt_without_a_fixed_prefix() {
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     for protected in [
