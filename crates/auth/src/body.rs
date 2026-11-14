@@ -302,6 +302,15 @@ fn entities(value: &str) -> String {
     }
     output
 }
+fn skip_attribute_separators(bytes: &[u8], at: &mut usize) {
+    while bytes
+        .get(*at)
+        .is_some_and(|byte| byte.is_ascii_whitespace() || *byte == b'/')
+    {
+        *at += 1;
+    }
+}
+
 fn html(context: &mut Context, text: &str, source: &Source) -> Vec<Pair> {
     let lower = text.to_ascii_lowercase();
     let bytes = text.as_bytes();
@@ -325,22 +334,10 @@ fn html(context: &mut Context, text: &str, source: &Source) -> Vec<Pair> {
             at += 1;
         }
         let tag = &lower[tag_start..at];
-        if ["script", "style", "textarea", "title"].contains(&tag) {
-            let close = format!("</{tag}");
-            at = lower[at..]
-                .find(&close)
-                .map_or(bytes.len(), |end| at + end + close.len());
-            continue;
-        }
         let mut attributes = vec![];
         while at < bytes.len() && bytes[at] != b'>' && attributes.len() < MAX_ELEMENT_ATTRIBUTES {
-            while bytes
-                .get(at)
-                .is_some_and(|b| b.is_ascii_whitespace() || *b == b'/')
-            {
-                at += 1;
-            }
-            if bytes.get(at) == Some(&b'>') {
+            skip_attribute_separators(bytes, &mut at);
+            if bytes.get(at).is_none_or(|byte| *byte == b'>') {
                 break;
             }
             let key_start = at;
@@ -385,14 +382,36 @@ fn html(context: &mut Context, text: &str, source: &Source) -> Vec<Pair> {
             }
             attributes.push((key, entities(value)));
         }
-        at = (at + 1).min(bytes.len());
-        if attributes.len() >= MAX_ELEMENT_ATTRIBUTES {
-            context.coverage(
-                "body",
-                "limited",
-                "HTML attribute budget exceeded; the remainder was not scanned.",
-            );
+        skip_attribute_separators(bytes, &mut at);
+        if bytes.get(at) != Some(&b'>') {
+            if at == bytes.len() {
+                context.coverage(
+                    "body",
+                    "incomplete",
+                    "HTML capture ended inside a tag; incomplete controls were not inspected.",
+                );
+            } else {
+                context.coverage(
+                    "body",
+                    "limited",
+                    "HTML attribute budget exceeded; the remainder was not scanned.",
+                );
+            }
             break;
+        }
+        at += 1;
+        if ["script", "style", "textarea", "title"].contains(&tag) {
+            let close = format!("</{tag}");
+            at = lower[at..]
+                .match_indices(close.as_str())
+                .find(|(offset, _)| {
+                    bytes
+                        .get(at + offset + close.len())
+                        .is_some_and(|byte| byte.is_ascii_whitespace() || b"/>".contains(byte))
+                })
+                // Leave the closing tag for normal attribute parsing; it can contain quoted '<'.
+                .map_or(bytes.len(), |(offset, _)| at + offset);
+            continue;
         }
         if tag != "input" {
             continue;

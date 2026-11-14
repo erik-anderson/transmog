@@ -1,6 +1,97 @@
 use super::*;
 use base64::Engine as _;
+use std::fmt::Write as _;
 use std::io::Write as _;
+
+#[test]
+fn hidden_html_controls_exclude_raw_text_and_tag_attributes() {
+    const REAL_CONTROL: &str = "<input type=hidden name=access_token value=retained-token>";
+    const FALSE_CONTROL: &str = "<input type=hidden name=access_token value=not-a-control>";
+    for tag in ["script", "style", "textarea", "title"] {
+        for html in [
+            format!("<{tag}></{tag}lookalike>{FALSE_CONTROL}</{tag}>{REAL_CONTROL}"),
+            format!("<{tag} title='</{tag}>{FALSE_CONTROL}'>raw text</{tag}>{REAL_CONTROL}"),
+            format!("<{tag}>raw text</{tag} title='{FALSE_CONTROL}'>{REAL_CONTROL}"),
+        ] {
+            let inspection = body("text/html", html.as_bytes().into());
+            assert_eq!(inspection.findings.len(), 1, "Unexpected control in {html}");
+            assert_eq!(
+                inspection.findings[0].source.offset,
+                html.find(REAL_CONTROL)
+            );
+            assert!(
+                inspection
+                    .values
+                    .iter()
+                    .any(|value| value == "retained-token")
+            );
+            assert!(
+                !inspection
+                    .values
+                    .iter()
+                    .any(|value| value == "not-a-control")
+            );
+        }
+    }
+}
+
+#[test]
+fn incomplete_html_tags_do_not_create_auth_controls() {
+    const COMPLETE_CONTROL: &str = "<input type=hidden name=access_token value=retained-token>";
+    for tail in [
+        "<input type=hidden name=access_token value=not-a-control",
+        "<input type=hidden name=access_token value='not-a-control>",
+    ] {
+        let inspection = body(
+            "text/html",
+            format!("{COMPLETE_CONTROL}{tail}").into_bytes(),
+        );
+        assert_eq!(inspection.findings.len(), 1);
+        assert_eq!(
+            inspection
+                .coverage
+                .iter()
+                .find(|coverage| coverage.source == "body")
+                .unwrap()
+                .status,
+            "incomplete"
+        );
+    }
+}
+
+#[test]
+fn html_attribute_limit_accepts_exact_boundary_with_trailing_space() {
+    const CONTROL_ATTRIBUTES: usize = 3;
+    let maximum_extra_attributes = limits::MAX_ELEMENT_ATTRIBUTES - CONTROL_ATTRIBUTES;
+    for count in [maximum_extra_attributes, maximum_extra_attributes + 1] {
+        let mut extra = String::new();
+        for index in 0..count {
+            write!(extra, " data-extra-{index}=x").unwrap();
+        }
+        let inspection = body(
+            "text/html",
+            format!("<input type=hidden name=access_token value=retained-token{extra}   >")
+                .into_bytes(),
+        );
+        assert_eq!(
+            inspection.findings.len(),
+            usize::from(count == maximum_extra_attributes)
+        );
+        assert_eq!(
+            inspection
+                .coverage
+                .iter()
+                .find(|coverage| coverage.source == "body")
+                .unwrap()
+                .status,
+            if count == maximum_extra_attributes {
+                "complete"
+            } else {
+                "limited"
+            }
+        );
+    }
+}
 
 #[test]
 fn finding_limit_keeps_body_and_query_coverage_partial() {

@@ -67,6 +67,59 @@ fn der(tag: u8, bytes: &[u8]) -> Vec<u8> {
 fn sequence(parts: Vec<Vec<u8>>) -> Vec<u8> {
     der(0x30, &parts.into_iter().flatten().collect::<Vec<_>>())
 }
+
+#[test]
+fn asn1_structure_limits_report_partial_coverage_without_rejecting_boundaries() {
+    const NEGOTIATION_INIT_TAG: u8 = 0xa0;
+    const OFFERED_MECHANISMS_TAG: u8 = 0xa0;
+    const OBJECT_IDENTIFIER_TAG: u8 = 0x06;
+    let mechanism = der(OBJECT_IDENTIFIER_TAG, &[0x2b, 6, 1, 5, 5, 2]);
+    for count in [limits::MAX_ASN1_CHILDREN, limits::MAX_ASN1_CHILDREN + 1] {
+        let init = der(
+            NEGOTIATION_INIT_TAG,
+            &sequence(vec![der(
+                OFFERED_MECHANISMS_TAG,
+                &sequence(vec![mechanism.clone(); count]),
+            )]),
+        );
+        let inspection = token(&init, "Negotiate");
+        let finding = &inspection.findings[0].children[0];
+        assert_eq!(
+            finding.status,
+            if count > limits::MAX_ASN1_CHILDREN {
+                "limited"
+            } else {
+                "decoded"
+            }
+        );
+        assert_eq!(
+            inspection
+                .coverage
+                .iter()
+                .find(|coverage| coverage.source == "headers")
+                .unwrap()
+                .status,
+            if count > limits::MAX_ASN1_CHILDREN {
+                "limited"
+            } else {
+                "complete"
+            }
+        );
+    }
+    let mut nested = der(OBJECT_IDENTIFIER_TAG, &[0x2b, 6]);
+    for _ in 0..=MAX_DEPTH {
+        nested = sequence(vec![nested]);
+    }
+    let inspection = token(&der(NEGOTIATION_INIT_TAG, &nested), "Negotiate");
+    assert_eq!(inspection.findings[0].children[0].status, "limited");
+    assert!(
+        inspection
+            .coverage
+            .iter()
+            .any(|coverage| coverage.source == "headers" && coverage.status == "limited")
+    );
+}
+
 #[test]
 fn ntlm_all_message_types_offsets_and_masks() {
     for kind in 1..=3 {

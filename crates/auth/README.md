@@ -40,7 +40,8 @@ Full values and typed converter material are excluded from ordinary inspection
 serialization. Reserve bytes before retaining additional decoder-owned buffers;
 `field` reserves its own value storage.
 
-Report malformed, unsupported or incomplete evidence through `Finding::issue`.
+Distinguish data errors, parser limits and cancellation. Report malformed,
+unsupported or incomplete evidence through `Finding::issue`.
 It preserves stronger outcomes such as a size limit when encrypted content is
 also present. Submit top-level findings through `Context::push` so limits in
 nested findings also mark source coverage as partial. Decoding does not establish

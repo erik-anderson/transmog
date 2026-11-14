@@ -2,7 +2,7 @@
 use super::asn1::tag;
 use super::hex;
 use super::{
-    asn1::{children, context_field, int, oid, tlv, validate},
+    asn1::{ValidationError, children, context_field, int, oid, tlv, validate},
     kerberos, ntlm,
 };
 use crate::{Context, Finding, MAX_DEPTH, Source};
@@ -31,6 +31,22 @@ fn mechanism(value: &str) -> &'static str {
         _ => "Unknown mechanism",
     }
 }
+
+fn validate_envelope(context: &Context, bytes: &[u8], finding: &mut Finding) -> bool {
+    let Err(error) = validate(bytes, context) else {
+        return true;
+    };
+    match error {
+        ValidationError::Malformed => finding.issue("malformed", "Invalid ASN.1 lengths or tags."),
+        ValidationError::Limited => finding.issue(
+            "limited",
+            "ASN.1 child, node or nesting limit reached; coverage is partial.",
+        ),
+        ValidationError::Canceled => finding.issue("incomplete", "ASN.1 inspection was canceled."),
+    }
+    false
+}
+
 pub(super) fn decode(
     context: &mut Context,
     bytes: &[u8],
@@ -81,16 +97,10 @@ pub(super) fn decode(
             } else {
                 mech.rest
             };
-            let mut nodes = 0;
-            if validate(payload, 0, &mut nodes, context) {
+            if validate_envelope(context, payload, &mut finding) {
                 finding
                     .children
                     .push(kerberos::decode(context, payload, source));
-            } else {
-                finding.issue(
-                    "malformed",
-                    "Kerberos DER lengths, depth or nodes are invalid.",
-                );
             }
         } else if mechanism(&value) == "SPNEGO" {
             finding
@@ -105,12 +115,7 @@ pub(super) fn decode(
         }
         return finding;
     }
-    let mut nodes = 0;
-    if !validate(bytes, 0, &mut nodes, context) {
-        finding.issue(
-            "malformed",
-            "ASN.1 lengths, depth or node budget is invalid.",
-        );
+    if !validate_envelope(context, bytes, &mut finding) {
         return finding;
     }
     if [

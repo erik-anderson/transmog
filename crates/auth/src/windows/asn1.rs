@@ -80,27 +80,49 @@ pub(super) fn children(bytes: &[u8]) -> Option<Vec<Tlv<'_>>> {
     }
     Some(result)
 }
-pub(super) fn validate(
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum ValidationError {
+    Malformed,
+    Limited,
+    Canceled,
+}
+
+/// Validate structure without allocating a child vector at every nesting level.
+pub(super) fn validate(bytes: &[u8], context: &Context) -> Result<(), ValidationError> {
+    let mut nodes = 0;
+    validate_contents(bytes, 0, &mut nodes, context)
+}
+
+fn validate_contents(
     bytes: &[u8],
     depth: usize,
     nodes: &mut usize,
-    context: &mut Context,
-) -> bool {
-    if depth > MAX_DEPTH || *nodes >= MAX_FIELDS || context.is_canceled() {
-        return false;
+    context: &Context,
+) -> Result<(), ValidationError> {
+    if context.is_canceled() {
+        return Err(ValidationError::Canceled);
     }
-    let Some(items) = children(bytes) else {
-        return false;
-    };
-    for item in items {
-        *nodes += 1;
-        if *nodes > MAX_FIELDS
-            || item.tag & CONSTRUCTED_BIT != 0 && !validate(item.bytes, depth + 1, nodes, context)
-        {
-            return false;
+    if depth > MAX_DEPTH {
+        return Err(ValidationError::Limited);
+    }
+    let mut rest = bytes;
+    let mut child_count = 0;
+    while !rest.is_empty() {
+        if context.is_canceled() {
+            return Err(ValidationError::Canceled);
         }
+        if child_count >= MAX_ASN1_CHILDREN || *nodes >= MAX_FIELDS {
+            return Err(ValidationError::Limited);
+        }
+        let item = tlv(rest).ok_or(ValidationError::Malformed)?;
+        child_count += 1;
+        *nodes += 1;
+        if item.tag & CONSTRUCTED_BIT != 0 && !item.bytes.is_empty() {
+            validate_contents(item.bytes, depth + 1, nodes, context)?;
+        }
+        rest = item.rest;
     }
-    true
+    Ok(())
 }
 pub(super) fn oid(bytes: &[u8]) -> Option<String> {
     let mut arcs = vec![];
@@ -158,4 +180,50 @@ pub(super) fn context_field<'a>(items: &'a [Tlv<'a>], tag: u8) -> Option<&'a [u8
         return None;
     }
     Some(value.bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[test]
+    fn depth_boundary_accepts_empty_constructed_values() {
+        fn sequence(payload: Vec<u8>) -> Vec<u8> {
+            let length = u8::try_from(payload.len()).unwrap();
+            assert!(length < HIGH_BIT);
+            let mut bytes = vec![tag::SEQUENCE, length];
+            bytes.extend(payload);
+            bytes
+        }
+        let canceled = AtomicBool::new(false);
+        let context = Context::new(&canceled);
+        let mut bytes = sequence(vec![]);
+        for _ in 0..MAX_DEPTH {
+            bytes = sequence(bytes);
+        }
+        assert_eq!(validate(&bytes, &context), Ok(()));
+        assert_eq!(
+            validate(&sequence(bytes), &context),
+            Err(ValidationError::Limited)
+        );
+    }
+
+    #[test]
+    fn validation_distinguishes_cancellation_from_malformed_input() {
+        const EMPTY_SEQUENCE: &[u8] = &[tag::SEQUENCE, 0];
+        const TRUNCATED_SEQUENCE: &[u8] = &[tag::SEQUENCE, 1];
+        let canceled = AtomicBool::new(false);
+        let context = Context::new(&canceled);
+        assert_eq!(validate(EMPTY_SEQUENCE, &context), Ok(()));
+        assert_eq!(
+            validate(TRUNCATED_SEQUENCE, &context),
+            Err(ValidationError::Malformed)
+        );
+        canceled.store(true, Ordering::Relaxed);
+        assert_eq!(
+            validate(EMPTY_SEQUENCE, &context),
+            Err(ValidationError::Canceled)
+        );
+    }
 }
