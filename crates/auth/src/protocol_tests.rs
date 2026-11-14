@@ -3,6 +3,29 @@ use base64::Engine as _;
 use std::io::Write as _;
 
 #[test]
+fn bounded_html_finds_auth_fields_after_many_unrelated_elements() {
+    const UNRELATED_ELEMENTS: usize = 60_000;
+    let token = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1c2VyIn0.";
+    let html = format!(
+        "{}<input type=hidden name=access_token value='{token}'>",
+        "<i></i>".repeat(UNRELATED_ELEMENTS)
+    );
+    assert!(html.len() < MAX_BODY);
+    let inspection = body("text/html", html.into_bytes());
+    assert!(inspection.values.iter().any(|value| value == token));
+    assert_eq!(inspection.diagnostics, Vec::<String>::new());
+    assert_eq!(
+        inspection
+            .coverage
+            .iter()
+            .find(|source| source.source == "body")
+            .unwrap()
+            .status,
+        "complete"
+    );
+}
+
+#[test]
 fn saml_binding_character_decoding_honors_bom_and_xml_declaration() {
     let xml = r#"<?xml version="1.0" encoding="UTF-16"?><a:Assertion xmlns:a="urn:oasis:names:tc:SAML:2.0:assertion"><a:Issuer>synthetic</a:Issuer></a:Assertion>"#;
     let mut bytes = vec![0xff, 0xfe];

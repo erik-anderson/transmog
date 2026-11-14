@@ -1,6 +1,10 @@
 //! RFC 9110 challenge grammar. Commas inside quoted values are not challenge boundaries.
+use crate::limits::{MAX_HTTP_ENVELOPES, MAX_HTTP_PARAMETERS};
 use crate::{Context, Finding, Source};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+// Bound the retained Base64 and structured Basic-credential representations.
+const BASIC_DOCUMENT_BYTE_MULTIPLIER: usize = 3;
 
 pub(crate) struct Envelope {
     pub scheme: String,
@@ -31,7 +35,7 @@ pub(crate) fn parse(value: &str) -> Vec<Envelope> {
     let bytes = value.as_bytes();
     let mut at = 0;
     let mut result = vec![];
-    while at < bytes.len() && result.len() < 64 {
+    while at < bytes.len() && result.len() < MAX_HTTP_ENVELOPES {
         space(bytes, &mut at);
         if bytes.get(at) == Some(&b',') {
             at += 1;
@@ -108,7 +112,7 @@ pub(crate) fn parse(value: &str) -> Vec<Envelope> {
                     }
                     item.params.push((key, val));
                     space(bytes, &mut at);
-                    if item.params.len() >= 256 && at < bytes.len() {
+                    if item.params.len() >= MAX_HTTP_PARAMETERS && at < bytes.len() {
                         item.limited = true;
                         at = bytes.len();
                         break;
@@ -212,7 +216,7 @@ pub(crate) fn decode(
         .iter()
         .map(|(key, value)| key.len().saturating_add(value.len()))
         .sum();
-    if context.charge(param_size) {
+    if context.reserve_bytes(param_size) {
         finding.content.push((
             "parameters".into(),
             crate::json::Node::Array(
@@ -284,7 +288,9 @@ pub(crate) fn decode(
         if name == "Basic" {
             match STANDARD.decode(&raw) {
                 Ok(bytes) => {
-                    if !context.charge(bytes.len().saturating_mul(3)) {
+                    if !context
+                        .reserve_bytes(bytes.len().saturating_mul(BASIC_DOCUMENT_BYTE_MULTIPLIER))
+                    {
                         finding.issue(
                             "limited",
                             "Basic credential bytes exceeded the decoded document budget.",
@@ -335,7 +341,7 @@ pub(crate) fn decode(
             if name == "NTLM" || name == "Negotiate" {
                 match STANDARD.decode(&raw) {
                     Ok(bytes) => {
-                        if context.charge(bytes.len()) {
+                        if context.reserve_bytes(bytes.len()) {
                             let mut source = finding.source.clone();
                             source.transforms.push("Base64".into());
                             let child =

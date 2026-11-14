@@ -457,6 +457,9 @@ try {
     await tokenHeading.evaluate((element) => element.getRootNode().activeElement === element),
     true,
   );
+  // Imported auth evidence needs no HTTPS setup; leave room for the compact zoom checks.
+  const dismissSetup = page.getByRole("button", { name: "Dismiss notification", exact: true });
+  if (await dismissSetup.isVisible()) await dismissSetup.click();
   await cdp.send("Emulation.setDeviceMetricsOverride", {
     width: 800,
     height: 600,

@@ -268,7 +268,7 @@ pub(crate) fn fields(
     prefix: &str,
     secret: bool,
 ) {
-    if !context.step() {
+    if context.is_canceled() {
         context.limited();
         return;
     }
@@ -323,12 +323,14 @@ pub(crate) fn fields(
         }
     }
 }
+const MAX_NUMERIC_DATE_SECONDS: f64 = 253_402_300_799.0;
+
 pub(crate) fn numeric_date(raw: &str, role: &str, captured: Option<i64>) -> String {
     // The original NumericDate spelling remains the field value, including fractional or very large numbers.
     let Ok(value) = raw.parse::<f64>() else {
         return "NumericDate is not a supported number; raw value preserved.".into();
     };
-    if !value.is_finite() || value.abs() > 253_402_300_799.0 {
+    if !value.is_finite() || value.abs() > MAX_NUMERIC_DATE_SECONDS {
         return "NumericDate is outside the supported UTC display range; raw value preserved."
             .into();
     }

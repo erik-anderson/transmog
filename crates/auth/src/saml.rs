@@ -1,4 +1,5 @@
 //! Namespace-aware SAML metadata and bounded Redirect decoding. XML is never rendered or resolved.
+use crate::limits::{MAX_DECODED_BYTES, MAX_ELEMENT_ATTRIBUTES};
 use crate::{Context, Finding, MAX_DEPTH, Source, extract::Pair};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use quick_xml::{NsReader, events::Event, name::ResolveResult};
@@ -44,7 +45,7 @@ pub(crate) fn parameter(context: &mut Context, pair: &Pair, items: &[Pair]) -> F
         finding.issue("malformed", "SAML binding value has invalid Base64.");
         return finding;
     };
-    if !context.charge(bytes.len()) {
+    if !context.reserve_bytes(bytes.len()) {
         finding.status = "limited".into();
         return finding;
     }
@@ -52,9 +53,9 @@ pub(crate) fn parameter(context: &mut Context, pair: &Pair, items: &[Pair]) -> F
         let mut inflater = flate2::read::DeflateDecoder::new(bytes.as_slice());
         let mut decoded = vec![];
         let outcome = (&mut inflater)
-            .take(4 * 1024 * 1024 + 1)
+            .take((MAX_DECODED_BYTES + 1) as u64)
             .read_to_end(&mut decoded);
-        if decoded.len() > 4 * 1024 * 1024 || !context.charge(decoded.len()) {
+        if decoded.len() > MAX_DECODED_BYTES || !context.reserve_bytes(decoded.len()) {
             finding.issue(
                 "limited",
                 "SAML raw DEFLATE output exceeded the decoded budget.",
@@ -82,7 +83,7 @@ pub(crate) fn parameter(context: &mut Context, pair: &Pair, items: &[Pair]) -> F
             );
             return finding;
         };
-        if text.len() > 4 * 1024 * 1024 || !context.charge(text.len()) {
+        if text.len() > MAX_DECODED_BYTES || !context.reserve_bytes(text.len()) {
             finding.issue(
                 "limited",
                 "Character-decoded SAML XML exceeds its decoded budget.",
@@ -124,8 +125,8 @@ pub(crate) fn xml(context: &mut Context, bytes: &[u8], mut source: Source) -> Op
     let mut encrypted = false;
     let mut failure = None;
     loop {
-        if !context.step() {
-            failure = Some(("limited", "XML work budget exhausted."));
+        if context.is_canceled() {
+            failure = Some(("incomplete", "XML inspection was canceled."));
             break;
         }
         let event = reader.read_resolved_event();
@@ -166,7 +167,7 @@ pub(crate) fn xml(context: &mut Context, bytes: &[u8], mut source: Source) -> Op
                     encrypted = true;
                 }
                 for (index, attribute) in element.attributes().enumerate() {
-                    if index >= 128 {
+                    if index >= MAX_ELEMENT_ATTRIBUTES {
                         failure = Some((
                             "limited",
                             "XML attribute count exceeded the per-element limit.",

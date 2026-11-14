@@ -1,4 +1,7 @@
 //! Source extraction preserves ordering, duplicates, empty values, and original encodings.
+use crate::limits::{
+    MAX_DECODED_BYTES, MAX_HTTP_ENVELOPES, MAX_PARAMETERS, MAX_SOURCE_LABEL_BYTES,
+};
 use crate::{Context, Finding, Input, MAX_CANDIDATE, Source, http};
 
 pub(crate) struct Pair {
@@ -63,8 +66,8 @@ fn percent(raw: &str, form: bool) -> Option<String> {
 pub(crate) fn pairs(context: &mut Context, text: &str, source: &Source, form: bool) -> Vec<Pair> {
     let mut offset = 0;
     let mut result = vec![];
-    for (occurrence, part) in text.split('&').enumerate().take(2049) {
-        if occurrence == 2048 {
+    for (occurrence, part) in text.split('&').enumerate().take(MAX_PARAMETERS + 1) {
+        if occurrence == MAX_PARAMETERS {
             context.coverage(
                 &source.kind,
                 "limited",
@@ -72,7 +75,7 @@ pub(crate) fn pairs(context: &mut Context, text: &str, source: &Source, form: bo
             );
             break;
         }
-        if !context.step() {
+        if context.is_canceled() {
             context.limited();
             break;
         }
@@ -178,7 +181,7 @@ fn url(context: &mut Context, value: &str, source: Source, fragment: bool) {
 pub(crate) fn message(context: &mut Context, input: Input) {
     let mut headers_complete = true;
     for (index, header) in input.headers.into_iter().enumerate() {
-        if !context.step() {
+        if context.is_canceled() {
             headers_complete = false;
             break;
         }
@@ -205,7 +208,7 @@ pub(crate) fn message(context: &mut Context, input: Input) {
         if !standard && !custom_token {
             continue;
         }
-        if !context.charge(header.name.len()) {
+        if !context.reserve_bytes(header.name.len()) {
             headers_complete = false;
             context.coverage(
                 "headers",
@@ -217,7 +220,11 @@ pub(crate) fn message(context: &mut Context, input: Input) {
         let key = header.name.to_ascii_lowercase();
         let source = Source {
             kind: "header".into(),
-            label: format!("{} · field {}", crate::clip(&header.name, 128), index + 1),
+            label: format!(
+                "{} · field {}",
+                crate::clip(&header.name, MAX_SOURCE_LABEL_BYTES),
+                index + 1
+            ),
             occurrence: index,
             header_index: Some(index),
             offset: Some(0),
@@ -233,7 +240,7 @@ pub(crate) fn message(context: &mut Context, input: Input) {
             context.push(finding);
             continue;
         }
-        if header.value.len() > MAX_CANDIDATE || !context.charge(header.value.len()) {
+        if header.value.len() > MAX_CANDIDATE || !context.reserve_bytes(header.value.len()) {
             headers_complete = false;
             context.coverage(
                 "headers",
@@ -289,7 +296,7 @@ pub(crate) fn message(context: &mut Context, input: Input) {
             value.into()
         };
         let envelopes = http::parse(&value);
-        if envelopes.len() == 64 {
+        if envelopes.len() == MAX_HTTP_ENVELOPES {
             headers_complete = false;
             context.limited();
         }
@@ -323,7 +330,7 @@ pub(crate) fn message(context: &mut Context, input: Input) {
         "All retained header occurrences are considered independently of display pagination.",
     );
     if let Some(target) = input.target {
-        if target.len() <= MAX_CANDIDATE && context.charge(target.len()) {
+        if target.len() <= MAX_CANDIDATE && context.reserve_bytes(target.len()) {
             url(
                 context,
                 &target,
@@ -348,7 +355,7 @@ pub(crate) fn message(context: &mut Context, input: Input) {
         }
     }
     if let Some(body) = input.body {
-        if body.bytes.len() > 4 * 1024 * 1024 || !context.charge(body.bytes.len()) {
+        if body.bytes.len() > MAX_DECODED_BYTES || !context.reserve_bytes(body.bytes.len()) {
             context.coverage(
                 "body",
                 "limited",

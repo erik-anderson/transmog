@@ -1,4 +1,5 @@
 //! Selected-message text extraction. HTML is tokenized inertly, never executed or rendered.
+use crate::limits::{MAX_ELEMENT_ATTRIBUTES, MAX_HTML_CONTROLS};
 use crate::{
     Body, Context, MAX_DEPTH, Source,
     extract::{self, Pair},
@@ -133,7 +134,7 @@ fn json_groups(
     source: &Source,
     depth: usize,
 ) {
-    if depth > MAX_DEPTH || !context.step() {
+    if depth > MAX_DEPTH || context.is_canceled() {
         context.limited();
         return;
     }
@@ -306,7 +307,7 @@ fn html(context: &mut Context, text: &str, source: &Source) -> Vec<Pair> {
     let bytes = text.as_bytes();
     let mut at = 0;
     let mut result = vec![];
-    while at < bytes.len() && result.len() < 256 && context.step() {
+    while at < bytes.len() && result.len() < MAX_HTML_CONTROLS && !context.is_canceled() {
         let Some(found) = text[at..].find('<') else {
             break;
         };
@@ -332,7 +333,7 @@ fn html(context: &mut Context, text: &str, source: &Source) -> Vec<Pair> {
             continue;
         }
         let mut attributes = vec![];
-        while at < bytes.len() && bytes[at] != b'>' && attributes.len() < 128 {
+        while at < bytes.len() && bytes[at] != b'>' && attributes.len() < MAX_ELEMENT_ATTRIBUTES {
             while bytes
                 .get(at)
                 .is_some_and(|b| b.is_ascii_whitespace() || *b == b'/')
@@ -385,7 +386,7 @@ fn html(context: &mut Context, text: &str, source: &Source) -> Vec<Pair> {
             attributes.push((key, entities(value)));
         }
         at = (at + 1).min(bytes.len());
-        if attributes.len() >= 128 {
+        if attributes.len() >= MAX_ELEMENT_ATTRIBUTES {
             context.coverage(
                 "body",
                 "limited",
@@ -430,7 +431,7 @@ fn html(context: &mut Context, text: &str, source: &Source) -> Vec<Pair> {
             source: loc,
         });
     }
-    if result.len() >= 256 && at < bytes.len() {
+    if result.len() >= MAX_HTML_CONTROLS && at < bytes.len() {
         context.coverage(
             "body",
             "limited",

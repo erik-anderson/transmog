@@ -9,11 +9,16 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
-use transmog_auth::{Body, Header, Input, Inspection, MAX_BODY, MAX_TOTAL, Source};
+use transmog_auth::{
+    Body, Header, Input, Inspection, MAX_BODY, MAX_DECODED_BYTES, MAX_TOTAL, Source,
+};
 use transmog_core::HeaderBlock;
 use transmog_session::SessionSnapshot;
 mod related;
 pub use related::{RelatedAuth, RelatedEntry};
+
+const MAX_AUTH_SLOTS: usize = 8;
+const MAX_SLOT_NAME_BYTES: usize = 64;
 
 /// Exact active pane selection, resolved within the invoking application's workspace.
 #[derive(Clone, Deserialize)]
@@ -122,12 +127,12 @@ impl Service {
         let generation = generation(&request.generation)?;
         if !self.visible.load(Ordering::Acquire)
             || request.slot.is_empty()
-            || request.slot.len() > 64
+            || request.slot.len() > MAX_SLOT_NAME_BYTES
         {
             return Err(unavailable());
         }
         let mut slots = self.slots.lock().map_err(|_| unavailable())?;
-        if slots.len() >= 8 && !slots.contains_key(&request.slot) {
+        if slots.len() >= MAX_AUTH_SLOTS && !slots.contains_key(&request.slot) {
             return Err(unavailable());
         }
         if let Some(previous) = slots.get(&request.slot) {
@@ -183,7 +188,7 @@ impl Service {
                 current.canceled.store(true, Ordering::Release);
                 current.active = None;
             }
-        } else if slots.len() < 8 && slot.len() <= 64 {
+        } else if slots.len() < MAX_AUTH_SLOTS && slot.len() <= MAX_SLOT_NAME_BYTES {
             slots.insert(
                 slot.into(),
                 Slot {
@@ -435,25 +440,21 @@ async fn input(
     .await
     .map_err(|_| unavailable())??;
     let codings = metadata.content_codings.clone();
-    let bytes = match crate::visualizers::decoding::decode(
-        &codings,
-        bytes,
-        MAX_BODY,
-        4 * 1024 * 1024,
-    )
-    .await
-    {
-        Ok(bytes) => bytes,
-        Err(reason) => {
-            input.body_status = match reason {
-                transmog_extensions::DecodeFailure::Limited => "limited",
-                transmog_extensions::DecodeFailure::Unsupported => "unsupported",
-                _ => "incomplete",
+    let bytes =
+        match crate::visualizers::decoding::decode(&codings, bytes, MAX_BODY, MAX_DECODED_BYTES)
+            .await
+        {
+            Ok(bytes) => bytes,
+            Err(reason) => {
+                input.body_status = match reason {
+                    transmog_extensions::DecodeFailure::Limited => "limited",
+                    transmog_extensions::DecodeFailure::Unsupported => "unsupported",
+                    _ => "incomplete",
+                }
+                .into();
+                return Ok(input);
             }
-            .into();
-            return Ok(input);
-        }
-    };
+        };
     let media_type = metadata
         .charset
         .map_or(mime.clone(), |charset| format!("{mime}; charset={charset}"));

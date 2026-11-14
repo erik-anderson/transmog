@@ -18,7 +18,7 @@ fn compact(raw: &str, flag: &AtomicBool) -> Result<DecodedDocument, &'static str
     let (value, header) = input_value(raw)?;
     let (token, token_offset) = crate::jose::candidate(value);
     let mut context = Context::new(flag);
-    if !context.charge(token.len()) {
+    if !context.reserve_bytes(token.len()) {
         return Err("Authentication decoding exceeded its finite budget.");
     }
     let mut source = scratch_source(raw, value, header);
@@ -129,7 +129,7 @@ fn documents(
     canceled(flag)?;
     let (value, header) = input_value(raw)?;
     let mut context = Context::new(flag);
-    if !context.charge(raw.len()) {
+    if !context.reserve_bytes(raw.len()) {
         return Err("Authentication decoding exceeded its finite budget.");
     }
     let source = scratch_source(raw, value, header);
@@ -248,16 +248,12 @@ fn documents(
     } else if let Some(finding) = crate::jose::decode(&mut context, value, source.clone()) {
         context.push(finding);
     } else if let Ok(bytes) = STANDARD.decode(value) {
-        if !(bytes.starts_with(b"NTLMSSP\0")
-            || bytes
-                .first()
-                .is_some_and(|tag| [0x60, 0xa0, 0xa1, 0x6e, 0x6f, 0x7e].contains(tag)))
-        {
+        if !crate::windows::is_binary_candidate(&bytes) {
             return Err(
                 "Input has no recognizable authentication structure. Choose an explicit format for bare Base64.",
             );
         }
-        if !context.charge(bytes.len()) {
+        if !context.reserve_bytes(bytes.len()) {
             return Err("Authentication decoding exceeded its finite budget.");
         }
         let finding = crate::windows::decode(

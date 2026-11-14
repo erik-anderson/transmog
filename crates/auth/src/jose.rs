@@ -45,7 +45,11 @@ pub(crate) fn decode(context: &mut Context, raw: &str, source: Source) -> Option
             &finding.source.kind
         };
         if !source.is_empty() {
-            context.coverage(source, "limited", "A compact JOSE token exceeded an inspection byte, work, JSON depth or field limit.");
+            context.coverage(
+                source,
+                "limited",
+                "A compact JOSE token exceeded an input size, JSON depth or field limit.",
+            );
         }
     }
     Some(finding)
@@ -69,7 +73,7 @@ fn decode_compact(context: &mut Context, raw: &str, mut source: Source) -> Optio
         source,
     );
     finding.verification = "Not checked".into();
-    if !context.charge(header_bytes.len()) {
+    if !context.reserve_bytes(header_bytes.len()) {
         finding.recognition = "candidate".into();
         finding.issue(
             "limited",
@@ -90,7 +94,7 @@ fn decode_compact(context: &mut Context, raw: &str, mut source: Source) -> Optio
         }
     };
     header.members()?;
-    if !context.charge(header_bytes.len()) {
+    if !context.reserve_bytes(header_bytes.len()) {
         finding.issue(
             "limited",
             "JOSE document exceeded the retained material budget.",
@@ -207,7 +211,7 @@ fn decode_compact(context: &mut Context, raw: &str, mut source: Source) -> Optio
         finding.issue("malformed", "Invalid JWS payload Base64url.");
         return Some(finding);
     };
-    if !context.charge(payload.len()) {
+    if !context.reserve_bytes(payload.len()) {
         finding.status = "limited".into();
         return Some(finding);
     }
@@ -261,7 +265,7 @@ fn decode_compact(context: &mut Context, raw: &str, mut source: Source) -> Optio
         }
     };
     if let Some(claims) = claims {
-        if !context.charge(payload.len()) {
+        if !context.reserve_bytes(payload.len()) {
             finding.issue(
                 "limited",
                 "JOSE document exceeded the retained material budget.",
@@ -301,7 +305,7 @@ fn decode_compact(context: &mut Context, raw: &str, mut source: Source) -> Optio
             );
         }
     } else if let Ok(text) = std::str::from_utf8(&payload) {
-        if context.charge(text.len()) {
+        if context.reserve_bytes(text.len()) {
             finding
                 .content
                 .push(("payloadText".into(), json::Node::Text(text.into())));

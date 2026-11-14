@@ -111,7 +111,7 @@ pub(crate) fn decode(context: &mut Context, items: &[Pair]) -> Option<Finding> {
         finding.diagnostics.push("Known OAuth/OIDC error fields were observed without enough context to establish an OAuth endpoint.".into());
     }
     for (index, pair) in items.iter().enumerate() {
-        if !context.step() {
+        if context.is_canceled() {
             context.limited();
             break;
         }
