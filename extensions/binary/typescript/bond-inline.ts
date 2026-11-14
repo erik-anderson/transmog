@@ -232,16 +232,16 @@ export function readInlineCandidate(
     if (!completed) {
       root();
     }
-    failure(
-      doc,
-      error,
-      reader,
-      partial
-        ? Number(partial.spans?.[0]?.offset ?? start)
-        : last
-          ? Number(last.offset) + Number(last.length)
-          : structStart,
-    );
+    let remainderStart = structStart;
+    if (completed) {
+      // The completed root already includes its terminator.
+      remainderStart = reader.offset;
+    } else if (partial) {
+      remainderStart = Number(partial.spans?.[0]?.offset ?? start);
+    } else if (last) {
+      remainderStart = Number(last.offset) + Number(last.length);
+    }
+    failure(doc, error, reader, remainderStart);
     if (partial) {
       doc.roots.at(-1)!.name = "Incomplete value bytes";
     }

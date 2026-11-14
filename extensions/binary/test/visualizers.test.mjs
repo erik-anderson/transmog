@@ -1154,6 +1154,27 @@ test("Bond rejects truncated headers, unsupported versions and incorrect v2 leng
   }
 });
 
+test("Bond trailing bytes start after the completed marshaled struct", async () => {
+  const LARGE_LIST_ITEMS = 5_000;
+  const indexedList = [11, 3, ...varint(LARGE_LIST_ITEMS), ...Array(LARGE_LIST_ITEMS).fill(0)];
+  for (const version of [1, 2]) {
+    for (const fields of [[], [0x23, 42], indexedList]) {
+      const complete = binary(bondHeader(version), bondStruct(version, fields));
+      const payload = Uint8Array.from([...complete, 0xff]);
+      const { document } = await host("bond", payload);
+      assert.equal(document.status, "malformed");
+      const remainder = nodes(document).find((node) => node.name === "Unparsed bytes");
+      assert.deepEqual(remainder.spans, [
+        {
+          sourceId: "encoded",
+          offset: String(complete.length),
+          length: "1",
+        },
+      ]);
+    }
+  }
+});
+
 test("ambiguous Bond versions and header collisions remain explicitly partial", async () => {
   const versions = (await host("bond", hex("02 01 00"))).document;
   assert.equal(versions.status, "partial");
