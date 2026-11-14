@@ -79,7 +79,10 @@ import { checkComparison } from "./check-comparison.mjs";
 import { checkPagePreviewRules } from "./check-page-preview-rules.mjs";
 import { checkTrafficFailures } from "./check-traffic-failures.mjs";
 import { checkNetworkProfiles } from "./check-network-profiles.mjs";
-import { checkClientCertificates } from "./check-client-certificates.mjs";
+import {
+  checkClientCertificates,
+  checkNativeCertificateEditorProbe,
+} from "./check-client-certificates.mjs";
 import { checkMcp } from "./check-mcp.mjs";
 import { checkExtensions } from "./check-extensions.mjs";
 import { checkVisualizers } from "./check-visualizers.mjs";
@@ -4939,6 +4942,18 @@ const cancelRule = async () => {
 const runBrowserCheck = createBrowserCheckRunner();
 
 try {
+  if (process.argv.includes("--client-certificates-only")) {
+    await page.goto("https://workspace.test/");
+    await page.waitForFunction(() => document.querySelector("app-shell")?.traffic?.queryLoaded);
+    await runBrowserCheck(checkClientCertificates, page, root);
+    await runBrowserCheck(checkNativeCertificateEditorProbe, page, root);
+    assert.deepEqual(errors, []);
+    await browser.close();
+    process.stdout.write(
+      "Client certificate editing and native probe render completion verified.\n",
+    );
+    process.exit(0);
+  }
   if (process.argv.includes("--trace-save-only")) {
     await page.goto("https://workspace.test/");
     await page.waitForFunction(() => document.querySelector("app-shell").traffic.queryLoaded);
@@ -10141,6 +10156,7 @@ try {
   assert.equal(await page.locator(".operation-error-dialog[open]").count(), 0);
   await runBrowserCheck(checkLoopback, page, root);
   await runBrowserCheck(checkClientCertificates, page, root);
+  await runBrowserCheck(checkNativeCertificateEditorProbe, page, root);
   await runBrowserCheck(checkExtensions, page, root);
   await runBrowserCheck(checkCopy, page, root);
   await runBrowserCheck(checkAuth, page, root);

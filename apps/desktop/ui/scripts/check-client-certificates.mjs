@@ -1,5 +1,132 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { runInNewContext } from "node:vm";
+
+export async function checkNativeCertificateEditorProbe(page, root) {
+  const source = await readFile(
+    resolve(root, "scripts/check-native-client-certificates.mjs"),
+    "utf8",
+  );
+  const expression = (method, values = {}) => {
+    const matches = source.split("\n").filter((line) => line.includes(`editor.${method}(`));
+    assert.equal(matches.length, 1, `Expected one actual native ${method} expression`);
+    const literal = matches[0].trim().replace(/,$/, "");
+    assert(literal.startsWith("`") && literal.endsWith("`"));
+    return runInNewContext(literal, {
+      shell: "document.querySelector('app-shell')",
+      fixture: { http1: 8443, identity: "windows:first" },
+      route: "http1",
+      commonName: "Native probe renewal",
+      ...values,
+    });
+  };
+  await page.goto("https://workspace.test/");
+  await page.waitForFunction(() => document.querySelector("app-shell")?.traffic?.queryLoaded);
+  await page.evaluate(async () => {
+    const shell = document.querySelector("app-shell");
+    await shell.activateView("settings");
+    shell.settings.showSettingsSection("client-certificates");
+    await shell.settings.$whenRendered();
+    await shell.settings.clientCertificates.load();
+  });
+  const exercise = async (code, label) => {
+    await page.evaluate(() => {
+      const editor = document.querySelector("app-shell").settings.clientCertificates;
+      const controls = editor.certificatePolicyForm.elements;
+      const render = editor.$whenRendered;
+      const own = Object.getOwnPropertyDescriptor(controls, "namedItem");
+      const namedItem = controls.namedItem;
+      let release,
+        first = true;
+      const gate = new Promise((resolve) => (release = resolve));
+      const probe = {
+        release,
+        released: false,
+        reached: false,
+        done: false,
+        error: null,
+        reads: [],
+        renders: [],
+      };
+      Object.defineProperty(controls, "namedItem", {
+        configurable: true,
+        value(name) {
+          if (!probe.released) probe.reads.push(name);
+          return namedItem.call(controls, name);
+        },
+      });
+      editor.$whenRendered = () => {
+        const held = first;
+        first = false;
+        const task = (async () => {
+          await render.call(editor);
+          if (held) {
+            probe.reached = true;
+            await gate;
+          }
+        })();
+        probe.renders.push(task);
+        return task;
+      };
+      probe.restore = async () => {
+        probe.released = true;
+        release();
+        await Promise.all(probe.renders);
+        editor.$whenRendered = render;
+        if (own) Object.defineProperty(controls, "namedItem", own);
+        else delete controls.namedItem;
+      };
+      globalThis.__nativeCertificateProbe = probe;
+    });
+    try {
+      await page.evaluate(
+        `(()=>{const probe=globalThis.__nativeCertificateProbe;probe.operation=${code};probe.operation.then(()=>probe.done=true,error=>probe.error=String(error));})()`,
+      );
+      await page.waitForFunction(() => globalThis.__nativeCertificateProbe.reached);
+      const before = await page.evaluate(() => {
+        const { error, reads } = globalThis.__nativeCertificateProbe;
+        return { error, reads };
+      });
+      assert.equal(before.error, null, `${label} failed before render completion`);
+      assert.deepEqual(
+        before.reads,
+        [],
+        `${label} accessed controls before the editor operation completed`,
+      );
+      await page.evaluate(() => {
+        const probe = globalThis.__nativeCertificateProbe;
+        probe.released = true;
+        probe.release();
+      });
+      await page.waitForFunction(() => {
+        const probe = globalThis.__nativeCertificateProbe;
+        return probe.done || probe.error;
+      });
+      assert.equal(await page.evaluate(() => globalThis.__nativeCertificateProbe.error), null);
+    } finally {
+      await page.evaluate(async () => {
+        const probe = globalThis.__nativeCertificateProbe;
+        await probe.restore();
+        await probe.operation.catch(() => {});
+        delete globalThis.__nativeCertificateProbe;
+      });
+    }
+  };
+  await exercise(expression("addRule"), "Native add host rule");
+  const rule = await page.evaluate(
+    () => document.querySelector("app-shell").settings.clientCertificates.policy.rules[0],
+  );
+  assert.equal(rule.host, "localhost");
+  assert.equal(rule.port, 8443);
+  assert.equal(rule.mode.selector.identity, "windows:first");
+  await exercise(expression("chooseRule", { rule }), "Native select host rule");
+  const selected = await page.evaluate(
+    () => document.querySelector("app-shell").settings.clientCertificates.policy.rules[0],
+  );
+  assert.equal(selected.mode.selector.identity, null);
+  assert.equal(selected.mode.selector.subject.CN, "Native probe renewal");
+}
 
 export async function checkClientCertificates(page, root) {
   for (const width of [1280, 640]) {
