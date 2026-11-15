@@ -328,11 +328,13 @@ impl WindowsProxyIntegration {
     }
 
     fn acquire_lease(&self) -> Result<Vec<File>, WindowsHostError> {
-        let mut leases = Vec::new();
+        // A leased journal requires no recovery. Check it before shared-state
+        // discovery, which can fail or time out. Both locks are nonblocking;
+        // an error acquiring the shared lease drops the journal lease too.
+        let mut leases = vec![lock_file(&self.journal_path.with_extension("lock"))?];
         if let Some(owner) = &self.shared_owner {
             leases.push(owner.lease()?);
         }
-        leases.push(lock_file(&self.journal_path.with_extension("lock"))?);
         Ok(leases)
     }
 
@@ -991,6 +993,40 @@ mod tests {
         });
         let integration = WindowsProxyIntegration::new(backend.clone(), &path);
         (backend, integration, path)
+    }
+
+    #[test]
+    fn busy_journal_does_not_require_shared_owner_discovery() {
+        let (backend, mut integration, path) = adapter("busy-unavailable-owner");
+        let directory = tempfile::tempdir().unwrap();
+        let unavailable = directory.path().join("not-a-directory");
+        fs::write(&unavailable, b"unavailable shared state").unwrap();
+        integration.shared_owner = Some(SharedProxyOwner::new(unavailable));
+        let lease = lock_file(&path.with_extension("lock")).unwrap();
+
+        let result = integration.recover_pending();
+        assert!(
+            matches!(&result, Err(WindowsHostError::ProxyInUse)),
+            "{result:?}"
+        );
+        assert!(backend.writes.lock().unwrap().is_empty());
+        drop(lease);
+    }
+
+    #[test]
+    fn available_journal_still_requires_shared_owner_coordination() {
+        let (backend, mut integration, path) = adapter("available-unavailable-owner");
+        let directory = tempfile::tempdir().unwrap();
+        let unavailable = directory.path().join("not-a-directory");
+        fs::write(&unavailable, b"unavailable shared state").unwrap();
+        integration.shared_owner = Some(SharedProxyOwner::new(unavailable));
+
+        assert!(matches!(
+            integration.recover_pending(),
+            Err(WindowsHostError::Io(_))
+        ));
+        assert!(backend.writes.lock().unwrap().is_empty());
+        let _released_after_error = lock_file(&path.with_extension("lock")).unwrap();
     }
 
     #[test]

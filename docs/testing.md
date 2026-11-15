@@ -91,6 +91,10 @@ The action also exercises literal environment/parameter syntax in paths, and
 maintenance recognizes hidden tasks and tasks saved by an earlier launcher.
 Directory-junction fixtures also verify cleanup uses the original registration
 path, including when the recovery snapshot was already consumed.
+Unit regressions also require a leased journal to be recognized before shared
+user-state discovery. An available journal still requires shared coordination,
+and a coordination failure must release the journal lease without changing proxy
+settings.
 
 ```powershell
 python scripts/dev-env.py --run cargo test --locked -p transmog-host-windows
