@@ -64,6 +64,7 @@ zeroize = "=1.9.1"
 sysinfo = { version = "=0.39.6", default-features = false, features = ["system"] }
 async-compression = { version = "=0.4.51", default-features = false, features = ["brotli", "deflate", "gzip", "tokio", "zlib", "zstd"] }
 base64 = "0.22.1"
+dirs = "=7.0.0"
 boring = { version = "=5.3.0", features = ["credential"] }
 boring-sys = "=5.3.0"
 foreign-types = "=0.5.0"

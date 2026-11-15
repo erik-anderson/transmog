@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
+import { smokeLoopback } from "./smoke-loopback.mjs";
 
 export async function checkLoopback(page, root) {
   await page.evaluate(() => {
@@ -447,4 +448,60 @@ export async function checkLoopback(page, root) {
     manager.loopbackQuery = "";
     manager.clearSelection();
   });
+  await checkNativeInventoryObservation(page);
+}
+
+async function checkNativeInventoryObservation(page) {
+  await page.evaluate(() => {
+    const fixture = globalThis.__workspaceFixture;
+    fixture.deferLoopbackRead = true;
+    fixture.loopbackReadPending = false;
+    fixture.loopbackSmokeReleased = false;
+    document.querySelector("app-shell").settings.loopbackManager.loopbackCurrent = false;
+  });
+  // Control only the smoke's observation clock, avoiding background-tab timer
+  // throttling. The production component, native fixture and smoke source stay real.
+  const evaluate = (expression) =>
+    page.evaluate(`(async()=>{
+    let elapsed=0;
+    const performance={now:()=>elapsed};
+    const setTimeout=(callback,milliseconds)=>{
+      elapsed+=milliseconds;
+      const fixture=globalThis.__workspaceFixture;
+      if(elapsed>=13_000&&fixture.loopbackReadPending&&!fixture.loopbackSmokeReleased){
+        fixture.loopbackSmokeReleased=true;fixture.finishLoopbackRead();
+      }
+      return globalThis.setTimeout(callback,0);
+    };
+    return ${expression};
+  })()`);
+  let result;
+  try {
+    result = await smokeLoopback(undefined, evaluate);
+  } catch (error) {
+    assert.fail("The smoke rejected an in-budget native inventory: " + String(error));
+  } finally {
+    await page.evaluate(() => globalThis.__workspaceFixture.finishLoopbackRead());
+  }
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.loopbackSmokeReleased),
+    true,
+  );
+  assert.ok(result.enumerationMilliseconds >= 13_000);
+  assert.equal(result.readOnly, true);
+  assert.equal(result.multiSelection, true);
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.loopbackReadError = true;
+  });
+  try {
+    await assert.rejects(
+      smokeLoopback(undefined, (expression) => page.evaluate(expression)),
+      /Fixture Windows Firewall unavailable/,
+    );
+  } finally {
+    await page.evaluate(async () => {
+      globalThis.__workspaceFixture.loopbackReadError = false;
+      await document.querySelector("app-shell").settings.loopbackManager.refresh();
+    });
+  }
 }

@@ -14,5 +14,8 @@ thiserror.workspace = true
 tempfile.workspace = true
 transmog-session = { version = "=0.1.26", path = "../proxy-session" }
 
+[target.'cfg(windows)'.dependencies]
+dirs.workspace = true
+
 [lints]
 workspace = true

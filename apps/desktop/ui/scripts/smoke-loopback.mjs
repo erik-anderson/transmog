@@ -7,9 +7,13 @@ export async function smokeLoopback(call, evaluate, screenshotPath) {
       globalThis.__loopbackProbe={view:shell.activeView,section:settings.settingsSection};
       shell.shadowRoot.querySelector('a[data-view="settings"]').click();settings.showSettingsSection('connection');await settings.$whenRendered();
       const button=[...settings.querySelectorAll('button')].find(button=>button.textContent==='Manage loopback exemptions…');button.focus();button.click();
-      for(let index=0;index<120&&manager.loopbackBusy;index++)await new Promise(resolve=>setTimeout(resolve,100));
-      if(manager.loopbackBusy||manager.loopbackError||!manager.loopbackCurrent)throw new Error('Native AppContainer enumeration failed: '+manager.loopbackError);
+      // Native enumeration has a 45-second command deadline. Observe that full
+      // budget plus bounded IPC/render reporting, including deferred click delivery.
+      const started=performance.now(),deadline=started+60_000;
+      while((manager.loopbackBusy||(!manager.loopbackCurrent&&!manager.loopbackError)||!manager.exemptionDialog.matches(':modal'))&&performance.now()<deadline)await new Promise(resolve=>setTimeout(resolve,100));
+      if(manager.loopbackBusy||manager.loopbackError||!manager.loopbackCurrent)throw new Error('Native AppContainer enumeration failed: '+JSON.stringify({elapsedMs:performance.now()-started,busy:manager.loopbackBusy,current:manager.loopbackCurrent,error:manager.loopbackError,nativeLimitSeconds:45,observerLimitSeconds:60}));
       if(!manager.exemptionDialog.matches(':modal'))throw new Error('Loopback manager did not open as a modal');
+      await manager.$whenRendered();
       const count=manager.loopbackRows.length;
       if(count){const cells=manager.containerTable.querySelector('tbody tr').children;if(getComputedStyle(cells[3]).whiteSpace!=='normal'||getComputedStyle(cells[7]).whiteSpace!=='pre-wrap')throw new Error('Native AppContainer metadata is truncated instead of wrapped');}
       if(new Set(manager.loopbackRows.map(row=>row.sid)).size!==count)throw new Error('AppContainers were not grouped by SID');
@@ -26,7 +30,7 @@ export async function smokeLoopback(call, evaluate, screenshotPath) {
       filter.click();manager.selectMatching();await manager.$whenRendered();
       for(const heading of ['Display Name','Description','Package','AppContainer name','AppContainer SID','AppContainer user(s)'])if(!manager.exemptionDialog.textContent.includes(heading))throw new Error('Missing column '+heading);
       const scroller=manager.querySelector('.loopback-table-scroll');if(count>30&&scroller.scrollHeight<=scroller.clientHeight)throw new Error('Populated native AppContainers did not scroll');
-      return {enumerated:count,exempt,groupedUsers:true,multiSelection:true,selectionActions:true,exemptFilter:true,columns:true,readOnly:true};
+      return {enumerated:count,exempt,groupedUsers:true,multiSelection:true,selectionActions:true,exemptFilter:true,columns:true,readOnly:true,enumerationMilliseconds:performance.now()-started};
     })()`);
     if (screenshotPath)
       await writeFile(

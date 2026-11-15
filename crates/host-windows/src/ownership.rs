@@ -41,14 +41,9 @@ impl SharedProxyOwner {
             return Ok(root);
         }
         // HKCU proxy settings are shared even when a caller overrides
-        // LOCALAPPDATA for an isolated product profile. Use the OS known folder.
-        let json = crate::run_script_bounded(
-            "[Environment]::GetFolderPath('LocalApplicationData') | ConvertTo-Json -Compress",
-            None,
-            std::time::Duration::from_secs(10),
-        )?;
-        let root: String = serde_json::from_str(&json).map_err(WindowsHostError::Journal)?;
-        let root = PathBuf::from(root);
+        // LOCALAPPDATA for an isolated product profile. Read the OS known folder
+        // directly; locating shared state must not depend on a PowerShell process.
+        let root = current_user_data_directory()?;
         if !root.is_absolute() {
             return Err(WindowsHostError::InvalidJournal);
         }
@@ -119,6 +114,16 @@ impl SharedProxyOwner {
         }
         Ok(())
     }
+}
+
+#[cfg(windows)]
+fn current_user_data_directory() -> Result<PathBuf, WindowsHostError> {
+    dirs::data_local_dir().ok_or(WindowsHostError::InvalidJournal)
+}
+
+#[cfg(not(windows))]
+fn current_user_data_directory() -> Result<PathBuf, WindowsHostError> {
+    Err(WindowsHostError::UnsupportedPlatform)
 }
 
 pub(crate) fn same_path(left: &Path, right: &Path) -> bool {
@@ -210,4 +215,40 @@ fn write_json(path: &Path, value: &impl Serialize, replace: bool) -> Result<(), 
             .map_err(|error| WindowsHostError::Io(error.error))?;
     }
     Ok(())
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::SharedProxyOwner;
+
+    #[test]
+    fn current_user_root_ignores_profile_and_command_search_overrides() {
+        const EXPECTED: &str = "TRANSMOG_TEST_EXPECTED_PROXY_OWNER_ROOT";
+        let owner = SharedProxyOwner::current_user();
+        let root = owner.root().expect("resolve the Windows known folder");
+        if let Some(expected) = std::env::var_os(EXPECTED) {
+            assert_eq!(root, std::path::Path::new(&expected));
+            assert!(!root.starts_with(std::env::var_os("LOCALAPPDATA").unwrap()));
+            return;
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "ownership::tests::current_user_root_ignores_profile_and_command_search_overrides",
+                "--nocapture",
+            ])
+            .env(EXPECTED, root)
+            .env("LOCALAPPDATA", directory.path())
+            .env("PATH", directory.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success()
+                && String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }

@@ -95,6 +95,9 @@ Unit regressions also require a leased journal to be recognized before shared
 user-state discovery. An available journal still requires shared coordination,
 and a coordination failure must release the journal lease without changing proxy
 settings.
+Windows known-folder coverage also runs an isolated library-test process with
+overridden `LOCALAPPDATA` and an empty command search path. Shared proxy ownership
+must still use the same OS user directory without starting PowerShell.
 
 ```powershell
 python scripts/dev-env.py --run cargo test --locked -p transmog-host-windows
@@ -153,6 +156,13 @@ clean up their subprocesses. See [MCP setup](mcp.md) and
 [connector contracts](mcp-reference.md#connector-lifetime).
 
 ## Desktop and capture workflows
+
+The native loopback inventory smoke observes the Windows enumeration command's
+45-second budget plus bounded IPC and rendering time. It records elapsed time
+and pending/error state, still rejects native errors and stuck operations, and
+does not change exemptions. The browser regression exercises the actual smoke
+against the production dialog with a result delayed beyond its former 12-second
+observation window.
 
 Auth fixtures run with `cargo test -p transmog-auth` and the application auth
 tests. The ordinary browser gate includes masking, reveal/copy, stale replies,
