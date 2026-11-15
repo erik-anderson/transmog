@@ -62,6 +62,7 @@ jobs:
         timeout-minutes: 20
         run: |
           . ./scripts/dev-env.ps1 -Target aarch64-pc-windows-msvc
+          $PSNativeCommandUseErrorActionPreference = $false
           $results = @()
           foreach ($kind in @('original','unique')) {
             $env:CARGO_BIN_EXE_transmog = if ($kind -eq 'original') { $env:PROBE_ORIGINAL_EXE } else { $env:PROBE_VARIANT_EXE }
@@ -70,6 +71,8 @@ jobs:
             $results += @{ kind=$kind; exitCode=$LASTEXITCODE }
           }
           $results | ConvertTo-Json | Set-Content artifacts/proxy-recovery-native-harness/original-results.json
+          # Retain both failure codes and continue to the diagnostic capture case.
+          exit 0
       - name: Add diagnostic stream capture to the owned task and repeat the same assertions
         timeout-minutes: 10
         run: |
