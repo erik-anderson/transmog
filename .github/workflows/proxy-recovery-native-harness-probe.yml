@@ -58,22 +58,7 @@ jobs:
           @{ checkoutSource=(git rev-parse HEAD); workflowSource=$env:GITHUB_SHA; run=$env:GITHUB_RUN_ID; originalDebugSource='673364e3fe626d52a4ed16e585e031e9da7130c3'; originalDebugRun=43657175707; originalDebugArtifact=14139171363; originalHash=(Get-FileHash $exe).Hash; variantHash=(Get-FileHash $variant).Hash; variantOnlyChange='Four COFF timestamp bytes; diagnostic only, never a release input'; testSourceHash=(Get-FileHash apps/desktop/tests/proxy_recovery_task.rs).Hash } | ConvertTo-Json | Set-Content (Join-Path $out identity.json)
           "PROBE_ORIGINAL_EXE=$exe" | Add-Content $env:GITHUB_ENV
           "PROBE_VARIANT_EXE=$variant" | Add-Content $env:GITHUB_ENV
-      - name: Run the original complete fixture for known and new image hashes
-        timeout-minutes: 20
-        run: |
-          . ./scripts/dev-env.ps1 -Target aarch64-pc-windows-msvc
-          $PSNativeCommandUseErrorActionPreference = $false
-          $results = @()
-          foreach ($kind in @('original','unique')) {
-            $env:CARGO_BIN_EXE_transmog = if ($kind -eq 'original') { $env:PROBE_ORIGINAL_EXE } else { $env:PROBE_VARIANT_EXE }
-            $env:TRANSMOG_TEST_TASK_DIAGNOSTICS = Join-Path $PWD "artifacts/proxy-recovery-native-harness/$kind"
-            & cargo test -p transmog-host-windows --all-features --locked --test recovery_native_probe -- --ignored --nocapture *> "artifacts/proxy-recovery-native-harness/$kind.log"
-            $results += @{ kind=$kind; exitCode=$LASTEXITCODE }
-          }
-          $results | ConvertTo-Json | Set-Content artifacts/proxy-recovery-native-harness/original-results.json
-          # Retain both failure codes and continue to the diagnostic capture case.
-          exit 0
-      - name: Add diagnostic stream capture to the owned task and repeat the same assertions
+      - name: Capture the first complete fixture invocation with the unchanged application
         timeout-minutes: 10
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
@@ -109,6 +94,7 @@ jobs:
           $observer = [IO.File]::ReadAllText($helper)
           $copyStreams = @'
           $payload = $definition.RegistrationInfo.Documentation | ConvertFrom-Json
+          $null = [IO.Directory]::CreateDirectory($env:TRANSMOG_TEST_TASK_DIAGNOSTICS)
           foreach ($suffix in @('native-stdout.txt','native-stderr.txt')) {
               $path = [IO.Path]::ChangeExtension($payload.journal, $suffix)
               if ([IO.File]::Exists($path)) { [IO.File]::Copy($path, (Join-Path $env:TRANSMOG_TEST_TASK_DIAGNOSTICS ([Guid]::NewGuid().ToString('N') + '-' + $suffix)), $true) }
@@ -116,7 +102,7 @@ jobs:
           '@
           $observer = $observer.Replace('$json = $record | ConvertTo-Json -Depth 8', $copyStreams + [Environment]::NewLine + '$json = $record | ConvertTo-Json -Depth 8')
           [IO.File]::WriteAllText($helper, $observer, [Text.UTF8Encoding]::new($false))
-          $env:CARGO_BIN_EXE_transmog = $env:PROBE_VARIANT_EXE
+          $env:CARGO_BIN_EXE_transmog = $env:PROBE_ORIGINAL_EXE
           $env:TRANSMOG_TEST_TASK_DIAGNOSTICS = Join-Path $PWD 'artifacts/proxy-recovery-native-harness/captured'
           & cargo test -p transmog-host-windows --all-features --locked --test recovery_native_probe -- --ignored --nocapture *> artifacts/proxy-recovery-native-harness/captured.log
       - name: Retain full fixture and recovery diagnostics only
