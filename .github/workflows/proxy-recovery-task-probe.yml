@@ -1,0 +1,71 @@
+name: Isolated proxy recovery task diagnosis
+
+on:
+  push:
+    branches: [codex/proxy-recovery-task-probe]
+    paths:
+      - .github/workflows/proxy-recovery-task-probe.yml
+      - scripts/probe-proxy-recovery-task.ps1
+
+permissions: {}
+jobs:
+  probe:
+    if: github.repository == 'erik-anderson/transmog'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: windows-2025
+            artifact: '14136922769'
+            digest: fbb1d2ac8a544520b53796cb72e83520703b522da646c4f050c39fcfe5324c52
+            manifest: 948e98b20c16aa55411be4525cbe8985084e820e2cfc6570296b1d3323b20993
+            target: x86_64-pc-windows-msvc
+          - arch: arm64
+            runner: windows-11-arm
+            artifact: '14136683241'
+            digest: 51c1c0a074f3e740246b0a357a38f76683c63c80dfe832e579286ec4bf5a4633
+            manifest: 48e4cba93ac4ad938e91681a23f018531c258739db8e22424853b7d5540f6a02
+            target: aarch64-pc-windows-msvc
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check original immutable producer identity
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ matrix.artifact }}
+          ARTIFACT_DIGEST: ${{ matrix.digest }}
+        run: |
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json' }
+          $a = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/erik-anderson/transmog/actions/artifacts/$env:ARTIFACT_ID"
+          if ($a.expired -or $a.workflow_run.id -ne 43648981179 -or $a.workflow_run.head_sha -cne '37e8290627dd38faf7279b3d592cc0bd368d1813' -or $a.digest -cne "sha256:$env:ARTIFACT_DIGEST") { throw 'Original compiled artifact identity mismatch.' }
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ matrix.artifact }}
+          run-id: '43648981179'
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: artifacts/probe-payload
+      - name: Diagnose scheduled and direct headless launch without proxy writes
+        shell: pwsh
+        env:
+          EXPECTED_MANIFEST: ${{ matrix.manifest }}
+          EXPECTED_TARGET: ${{ matrix.target }}
+        run: |
+          & "$env:WINDIR/System32/WindowsPowerShell/v1.0/powershell.exe" -NoLogo -NoProfile -NonInteractive -File scripts/probe-proxy-recovery-task.ps1
+          if ($LASTEXITCODE -ne 0) { throw "Probe failed: $LASTEXITCODE" }
+      - name: Retain diagnosis (never release or native-proof evidence)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: proxy-recovery-task-probe-${{ matrix.arch }}-${{ github.run_id }}
+          path: artifacts/proxy-recovery-task-probe
+          if-no-files-found: error
+          retention-days: 14
