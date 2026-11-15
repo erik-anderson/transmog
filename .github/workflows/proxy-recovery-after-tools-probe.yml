@@ -1,0 +1,60 @@
+name: ARM64 recovery before and after native tool setup
+on:
+  push:
+    branches: [codex/proxy-recovery-task-probe]
+    paths:
+      - .github/workflows/proxy-recovery-after-tools-probe.yml
+      - scripts/probe-proxy-recovery-after-tools.ps1
+permissions: {}
+defaults:
+  run:
+    shell: pwsh
+jobs:
+  compare:
+    runs-on: windows-11-arm
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Verify the immutable diagnostic debug binary origin
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $h = @{Authorization="Bearer $env:GH_TOKEN"; Accept='application/vnd.github+json'}
+          $a = Invoke-RestMethod -Headers $h -Uri 'https://api.github.com/repos/erik-anderson/transmog/actions/artifacts/14139171363'
+          if ($a.expired -or $a.workflow_run.id -ne 43657175707 -or $a.workflow_run.head_sha -cne '673364e3fe626d52a4ed16e585e031e9da7130c3' -or $a.digest -cne 'sha256:12f5c9e93b548650c756e516f579e18d456a4845bbb4cb6a60ccc44f93a70aad') { throw 'Debug producer identity mismatch.' }
+          $j = Invoke-RestMethod -Headers $h -Uri 'https://api.github.com/repos/erik-anderson/transmog/actions/jobs/132638183392'
+          if ($j.head_sha -cne $a.workflow_run.head_sha -or @($j.steps | Where-Object { $_.name -eq 'Compile the original native test feature graph' -and $_.conclusion -eq 'success' }).Count -ne 1) { throw 'Successful native debug compilation not verified.' }
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: '14139171363'
+          run-id: '43657175707'
+          github-token: ${{ github.token }}
+          path: artifacts/native-debug
+      - name: Capture recovery stdout and stderr before tool setup
+        run: |
+          & "$env:WINDIR/System32/WindowsPowerShell/v1.0/powershell.exe" -NoLogo -NoProfile -NonInteractive -File scripts/probe-proxy-recovery-after-tools.ps1 -Phase before-tools
+          if ($LASTEXITCODE -ne 0) { throw "Baseline recovery failed: $LASTEXITCODE" }
+      - uses: ./.github/actions/windows-release-setup
+        timeout-minutes: 10
+        with:
+          target: aarch64-pc-windows-msvc
+      - name: Capture recovery after the exact native setup without compiling
+        run: |
+          & "$env:WINDIR/System32/WindowsPowerShell/v1.0/powershell.exe" -NoLogo -NoProfile -NonInteractive -File scripts/probe-proxy-recovery-after-tools.ps1 -Phase after-tools
+          if ($LASTEXITCODE -ne 0) { throw "Post-setup recovery failed: $LASTEXITCODE" }
+      - name: Retain diagnostic evidence only
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: proxy-recovery-task-probe-after-tools-${{ github.run_id }}
+          path: |
+            artifacts/proxy-recovery-after-tools/
+            artifacts/windows-msvc.json
+          if-no-files-found: error
+          retention-days: 14
