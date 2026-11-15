@@ -33,9 +33,35 @@ for ($page = 1; ; $page++) {
 }
 $existing = @($releases | Where-Object tag_name -CEQ $tag)
 if ($existing.Count -gt 1 -or ($existing.Count -eq 1 -and -not $existing[0].draft)) { throw "Refusing to overwrite a published or ambiguous release: $tag" }
+$downloadBase = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$tag"
+$installerRows = foreach ($arch in @('x64', 'arm64')) {
+    $target = if ($arch -ceq 'x64') { 'x86_64-pc-windows-msvc' } else { 'aarch64-pc-windows-msvc' }
+    $package = $manifest.Packages | Where-Object Target -CEQ $target
+    $label = if ($arch -ceq 'x64') { 'x64 (Intel / AMD)' } else { 'ARM64' }
+    "| $label | **[Download for Windows $arch]($downloadBase/$([Uri]::EscapeDataString($package.Installer)))** |"
+}
+$notes = @(
+    '## Download for Windows'
+    ''
+    '| Windows PC | Signed installer |'
+    '| --- | --- |'
+    $installerRows
+    ''
+    "The installer includes the desktop app and command-line tool. Publisher: $($manifest.Publisher)."
+    ''
+    'Standalone CLI, checksums, symbols, and verification reports are in **Assets** below.'
+    ''
+    '## Release notes'
+    ''
+    'Before publishing, describe the changes in this release. Keep the download links above.'
+    ''
+    '## Build verification'
+    ''
+    "Build, Authenticode/timestamp checks, native hosted installer smoke tests, Azure permission denial tests, and provenance verification passed in [run $env:GITHUB_RUN_ID](https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID). Source commit: $env:GITHUB_SHA."
+) -join "`n"
 $body = @{
     tag_name = $tag; target_commitish = $env:GITHUB_SHA; name = "Transmog $tag" + $(if ($manifest.ReleaseType -cne 'Stable') { " $($manifest.ReleaseType)" }); draft = $true; prerelease = ($manifest.ReleaseType -cne 'Stable')
-    body = "Signed Windows x64 and ARM64 NSIS installers, with standalone transmog-cli.exe (x64) and transmog-cli-arm64.exe. Publisher: $($manifest.Publisher).`n`nBuild, Authenticode/timestamp checks, native hosted installer smoke tests, Azure permission denial tests, and provenance verification passed in [run $env:GITHUB_RUN_ID](https://github.com/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID). Source commit: $env:GITHUB_SHA.`n`nBefore publishing, add release notes, review the installers, and choose whether this is a prerelease."
+    body = $notes
 } | ConvertTo-Json
 if ($existing.Count -eq 1) {
     $release = Invoke-RestMethod -Method Patch -Uri "$api/releases/$($existing[0].id)" -Headers $headers -ContentType 'application/json' -Body $body

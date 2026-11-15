@@ -135,6 +135,13 @@ try {
             if ($publicationFixture.Body.prerelease -ne ($type -cne 'Stable') -or $publicationFixture.Uploads -ne $expectedAssets) { throw 'Wrong release track flags or asset count.' }
             if ($publicationFixture.ExistingDraft -and ($publicationFixture.Deleted -join ',') -cne '777,778') { throw 'The rebuilt draft retained obsolete or replaced assets.' }
             if ($publicationFixture.Body.body -match '(?is)(?:checklist.{0,120}defer|defer.{0,120}checklist)') { throw 'Release notes contain an internal checklist deferral.' }
+            $notes = $publicationFixture.Body.body
+            if (-not $notes.StartsWith('## Download for Windows')) { throw 'Installers must lead the release notes.' }
+            foreach ($arch in @('x64', 'arm64')) {
+                $link = "https://github.com/erik-anderson/transmog/releases/download/v0.1.0/Transmog_0.1.0_$arch-setup.exe"
+                if (-not $notes.Contains($link) -or $notes.IndexOf($link) -gt $notes.IndexOf('## Release notes')) { throw "Missing prominent $arch installer download." }
+            }
+            if ($notes.Contains('/releases/latest')) { throw 'Canary downloads must not depend on GitHub Latest.' }
         }
         Write-Host 'Beta, Stable, and Canary publication retain drafts, source pins, assets, and expected prerelease flags.'
     } finally { $env:GITHUB_STEP_SUMMARY = $priorSummary }

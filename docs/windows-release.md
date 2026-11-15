@@ -407,7 +407,8 @@ build.
    draft and assets; repeat your review using the replacement installer. Do not
    edit release notes until the final candidate, since rebuilding resets them.
 
-6. Edit the **existing draft**, add release notes, and choose **This is a
+6. Edit the **existing draft**, keep the generated installer download table at
+   the top, replace the release-notes placeholder, and choose **This is a
    pre-release** for a Beta or Canary, or clear it for Stable. The workflow sets
    that flag from the selected release type. For Stable, choose **Set as latest release**
    if appropriate. Keep the generated tag/version and the pinned source commit;
@@ -578,6 +579,32 @@ pwsh ./scripts/package-windows.ps1 `
   -SigningCertificateThumbprint 0123456789ABCDEF0123456789ABCDEF01234567 `
   -Offline
 ```
+
+## Release download links
+
+The README's **Download the latest Canary for Windows** link opens the rolling
+[`canary` release](https://github.com/erik-anderson/transmog/releases/tag/canary).
+Its download table links directly to the newest published Canary's signed x64
+and ARM64 installers, using the published assets selected by its updater
+manifest. Older releases with only one architecture show only that installer.
+Missing or unfinished installer uploads stop synchronization before changing
+the rolling page or feed. Release notes and the full asset list stay on the
+versioned release; users do not need to search through symbols and qualification
+reports to find an installer. Each new signed draft also starts with an installer
+download table, which must be preserved when editing its release notes.
+
+GitHub's native **Latest** pointer excludes prereleases. Keep Canaries marked
+as prereleases and use the README link while only Canaries are available; see
+[GitHub's release API](https://docs.github.com/en/rest/releases/releases#update-a-release).
+The release maintenance workflow refreshes the rolling release's title and
+download links along with its updater manifest after publication or a release
+edit. An unchanged updater manifest is preserved even when the download text
+needs refreshing. Installers remain attached to their versioned releases.
+
+After merging download-page changes to `main`, re-run the `canary-updates` job
+from an existing **Maintain release and Canary versions** release-event run to
+refresh the current page immediately. That job loads its implementation from
+`main`; no new version, installer build, or signing request is needed.
 
 ## Desktop update feed
 

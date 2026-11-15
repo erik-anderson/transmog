@@ -9,6 +9,13 @@ responses, pause and edit exchanges, replay requests, and save traces for later.
 The Windows desktop uses Evergreen WebView2. The Rust engine and headless tools
 also run in the Linux test gate; Linux and macOS desktop products are not qualified.
 
+**[Download the latest Canary for Windows](https://github.com/erik-anderson/transmog/releases/tag/canary)**
+
+Only Canary prereleases are available for now. The download page links directly
+to the signed **x64** (Intel / AMD) and **ARM64** installers. The installer also
+includes the command-line tool. See [all releases](https://github.com/erik-anderson/transmog/releases)
+for older versions, standalone CLI downloads, and release evidence.
+
 > **MCP support:** Let agents inspect live traffic or private capture files and
 > collaborate on rules through local, scoped access keys. [Set up an agent](docs/mcp.md).
 

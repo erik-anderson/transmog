@@ -40,7 +40,7 @@ jobs:
         with:
           ref: main
           persist-credentials: false
-      - name: Point Canary clients at the newest published Canary manifest
+      - name: Refresh the newest Canary downloads and updater manifest
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: python ./scripts/sync-canary-update-feed.py

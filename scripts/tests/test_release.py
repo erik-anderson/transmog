@@ -16,6 +16,20 @@ from release_version import State, assert_source_branch, main_line_decision, nex
 from test_tools import load
 
 
+def canary_installers(version, architectures=("x64", "arm64")):
+    return [dict(name=f"Transmog_{version}_{architecture}-setup.exe", state="uploaded",
+                 browser_download_url=f"https://github.com/fixture/repository/releases/download/v{version}/Transmog_{version}_{architecture}-setup.exe")
+            for architecture in architectures]
+
+
+def canary_update(version, architectures=("x64", "arm64")):
+    platforms = {"x64": "windows-x86_64-nsis", "arm64": "windows-aarch64-nsis"}
+    return json.dumps({"version": version, "platforms": {
+        platforms[architecture]: {"url": asset["browser_download_url"], "signature": "fixture signature"}
+        for architecture, asset in zip(architectures, canary_installers(version, architectures))
+    }}).encode()
+
+
 class ReleaseDecisions(unittest.TestCase):
     def test_release_download_redirect_cannot_forward_api_credentials(self):
         from github_release import ReleaseRedirect
@@ -78,22 +92,25 @@ class ReleaseDecisions(unittest.TestCase):
             module.synchronize("fixture/repository", api)
             self.assertEqual(mutations, [] if latest_id == 10 else [("https://api.github.com/repos/fixture/repository/releases/10", {"make_latest": "true"})])
 
-    def test_canary_feed_selects_highest_canary_and_keeps_beta_or_untyped_releases_out(self):
+    def test_canary_feed_paginates_and_selects_highest_canary_without_beta_or_legacy_tags(self):
         module = load("sync-canary-update-feed")
         base = "https://api.github.com/repos/fixture/repository"
-        updates = {"0.2.0": b'{"version":"0.2.0"}', "0.2.1": b'{"version":"0.2.1"}'}
+        updates = {version: canary_update(version) for version in ("0.2.0", "0.2.1")}
         manifest = lambda version, release_type: json.dumps({"Version": version, "ReleaseType": release_type,
                                                               "Commit": ("a" if version == "0.2.0" else "b") * 40}).encode()
         releases = [
-            dict(tag_name="v0.2.0", id=20, prerelease=True, assets=[dict(name="release-manifest.json", id=200), dict(name="latest.json", id=201)]),
-            dict(tag_name="v0.2.1", id=21, prerelease=True, assets=[dict(name="release-manifest.json", id=210), dict(name="latest.json", id=211)]),
+            dict(tag_name="v0.2.0", id=20, prerelease=True, assets=[dict(name="release-manifest.json", id=200), dict(name="latest.json", id=201)] + canary_installers("0.2.0")),
+            dict(tag_name="v0.2.1", id=21, prerelease=True, assets=[dict(name="release-manifest.json", id=210), dict(name="latest.json", id=211)] + canary_installers("0.2.1")),
             dict(tag_name="v9.0.0", id=90, prerelease=True, assets=[dict(name="release-manifest.json", id=900), dict(name="latest.json", id=901)]),
             dict(tag_name="v9.0.1", id=91, prerelease=True, assets=[dict(name="release-manifest.json", id=910), dict(name="latest.json", id=911)]),
+            dict(tag_name="canary", id=30, prerelease=True, assets=[dict(name="release-manifest.json", id=300), dict(name="latest.json", id=301)]),
+            dict(tag_name="v0.02.2", id=31, prerelease=True, assets=[dict(name="release-manifest.json", id=310), dict(name="latest.json", id=311)]),
         ]
         mutations, uploads = [], []
         def api(url, **kwargs):
-            if url == base + "/releases?per_page=100&page=1": return releases
-            if url.endswith("page=2"): return []
+            if url == base + "/releases?per_page=100&page=1":
+                return releases[:1] + [dict(tag_name=f"v20.0.{index}", draft=True) for index in range(99)]
+            if url.endswith("page=2"): return releases[1:]
             if url.endswith("/releases/tags/canary"): return None
             if url.endswith("/git/ref/tags/canary"): return None
             if url.endswith("/releases/assets/200"): return manifest("0.2.0", "Canary")
@@ -111,16 +128,78 @@ class ReleaseDecisions(unittest.TestCase):
             self.fail(f"Unexpected fixture request: {url}")
         module.synchronize("fixture/repository", api, lambda url, name, payload: uploads.append((url, name, payload)))
         self.assertEqual(mutations[0][1]["sha"], "b" * 40)
+        details = mutations[1][1]
+        self.assertEqual(details["name"], "Latest Canary: v0.2.1")
+        self.assertTrue(details["prerelease"])
+        self.assertEqual(details["make_latest"], "false")
+        for arch in ("x64", "arm64"):
+            self.assertIn(f"https://github.com/fixture/repository/releases/download/v0.2.1/Transmog_0.2.1_{arch}-setup.exe", details["body"])
+        self.assertIn("https://github.com/fixture/repository/releases/tag/v0.2.1", details["body"])
+        self.assertNotIn("/releases/latest", details["body"])
         self.assertEqual(uploads, [("https://uploads.github.com/feed", "latest.json", updates["0.2.1"])])
+
+    def test_canary_downloads_use_published_urls_and_support_single_architecture_releases(self):
+        module = load("sync-canary-update-feed")
+        for architectures in (("x64", "arm64"), ("x64",), ("arm64",)):
+            with self.subTest(architectures=architectures):
+                installers = canary_installers("0.2.1", architectures)
+                update = json.loads(canary_update("0.2.1", architectures))
+                for asset, entry in zip(installers, update["platforms"].values()):
+                    asset["name"] = "download-" + asset["name"]
+                    asset["browser_download_url"] = asset["browser_download_url"].replace("/Transmog_", "/download-Transmog_")
+                    entry["url"] = asset["browser_download_url"]
+                payload = json.dumps(update).encode()
+                release = dict(tag_name="v0.2.1", prerelease=True, assets=[
+                    dict(name="release-manifest.json", id=210), dict(name="latest.json", id=211)] + installers)
+                details, uploads = [], []
+                def api(url, **kwargs):
+                    method = kwargs.get("method", "GET")
+                    if url.endswith("/releases?per_page=100&page=1"): return [release]
+                    if url.endswith("/releases/assets/210"):
+                        return json.dumps(dict(Version="0.2.1", ReleaseType="Canary", Commit="b" * 40)).encode()
+                    if url.endswith("/releases/assets/211"): return payload
+                    if url.endswith(("/releases/tags/canary", "/git/ref/tags/canary")): return None
+                    if url.endswith("/git/refs") and method == "POST": return {}
+                    if url.endswith("/releases") and method == "POST":
+                        details.append(kwargs["data"])
+                        return dict(upload_url="https://uploads.github.com/feed{?name}", assets=[])
+                    self.fail(f"Unexpected fixture request: {method} {url}")
+                module.synchronize("fixture/repository", api, lambda url, name, data: uploads.append(data))
+                for asset in installers:
+                    self.assertIn(asset["browser_download_url"], details[0]["body"])
+                for architecture in {"x64", "ARM64"} - {item if item == "x64" else "ARM64" for item in architectures}:
+                    self.assertNotIn(f"Download for Windows {architecture}", details[0]["body"])
+                self.assertEqual(uploads, [payload])
+
+    def test_canary_downloads_reject_unavailable_assets_before_changing_feed(self):
+        module = load("sync-canary-update-feed")
+        for problem in ("missing", "unfinished", "foreign-url", "no-platforms"):
+            with self.subTest(problem=problem):
+                installers = canary_installers("0.2.1")
+                update = json.loads(canary_update("0.2.1"))
+                if problem == "missing": installers.pop()
+                if problem == "unfinished": installers[-1]["state"] = "starter"
+                if problem == "foreign-url": update["platforms"]["windows-aarch64-nsis"]["url"] = "https://example.invalid/installer.exe"
+                if problem == "no-platforms": update.pop("platforms")
+                release = dict(tag_name="v0.2.1", prerelease=True, assets=[
+                    dict(name="release-manifest.json", id=210), dict(name="latest.json", id=211)] + installers)
+                def api(url, **kwargs):
+                    if url.endswith("/releases?per_page=100&page=1"): return [release]
+                    if url.endswith("/releases/assets/210"):
+                        return json.dumps(dict(Version="0.2.1", ReleaseType="Canary", Commit="b" * 40)).encode()
+                    if url.endswith("/releases/assets/211"): return json.dumps(update).encode()
+                    self.fail(f"An invalid download reached feed mutation: {url}")
+                with self.assertRaisesRegex(ValueError, "missing its published Windows|no Windows installer"):
+                    module.synchronize("fixture/repository", api, lambda *args: self.fail("Do not upload an invalid feed"))
 
     def test_canary_feed_recovers_independent_tag_release_and_asset_states(self):
         module = load("sync-canary-update-feed")
         base = "https://api.github.com/repos/fixture/repository"
         commit = "b" * 40
-        payload = b'{"version":"0.2.1"}'
+        payload = canary_update("0.2.1")
         manifest = json.dumps({"Version": "0.2.1", "ReleaseType": "Canary", "Commit": commit}).encode()
         release = dict(tag_name="v0.2.1", id=21, prerelease=True, assets=[
-            dict(name="release-manifest.json", id=210), dict(name="latest.json", id=211)])
+            dict(name="release-manifest.json", id=210), dict(name="latest.json", id=211)] + canary_installers("0.2.1"))
         for has_release, tag, content in (
             (False, commit, None),  # A deleted rolling release leaves its tag.
             (False, "a" * 40, None),
@@ -131,7 +210,9 @@ class ReleaseDecisions(unittest.TestCase):
             (True, commit, None),  # Recover an interrupted asset replacement.
         ):
             with self.subTest(has_release=has_release, tag=tag, content=content):
-                state = {"tag": tag, "release": has_release, "content": content}
+                state = {"tag": tag, "release": has_release, "content": content,
+                         "details": {"name": "Canary update feed", "body": "Old updater-only description.",
+                                     "draft": False, "prerelease": True}}
                 mutations, uploads = [], []
                 def api(url, **kwargs):
                     method = kwargs.get("method", "GET")
@@ -146,7 +227,7 @@ class ReleaseDecisions(unittest.TestCase):
                         self.assertTrue(kwargs.get("binary"))
                         return payload
                     if url.endswith("/releases/tags/canary"):
-                        return {"upload_url": "https://uploads.github.com/feed{?name}", "assets":
+                        return {**state["details"], "id": 30, "upload_url": "https://uploads.github.com/feed{?name}", "assets":
                                 [] if state["content"] is None else [dict(name="latest.json", id=300)]} if state["release"] else None
                     if url.endswith("/git/ref/tags/canary"):
                         return {"object": {"sha": state["tag"]}} if state["tag"] else None
@@ -165,7 +246,15 @@ class ReleaseDecisions(unittest.TestCase):
                         self.assertEqual(kwargs["data"]["make_latest"], "false")
                         self.assertTrue(kwargs["data"]["prerelease"])
                         state["release"] = True
+                        state["details"] = kwargs["data"]
                         return {"upload_url": "https://uploads.github.com/feed{?name}", "assets": []}
+                    if url.endswith("/releases/30") and method == "PATCH":
+                        self.assertEqual(kwargs["data"]["tag_name"], "canary")
+                        self.assertEqual(kwargs["data"]["target_commitish"], commit)
+                        self.assertEqual(kwargs["data"]["make_latest"], "false")
+                        self.assertTrue(kwargs["data"]["prerelease"])
+                        state["details"] = kwargs["data"]
+                        return {}
                     if url.endswith("/releases/assets/300"):
                         if method == "DELETE":
                             state["content"] = None
@@ -179,7 +268,11 @@ class ReleaseDecisions(unittest.TestCase):
                     uploads.append(data)
                     state["content"] = data
                 module.synchronize("fixture/repository", api, upload)
-                self.assertEqual(state, {"tag": commit, "release": True, "content": payload})
+                self.assertEqual({key: state[key] for key in ("tag", "release", "content")},
+                                 {"tag": commit, "release": True, "content": payload})
+                self.assertEqual(state["details"]["name"], "Latest Canary: v0.2.1")
+                for arch in ("x64", "arm64"):
+                    self.assertIn(f"/releases/download/v0.2.1/Transmog_0.2.1_{arch}-setup.exe", state["details"]["body"])
                 self.assertEqual(len(uploads), 0 if has_release and content == payload else 1)
                 mutations.clear()
                 uploads.clear()

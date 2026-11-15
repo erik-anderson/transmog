@@ -1,4 +1,4 @@
-"""Publish the newest signed Canary manifest at the rolling updater URL."""
+"""Publish the newest Canary download links and signed rolling updater manifest."""
 import argparse
 import json
 from github_release import api_root, request, upload_asset
@@ -15,11 +15,11 @@ def synchronize(repository, api=request, upload=upload_asset):
         if not isinstance(releases, list):
             raise ValueError("GitHub did not return a release list.")
         for release in releases:
-            if release.get("draft") or not release.get("prerelease"):
+            if release.get("draft") or not release.get("prerelease") or not release.get("tag_name", "").startswith("v"):
                 continue
             try:
                 version = release["tag_name"][1:]
-                parts = semver(version) if release["tag_name"].startswith("v") else None
+                parts = semver(version)
             except (KeyError, ValueError):
                 continue
             assets = {asset["name"]: asset for asset in release.get("assets", [])}
@@ -37,14 +37,45 @@ def synchronize(repository, api=request, upload=upload_asset):
             parsed = json.loads(update)
             if parsed.get("version") != version:
                 continue
-            candidates.append((parts, release, commit, update))
+            candidates.append((parts, release, commit, update, parsed))
         if len(releases) < 100:
             break
         page += 1
     if not candidates:
         print("No published Canary release with a signed update manifest exists yet.")
         return
-    _, newest, commit, payload = max(candidates, key=lambda item: item[0])
+    _, newest, commit, payload, update = max(candidates, key=lambda item: item[0])
+    tag = newest["tag_name"]
+    published_urls = {asset.get("browser_download_url") for asset in newest.get("assets", [])
+                      if asset.get("state") == "uploaded"}
+    rows = []
+    for platform, label, architecture in (
+        ("windows-x86_64-nsis", "x64 (Intel / AMD)", "x64"),
+        ("windows-aarch64-nsis", "ARM64", "ARM64"),
+    ):
+        entry = update.get("platforms", {}).get(platform)
+        if entry is None:
+            continue
+        url = entry.get("url")
+        if not isinstance(url, str) or url not in published_urls:
+            raise ValueError(f"The newest Canary is missing its published Windows {architecture} installer.")
+        rows.append(f"| {label} | **[Download for Windows {architecture}]({url})** |")
+    if not rows:
+        raise ValueError("The newest Canary has no Windows installer downloads.")
+    details = {
+        "tag_name": "canary", "target_commitish": commit, "name": f"Latest Canary: {tag}",
+        "draft": False, "prerelease": True, "make_latest": "false",
+        "body": "\n".join([
+            "## Download for Windows", "",
+            f"**Transmog {tag} Canary** is a prerelease build for testing.", "",
+            "| Windows PC | Signed installer |",
+            "| --- | --- |",
+            *rows,
+            "", "The installer includes the desktop app and command-line tool.", "",
+            f"[Release notes, standalone CLI, checksums, symbols, and verification reports](https://github.com/{repository}/releases/tag/{tag}).",
+            "", "This page follows the newest published Canary. Its `latest.json` asset is used by automatic updates.",
+        ]),
+    }
 
     rolling = api(f"{base}/releases/tags/canary")
     # A release can be removed without deleting its Git tag (or vice versa).
@@ -55,11 +86,9 @@ def synchronize(repository, api=request, upload=upload_asset):
     elif ref["object"]["sha"] != commit:
         api(f"{base}/git/refs/tags/canary", method="PATCH", data={"sha": commit, "force": True})
     if rolling is None:
-        rolling = api(f"{base}/releases", method="POST", data={
-            "tag_name": "canary", "target_commitish": commit, "name": "Canary update feed",
-            "draft": False, "prerelease": True, "make_latest": "false",
-            "body": "Rolling signed updater manifest for the newest published Canary release.",
-        })
+        rolling = api(f"{base}/releases", method="POST", data=details)
+    elif any(rolling.get(key) != details[key] for key in ("name", "body", "draft", "prerelease")):
+        api(f"{base}/releases/{rolling['id']}", method="PATCH", data=details)
     for asset in rolling.get("assets", []):
         if asset["name"] == "latest.json":
             existing = api(f"{base}/releases/assets/{asset['id']}", binary=True)
