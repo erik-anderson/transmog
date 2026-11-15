@@ -75,6 +75,27 @@ if ((Get-AccountSid $definition.Principal.UserId) -cne $sid -or $definition.Prin
 if ($definition.Triggers.Count -ne 1 -or $definition.Triggers.Item(1).Type -ne 9 -or (Get-AccountSid $definition.Triggers.Item(1).UserId) -cne $sid) { throw 'Expected a logon trigger scoped to this user.' }
 if ($definition.Settings.DisallowStartIfOnBatteries -or $definition.Settings.StopIfGoingOnBatteries -or $definition.Settings.RunOnlyIfNetworkAvailable -or $definition.Settings.RunOnlyIfIdle) { throw 'Recovery must run on battery without networking or idle requirements.' }
 if ($definition.Actions.Item(1).Arguments -notlike '*-WindowStyle Hidden -EncodedCommand *') { throw 'Expected the encoded, hidden headless recovery action.' }
+$samples = @()
+$started = [DateTime]::UtcNow
+$lastSample = -1
+$documentation = $definition.RegistrationInfo.Documentation | ConvertFrom-Json
+function Get-RecoveryProcesses {
+    $all = @(Get-CimInstance Win32_Process)
+    $owned = @($all | Where-Object { $_.ExecutablePath -ieq $documentation.executable })
+    for ($depth = 0; $depth -lt 3; $depth++) {
+        $ids = @($owned | ForEach-Object { $_.ProcessId })
+        $owned += @($all | Where-Object { $_.ParentProcessId -in $ids -and $_.ProcessId -notin $ids })
+    }
+    @($owned | Select-Object ProcessId, ParentProcessId, SessionId, Name, ExecutablePath)
+}
+if ($env:TRANSMOG_TEST_TASK_DIAGNOSTICS) {
+    $null = New-Item -ItemType Directory -Force -Path $env:TRANSMOG_TEST_TASK_DIAGNOSTICS
+    $copy = Join-Path $env:TRANSMOG_TEST_TASK_DIAGNOSTICS 'debug-transmog.exe'
+    if (-not (Test-Path -LiteralPath $copy)) {
+        Copy-Item -LiteralPath $documentation.executable -Destination $copy
+        @{ source = $env:GITHUB_SHA; run = $env:GITHUB_RUN_ID; sha256 = (Get-FileHash -LiteralPath $copy).Hash; length = (Get-Item -LiteralPath $copy).Length; session = [Diagnostics.Process]::GetCurrentProcess().SessionId } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $env:TRANSMOG_TEST_TASK_DIAGNOSTICS 'identity.json') -Encoding UTF8
+    }
+}
 # Invoke IRegisteredTask.Run, rather than starting the action's executable ourselves.
 $running = $task.Run($null)
 $deadline = [DateTime]::UtcNow.AddSeconds(30)
@@ -83,11 +104,19 @@ do {
     try {
         $running.Refresh()
         $active = $running.State -in @(2, 4) # Queued or running.
+        $seconds = [int]([DateTime]::UtcNow - $started).TotalSeconds
+        if ($seconds -ne $lastSample) {
+            $samples += @{ seconds = $seconds; state = $running.State; enginePid = $running.EnginePID; lastResult = $task.LastTaskResult; processes = @(Get-RecoveryProcesses) }
+            $lastSample = $seconds
+        }
     } catch {
         if ($_.Exception.HResult -ne -2147216629) { throw } # SCHED_E_TASK_NOT_RUNNING.
         $active = $false
     }
 } while ($active -and [DateTime]::UtcNow -lt $deadline)
+if ($env:TRANSMOG_TEST_TASK_DIAGNOSTICS) {
+    @{ activeAtDeadline = $active; samples = $samples; lastResult = $task.LastTaskResult; taskXml = $task.Xml } | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $env:TRANSMOG_TEST_TASK_DIAGNOSTICS ([Guid]::NewGuid().ToString('N') + '.json')) -Encoding UTF8
+}
 if ($active) { throw 'The recovery task did not finish.' }
 ";
 
