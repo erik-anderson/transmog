@@ -2255,6 +2255,8 @@
   "debuggerTarget": "",
   "debuggerPauseTarget": "any",
   "debuggerPauseTargetAvailable": true,
+  "debuggerPauseIcon": "pause",
+  "debuggerPauseButton": "Pause next callback (F8)",
   "debuggerConsoleContext": "scratch",
   "debuggerConsoleAvailable": true,
   "debuggerConsoleHint": "",

@@ -49,6 +49,13 @@ export async function checkNativeDebuggerWorkspace({
     "empty debugger ready",
   );
   assert.equal(await surface.evaluate((element) => element.debuggerTargets.length), 0);
+  const initialPause = surface.locator(".debug-icon-button debug-icon").first();
+  assert.equal(await initialPause.getAttribute("name"), "pause");
+  assert.equal(
+    await initialPause.locator("g.pause").evaluate((element) => getComputedStyle(element).display),
+    "inline",
+    "WebView2 displays the pause glyph before the first execution",
+  );
   await surface.getByRole("button", { name: "Pause next callback (F8)", exact: true }).click();
   await surface.getByRole("button", { name: "Cancel callback pause (F8)", exact: true }).waitFor();
   await editor.getByRole("button", { name: /^Save & (?:apply|enable)$/ }).click();
@@ -267,15 +274,31 @@ export async function checkNativeDebuggerWorkspace({
   assert.equal(await surface.getByText("native verbose", { exact: true }).count(), 0);
   const inspector = surface.getByRole("complementary", { name: "Call stack and variables" });
   await inspector.locator(".call-stack button").filter({ hasText: "onRequestHead" }).waitFor();
+  if (!(await inspector.locator("details.watches").evaluate((element) => element.open))) {
+    await inspector.locator("details.watches > summary").click();
+  }
   await inspector.getByRole("textbox", { name: "Watch expression" }).fill("local");
   await inspector.getByRole("button", { name: "Add watch", exact: true }).click();
   await inspector.locator(".watch").getByText("7", { exact: true }).waitFor();
   const locals = inspector
+    .locator("details")
+    .filter({ has: detached.getByText("Scopes", { exact: true }) })
     .locator("debug-value")
     .filter({ has: detached.getByRole("tree", { name: /^local(?: ·|$)/u }) });
   const localRow = locals
     .locator("tr")
     .filter({ has: detached.locator("th").getByText("local", { exact: true }) });
+  await wait(
+    () =>
+      locals.evaluate(
+        (element) =>
+          element.value?.editable &&
+          !element.value.expired &&
+          !element.value.loading &&
+          !element.value.restoring,
+      ),
+    "current locals ready for value editing",
+  );
   await localRow.press("F2");
   const replacement = locals.getByRole("textbox", { name: "New value for local", exact: true });
   await replacement.fill("8");

@@ -936,10 +936,14 @@ after a refresh because their displayed names cannot reliably identify the same 
 Locals and watches refresh after Console commands and value edits. Stepping and
 switching frames retain expanded property paths and reading position while acquiring
 fresh values; changed values are marked. Arrow keys navigate the value tree and
-expand or collapse objects. Its context menu offers **View value** for selectable
-multiline text, **Add to Watch**, and **Copy property path** where a complete,
-unambiguous JavaScript path is available. Runtime-shortened previews are identified
-in the value viewer.
+expand or collapse objects. While stepping or refreshing, the previous tree stays
+visible as expired until its replacement and expanded descendants are ready.
+Matching property paths retain their rows; previews alone never establish that an
+object is unchanged, and every pause acquires fresh runtime handles. Loading a new
+branch shows progress at that branch's child position. Its context menu offers
+**View value** for selectable multiline text, **Add to Watch**, and
+**Copy property path** where a complete, unambiguous JavaScript path is available.
+Runtime-shortened previews are identified in the value viewer.
 
 Debugger source is the executing snapshot. **Edit script** opens the current script
 draft without replacing it or changing the running build. Matching source reveals

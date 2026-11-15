@@ -11,6 +11,13 @@ export async function checkDebuggerStartup(page, workspace, root) {
     await output.locator(".command").last().getByText(expected, { exact: true }).waitFor();
   };
   await workspace.getByRole("region", { name: "Start debugging", exact: true }).waitFor();
+  const pauseIcon = workspace.locator(".debug-icon-button debug-icon").first();
+  assert.equal(await pauseIcon.getAttribute("name"), "pause");
+  assert.equal(
+    await pauseIcon.locator("g.pause").evaluate((element) => getComputedStyle(element).display),
+    "inline",
+    "The pause glyph must be visible on first opening, before any pause/continue transition",
+  );
   await page.evaluate(() => {
     globalThis.__workspaceFixture.workspaceDebug.canOpenScripts = false;
   });
@@ -130,7 +137,19 @@ export async function checkDebuggerStartup(page, workspace, root) {
   await page.evaluate(() => {
     const debug = globalThis.__workspaceFixture.workspaceDebug;
     debug.noWorkers = false;
+    debug.holdPropertyHandle = 1;
     debug.pause();
+  });
+  await page.waitForFunction(
+    () => !!globalThis.__workspaceFixture.workspaceDebug.finishPropertyRead,
+  );
+  const firstLocal = workspace.getByRole("tree", { name: "local", exact: true });
+  await firstLocal.getByRole("status").filter({ hasText: "Loading…" }).waitFor({ timeout: 3000 });
+  assert.equal(await firstLocal.getByText("No properties", { exact: true }).count(), 0);
+  await page.evaluate(() => {
+    const debug = globalThis.__workspaceFixture.workspaceDebug;
+    delete debug.holdPropertyHandle;
+    debug.finishPropertyRead();
   });
   await workspace.getByRole("button", { name: "Continue (F8)", exact: true }).waitFor();
   assert.equal(

@@ -498,7 +498,7 @@
         </details>
         <details open>
           <summary>Scopes</summary>
-          <for each="value in debuggerScopeValues"><debug-value key="{{value.key}}" :value="{{value}}" :draft="{{debuggerValueEdit}}"></debug-value></for>
+          <for each="value in debuggerScopeValues"><debug-value key="{{value.presentationKey}}" :value="{{value}}" :draft="{{debuggerValueEdit}}"></debug-value></for>
         </details>
         <details ?open="{{debuggerWatchOpen}}" class="watches" @toggle="{watchDisclosure(e)}">
           <summary>Watch</summary>

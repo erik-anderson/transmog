@@ -342,6 +342,16 @@ try {
   });
   await invoke("stop_application");
 
+  // The workspace checks leave a narrow right dock. Keep the owning body view
+  // visible during visualizer debugging; hidden visualizers release their worker.
+  await invoke("open_debugger");
+  panel = await surface();
+  await panel.evaluate((element) => element.place("window"));
+  panel = await surface();
+  const visualizerDebuggerWindow = panel.page();
+  await closeDebugger(panel);
+  await waitFor(() => visualizerDebuggerWindow.isClosed(), "visualizer debugger layout saved");
+
   await page.evaluate(async (trace) => {
     const shell = document.querySelector("app-shell");
     await shell.activateView("traffic");
@@ -352,6 +362,7 @@ try {
     );
     traffic.preferences = { ...traffic.preferences, layout: "stacked", listSplit: 30 };
     await traffic.selectTraffic(row, new MouseEvent("click"));
+    if (!traffic.inspectorExpanded) await traffic.toggleInspector();
     traffic.responseMessage.showMode("body");
   }, argument("--trace"));
   const response = page.locator('message-inspector[side="response"]');
@@ -384,10 +395,19 @@ try {
   );
   await visualizer.getByRole("button", { name: "Debug this instance", exact: true }).click();
   panel = await surface();
-  await waitFor(
-    () => panel.evaluate((element) => element.debuggerTargets.length > 0),
-    "existing visualizer attachment",
-  );
+  await waitFor(async () => {
+    const session = await visualizer.evaluate((element) => element.debugInfo?.session);
+    return (
+      !!session &&
+      panel.evaluate(
+        (element, session) =>
+          element.debuggerTarget === session &&
+          element.debuggerTargets.some((target) => target.session === session) &&
+          element.views.get(session)?.stream.closed === false,
+        session,
+      )
+    );
+  }, "existing visualizer attachment");
   const expansion = visualizer.evaluate((element) => element.toggleNode("body-text"));
   await paused(panel);
   await continueExecution(panel);
@@ -468,6 +488,16 @@ try {
         evidence,
         runtime,
         exchanges,
+        visualizers: await page.locator("extension-visualizer").evaluateAll((elements) =>
+          elements.map((element) => ({
+            error: element.visualizerError,
+            busy: element.visualizerBusy,
+            debugInfo: element.debugInfo,
+            handle: element.view?.handle,
+            visible: element.visible,
+            body: element.nodes?.get("body-text"),
+          })),
+        ),
         editor: await page.locator("script-editor").evaluate((element) => ({
           status: element.scriptText,
           authoring: element.authoringStatus,

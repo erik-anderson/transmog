@@ -11,15 +11,19 @@ import type { DebugValue } from "./models.js";
 import { copyGesture, copyScalar, requestCopy } from "../inspection-copy.js";
 import { selectedConverterText } from "../converter-selection.js";
 
+type InspectionRow = PropertyRow & { loading?: boolean };
+
 export class DebugValueElement extends WebUIElement {
   @observable value: ValueView | undefined;
   @observable draft: ValueEditDraft | null = null;
   @observable rows: Array<
-    PropertyRow & {
-      level: number;
-      tabIndex: number;
+    InspectionRow & {
+      level: number | undefined;
+      tabIndex: number | undefined;
       editing: boolean;
       ariaExpanded: string | undefined;
+      renderKey: string;
+      role: string;
     }
   > = [];
   @observable rootTabIndex = 0;
@@ -216,15 +220,59 @@ export class DebugValueElement extends WebUIElement {
       this.value?.rows.find((row) => row.key === this.focusKey) ?? this.uniqueRow(this.focusPath);
     this.rootTabIndex = selected ? -1 : 0;
     this.rootExpanded = this.value?.value.handle ? String(this.value.expanded) : undefined;
-    this.rows = (this.value?.rows ?? []).map((row) => ({
+    const rows = this.value?.rows ?? [];
+    const paths = new Map<string, number>();
+    for (const row of rows) {
+      const path = JSON.stringify(row.path);
+      paths.set(path, (paths.get(path) ?? 0) + 1);
+    }
+    this.rows = rows.map((row) => ({
       ...row,
+      // Runtime indices and handles change on every pause. Reconcile presentation
+      // by complete, unambiguous paths so sibling insertions do not replace rows.
+      renderKey: JSON.stringify([
+        isCompletePropertyPath(row.path) && paths.get(JSON.stringify(row.path)) === 1
+          ? row.path
+          : row.key,
+        row.value.kind,
+        row.rangeStart ?? null,
+        row.offset !== undefined,
+      ]),
+      role: "treeitem",
       level: row.depth + 2,
       tabIndex: row === selected ? 0 : -1,
       editing: row.key === this.editKey,
       ariaExpanded: row.expandable ? String(row.expanded) : undefined,
     }));
+    if (this.value?.loading) {
+      const index = rows.findIndex((row) => row.key === this.value?.loadingRow);
+      const target = rows[index];
+      const depth = target ? target.depth + (target.offset === undefined ? 1 : 0) : 0;
+      this.rows.splice(index < 0 ? 0 : index + (target?.offset === undefined ? 1 : 0), 0, {
+        name: "Loading…",
+        label: "Loading…",
+        preview: "",
+        value: { kind: "", display: "", handle: null, truncated: false },
+        key: "loading",
+        renderKey: "loading",
+        path: [],
+        branch: "",
+        depth,
+        level: undefined,
+        expanded: false,
+        expandable: false,
+        editing: false,
+        ariaExpanded: undefined,
+        tabIndex: undefined,
+        loading: true,
+        role: "status",
+      });
+    }
   }
-  focused(row?: PropertyRow): void {
+  focused(row?: InspectionRow): void {
+    if (row?.loading) {
+      return;
+    }
     this.focusPath = row ? JSON.stringify(row.path) : "";
     this.focusKey = row?.key ?? "";
     this.updateRows();
@@ -249,7 +297,10 @@ export class DebugValueElement extends WebUIElement {
       this.rowElement(row)?.focus();
     }
   }
-  async key(event: KeyboardEvent, row?: PropertyRow): Promise<void> {
+  async key(event: KeyboardEvent, row?: InspectionRow): Promise<void> {
+    if (row?.loading) {
+      return;
+    }
     const eventTarget = event?.currentTarget;
     if (
       event
@@ -313,8 +364,14 @@ export class DebugValueElement extends WebUIElement {
     }
     this.menu(event, row);
   }
-  async beginEdit(row: PropertyRow): Promise<void> {
-    if (!this.value?.editable || this.value.expired || this.value.loading || this.editBusy) {
+  async beginEdit(row: InspectionRow): Promise<void> {
+    if (
+      row.loading ||
+      !this.value?.editable ||
+      this.value.expired ||
+      this.value.loading ||
+      this.editBusy
+    ) {
       return;
     }
     if (!row.writable) {
@@ -370,10 +427,17 @@ export class DebugValueElement extends WebUIElement {
     this.updateRows();
     await this.focusRow(row);
   }
-  saveEdit(event: Event, row: PropertyRow): void {
+  saveEdit(event: Event, row: InspectionRow): void {
     event.preventDefault();
     event.stopPropagation();
-    if (!this.value || !this.editDraft.trim() || this.editBusy) {
+    if (
+      row.loading ||
+      !this.value?.editable ||
+      this.value.expired ||
+      this.value.loading ||
+      !this.editDraft.trim() ||
+      this.editBusy
+    ) {
       return;
     }
     const epoch = this.editEpoch;
@@ -415,7 +479,10 @@ export class DebugValueElement extends WebUIElement {
     };
     this.$emit("inspect-edit", request);
   }
-  async showValue(row?: PropertyRow): Promise<void> {
+  async showValue(row?: InspectionRow): Promise<void> {
+    if (row?.loading) {
+      return;
+    }
     const value = row?.value ?? this.value?.value;
     if (!value) {
       return;
@@ -444,8 +511,8 @@ export class DebugValueElement extends WebUIElement {
       this.detailReturn.focus();
     }
   }
-  toggle(row?: PropertyRow): void {
-    if (this.value) {
+  toggle(row?: InspectionRow): void {
+    if (!row?.loading && this.value && !this.value.expired) {
       this.dispatchEvent(
         new CustomEvent("inspect-toggle", {
           bubbles: true,
@@ -455,8 +522,8 @@ export class DebugValueElement extends WebUIElement {
       );
     }
   }
-  menu(event: MouseEvent | KeyboardEvent, row?: PropertyRow): void {
-    if (!this.value || !copyGesture(event) || selectedConverterText(event)) {
+  menu(event: MouseEvent | KeyboardEvent, row?: InspectionRow): void {
+    if (row?.loading || !this.value || !copyGesture(event) || selectedConverterText(event)) {
       return;
     }
     const view = this.value;

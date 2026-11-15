@@ -151,8 +151,42 @@ export async function checkDebuggerValues(page, workspace, root) {
     await row("answer").waitFor();
     await sample.press("ArrowLeft");
     assert.equal(await row("answer").count(), 0);
+    await row("value").press("F2");
+    await input.fill("101");
+    await page.evaluate(() => {
+      globalThis.__workspaceFixture.workspaceDebug.holdPropertyHandle = 2;
+    });
     await sample.press("ArrowRight");
+    await page.waitForFunction(
+      () => !!globalThis.__workspaceFixture.workspaceDebug.finishPropertyRead,
+    );
+    const loading = local.getByRole("status").filter({ hasText: "Loading…" });
+    await loading.waitFor();
+    assert.equal(
+      await local.getByRole("button", { name: "Apply value", exact: true }).isDisabled(),
+      true,
+      "A value edit cannot submit while its tree is loading",
+    );
+    assert.equal(await loading.getAttribute("aria-level"), null);
+    assert.equal(await loading.getAttribute("tabindex"), null);
+    assert.equal(
+      await loading.evaluate((element) =>
+        element.previousElementSibling?.textContent.includes("sample"),
+      ),
+      true,
+      "Loading belongs immediately beneath the expanding property, before its next sibling",
+    );
+    assert.equal(await local.getByText("No properties", { exact: true }).count(), 0);
+    await page.screenshot({
+      path: resolve(root, "../../../target/ui-check/debugger-branch-loading.png"),
+    });
+    await page.evaluate(() => {
+      const debug = globalThis.__workspaceFixture.workspaceDebug;
+      delete debug.holdPropertyHandle;
+      debug.finishPropertyRead();
+    });
     await row("answer").waitFor();
+    await input.press("Escape");
     const closure = inspector
       .locator("debug-value")
       .filter({ has: page.getByRole("tree", { name: "closure · outer", exact: true }) });
@@ -173,9 +207,76 @@ export async function checkDebuggerValues(page, workspace, root) {
       0,
     );
     await page.getByRole("menuitem", { name: "View value", exact: true }).press("Escape");
-    await prompt.press("F10");
+    await local.evaluate((element) => {
+      const tree = element.shadowRoot.querySelector("tbody");
+      element.retainedRows = [...tree.querySelectorAll("tr")];
+      element.removedRows = [];
+      element.rowObserver = new MutationObserver((records) => {
+        for (const record of records) {
+          for (const node of record.removedNodes) {
+            if (element.retainedRows.includes(node) || node.contains?.(tree))
+              element.removedRows.push(node);
+          }
+        }
+      });
+      element.rowObserver.observe(element.shadowRoot, { subtree: true, childList: true });
+    });
+    await workspace.locator(".debug-inline-value").filter({ hasText: "value = 101" }).waitFor();
+    await page.evaluate(() => {
+      const debug = globalThis.__workspaceFixture.workspaceDebug;
+      debug.holdPropertyHandle = 2;
+      // Identical parent previews must not conceal changes to their children.
+      debug.propertyInventory[2][0].value.display = "43";
+    });
+    await row("answer").focus();
+    await page.keyboard.press("F10");
+    await page.waitForFunction(
+      () => !!globalThis.__workspaceFixture.workspaceDebug.finishPropertyRead,
+    );
+    await row("answer").getByText("42", { exact: true }).waitFor();
+    assert.equal(await local.getByText("Expired", { exact: true }).isVisible(), true);
+    assert.equal(
+      await workspace.locator(".debug-inline-value").count(),
+      0,
+      "Expired scope snapshots must not appear as current values beside the new execution line",
+    );
+    assert.equal(
+      await row("answer").evaluate((element) => element.getRootNode().activeElement === element),
+      true,
+      "A stepping refresh keeps keyboard focus on the inspected leaf",
+    );
+    await page.screenshot({
+      path: resolve(root, "../../../target/ui-check/debugger-step-refresh.png"),
+    });
+    assert.equal(
+      await workspace.evaluate((element) => {
+        const closure = element.debuggerScopeValues.find(
+          (value) => value.label === "closure · outer",
+        );
+        return new Map(element.snapshotView().inspection.states).get(closure.presentationKey)?.open;
+      }),
+      true,
+      "A handoff preserves expansion of a staged scope that has not started restoration",
+    );
+    // The next scope has not begun restoration while Local's child read is held.
+    await page.keyboard.press("F10");
+    await page.evaluate(() => {
+      const debug = globalThis.__workspaceFixture.workspaceDebug;
+      delete debug.holdPropertyHandle;
+      debug.finishPropertyRead();
+    });
     await ready();
-    await row("answer").waitFor();
+    await row("answer").getByText("43", { exact: true }).waitFor();
+    await workspace.locator(".debug-inline-value").filter({ hasText: "value = 101" }).waitFor();
+    assert.equal(await row("answer").getAttribute("data-changed"), "");
+    assert.equal(
+      await local.evaluate((element) => {
+        element.rowObserver.disconnect();
+        return element.removedRows.length;
+      }),
+      0,
+      "Stepping must never remove and reinsert the expanded rows, even while reads are delayed",
+    );
     assert.equal(
       await sample
         .getByRole("button", { name: "sample", exact: true })
@@ -185,12 +286,216 @@ export async function checkDebuggerValues(page, workspace, root) {
     assert.equal(
       await closure.getByRole("button", { name: /closure/u }).getAttribute("aria-expanded"),
       "true",
+      "Stepping again before a later scope starts restoring must preserve its expansion intent",
     );
+
+    await row("value").press("F2");
+    await input.fill("777");
+    const editsBeforeRefresh = await page.evaluate(
+      () =>
+        globalThis.__workspaceFixture.workspaceDebug.actions.filter(
+          (action) => action.kind === "set-value",
+        ).length,
+    );
+    await page.evaluate(() => {
+      globalThis.__workspaceFixture.workspaceDebug.holdPropertyHandle = 2;
+    });
+    await workspace.evaluate((element) => {
+      element.pendingScopeRefresh = element.refreshInspection();
+    });
+    await page.waitForFunction(
+      () => !!globalThis.__workspaceFixture.workspaceDebug.finishPropertyRead,
+    );
+    assert.equal(await input.inputValue(), "777");
+    await input.press("Enter");
+    assert.equal(
+      await page.evaluate(
+        () =>
+          globalThis.__workspaceFixture.workspaceDebug.actions.filter(
+            (action) => action.kind === "set-value",
+          ).length,
+      ),
+      editsBeforeRefresh,
+      "Enter in a retained expired editor must not edit the staged replacement",
+    );
+    await page.evaluate(() => {
+      const debug = globalThis.__workspaceFixture.workspaceDebug;
+      delete debug.holdPropertyHandle;
+      debug.finishPropertyRead();
+    });
+    await workspace.evaluate((element) => element.pendingScopeRefresh);
+    await ready();
+    await input.press("Escape");
 
     await prompt.fill("value = 123");
     await prompt.press("Enter");
     await row("value").getByText("123", { exact: true }).waitFor();
     await inspector.locator(".watch").getByText("123", { exact: true }).waitFor();
+    await row("answer").waitFor();
+
+    await workspace.evaluate((element) => element.addWatchExpression("sample"));
+    const sampleWatch = inspector
+      .locator(".watch debug-value")
+      .filter({ has: page.getByRole("tree", { name: "sample", exact: true }) });
+    await sampleWatch.getByRole("button", { name: "sample", exact: true }).click();
+    await sampleWatch.getByText("answer", { exact: true }).waitFor();
+    await page.evaluate(() => {
+      globalThis.__workspaceFixture.workspaceDebug.holdPropertyHandle = 2;
+    });
+    await inspector.getByRole("button", { name: "Refresh watches", exact: true }).click();
+    await page.waitForFunction(
+      () => !!globalThis.__workspaceFixture.workspaceDebug.finishPropertyRead,
+    );
+    await workspace.evaluate((element) => element.inspectionChanged());
+    assert.equal(await sampleWatch.getByText("Expired", { exact: true }).isVisible(), true);
+    assert.equal(
+      await workspace.evaluate(
+        (element) => new Map(element.snapshotView().inspection.states).get("watch:sample")?.open,
+      ),
+      true,
+      "A handoff preserves the latest Watch expansion while its matching replacement is loading",
+    );
+    await sampleWatch.locator(".heading").press("ArrowLeft");
+    await sampleWatch.locator(".heading").press("F10");
+    await page.evaluate(() => {
+      const debug = globalThis.__workspaceFixture.workspaceDebug;
+      delete debug.holdPropertyHandle;
+      debug.finishPropertyRead();
+    });
+    await ready();
+    await sampleWatch.getByText("Expired", { exact: true }).waitFor({ state: "detached" });
+    assert.equal(
+      await sampleWatch
+        .getByRole("button", { name: "sample", exact: true })
+        .getAttribute("aria-expanded"),
+      "true",
+      "Stepping during a manual refresh preserves the Watch's latest expanded state",
+    );
+    await page.evaluate(() => {
+      globalThis.__workspaceFixture.workspaceDebug.holdScopesFrame = 1;
+    });
+    await inspector.locator(".call-stack button").filter({ hasText: "outer" }).click();
+    await page.waitForFunction(() => !!globalThis.__workspaceFixture.workspaceDebug.finishScopes);
+    await sampleWatch.getByText("Expired", { exact: true }).waitFor({ state: "detached" });
+    assert.equal(
+      await sampleWatch
+        .getByRole("button", { name: "sample", exact: true })
+        .getAttribute("aria-expanded"),
+      "false",
+      "A previously unvisited frame has independent Watch expansion state",
+    );
+    await inspector.locator(".call-stack button").filter({ hasText: "run" }).click();
+    await page.evaluate(() => {
+      const debug = globalThis.__workspaceFixture.workspaceDebug;
+      delete debug.holdScopesFrame;
+      debug.finishScopes();
+    });
+    await ready();
+    await sampleWatch.getByText("Expired", { exact: true }).waitFor({ state: "detached" });
+    assert.equal(
+      await sampleWatch
+        .getByRole("button", { name: "sample", exact: true })
+        .getAttribute("aria-expanded"),
+      "true",
+      "A Watch refreshed ahead of delayed Scopes must not overwrite the previous frame's expansion memory",
+    );
+    await inspector.getByRole("button", { name: "Remove watch sample", exact: true }).click();
+
+    await workspace.evaluate((element) => element.selectFrame(1));
+    await ready();
+    const outerScroll = await workspace.locator(".variables").evaluate((element) => {
+      element.scrollTop = 10;
+      return element.scrollTop;
+    });
+    await workspace.evaluate((element) => element.selectFrame(0));
+    await ready();
+    const runScroll = await workspace.locator(".variables").evaluate((element) => {
+      element.scrollTop = 80;
+      return element.scrollTop;
+    });
+    assert.ok(runScroll > outerScroll, "The frames have distinct reading positions");
+    await page.evaluate(() => {
+      globalThis.__workspaceFixture.workspaceDebug.holdScopesFrame = 1;
+    });
+    await workspace.evaluate((element) => element.selectFrame(1));
+    await page.waitForFunction(() => !!globalThis.__workspaceFixture.workspaceDebug.finishScopes);
+    assert.equal(
+      await workspace.evaluate((element) => element.snapshotView().inspection.scroll),
+      outerScroll,
+      "A pending frame handoff must save that frame's reading position, not the retained tree's",
+    );
+    const retainedScroll = await workspace.locator(".variables").evaluate((element, scroll) => {
+      element.scrollTop = scroll / 2;
+      return element.scrollTop;
+    }, runScroll);
+    assert.notEqual(retainedScroll, runScroll);
+    await workspace.evaluate((element) => element.selectFrame(0));
+    await page.evaluate(() => {
+      const debug = globalThis.__workspaceFixture.workspaceDebug;
+      delete debug.holdScopesFrame;
+      debug.finishScopes();
+    });
+    await ready();
+    assert.equal(
+      await workspace.locator(".variables").evaluate((element) => element.scrollTop),
+      retainedScroll,
+      "Scrolling the retained tree updates its own frame's reading position",
+    );
+    await workspace.evaluate((element) => element.selectFrame(1));
+    await ready();
+    assert.equal(
+      await workspace.locator(".variables").evaluate((element) => element.scrollTop),
+      outerScroll,
+      "Leaving a pending frame must not overwrite its saved reading position",
+    );
+    await workspace.evaluate((element) => element.selectFrame(0));
+    await ready();
+
+    await local.evaluate((element) => {
+      globalThis.__debuggerLocalBeforeBlock = element;
+    });
+    await page.evaluate(() => {
+      const debug = globalThis.__workspaceFixture.workspaceDebug;
+      debug.scopeInventory = [
+        { kind: "block", name: "", handle: 7 },
+        { kind: "local", name: "", handle: 1 },
+        { kind: "closure", name: "outer", handle: 3 },
+        { kind: "global", name: "", handle: 5 },
+      ];
+      debug.holdPropertyHandle = 2;
+      debug.pause();
+    });
+    await page.waitForFunction(
+      () => !!globalThis.__workspaceFixture.workspaceDebug.finishPropertyRead,
+    );
+    const savedLocal = await workspace.evaluate((element) => {
+      const local = element.debuggerScopeValues.find((value) => value.label === "local");
+      return new Map(element.snapshotView().inspection.states).get(local.presentationKey);
+    });
+    assert.equal(
+      savedLocal?.open,
+      true,
+      "A handoff must not save a staged Block as the previous Local scope",
+    );
+    assert.ok(savedLocal.paths.some((path) => JSON.stringify(path) === JSON.stringify(["sample"])));
+    await page.evaluate(() => {
+      const debug = globalThis.__workspaceFixture.workspaceDebug;
+      delete debug.holdPropertyHandle;
+      debug.finishPropertyRead();
+    });
+    await ready();
+    await row("answer").waitFor();
+    assert.equal(
+      await local.evaluate((element) => element === globalThis.__debuggerLocalBeforeBlock),
+      true,
+      "Entering a block preserves the Local scope and its expanded descendants when its index changes",
+    );
+    await page.evaluate(() => {
+      const debug = globalThis.__workspaceFixture.workspaceDebug;
+      delete debug.scopeInventory;
+      debug.pause();
+    });
+    await ready();
     await row("answer").waitFor();
 
     await row("message").focus();
@@ -214,6 +519,9 @@ export async function checkDebuggerValues(page, workspace, root) {
     await page.setViewportSize({ width: 1024, height: 768 });
     await row("value").press("F2");
     await input.fill("124");
+    await sample.evaluate((element) => {
+      globalThis.__debuggerRowBeforeInsertion = element;
+    });
     await page.evaluate(() => {
       globalThis.__workspaceFixture.workspaceDebug.propertyInventory[1].unshift({
         name: "inserted",
@@ -223,6 +531,11 @@ export async function checkDebuggerValues(page, workspace, root) {
     await prompt.fill("0");
     await prompt.press("Enter");
     await row("inserted").waitFor();
+    assert.equal(
+      await sample.evaluate((element) => element === globalThis.__debuggerRowBeforeInsertion),
+      true,
+      "Inserting a sibling preserves the object row by property path rather than native index",
+    );
     await input.waitFor();
     assert.equal(
       await input.inputValue(),
@@ -354,6 +667,13 @@ export async function checkDebuggerValues(page, workspace, root) {
     console.error("Debugger value interaction failed:", error);
     throw error;
   } finally {
+    await page.evaluate(() => {
+      const debug = globalThis.__workspaceFixture.workspaceDebug;
+      delete debug.holdPropertyHandle;
+      debug.finishPropertyRead?.();
+      delete debug.holdScopesFrame;
+      debug.finishScopes?.();
+    });
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.evaluate(() => globalThis.__workspaceFixture.workspaceDebug.finishValueEdit?.());
     await page.evaluate(() => globalThis.__workspaceFixture.workspaceDebug.finishValueReply?.());

@@ -640,6 +640,8 @@ export class DebuggerWorkspace extends WebUIElement {
   private watchGeneration = 0;
   private inspectionGeneration = 0;
   private inspectionOwner = "";
+  private inspectionScrollOwner = "";
+  private steppingSession = "";
   private valueEditOperation: Promise<void> | null = null;
   @observable debuggerValueEdit: ValueEditDraft | null = null;
   private inspectionMemory = new Map<string, Map<string, InspectionState>>();
@@ -898,11 +900,15 @@ export class DebuggerWorkspace extends WebUIElement {
     );
   }
   private inspectionChanged(): void {
-    this.debuggerScopeValues = this.debuggerScopeValues.map((value) => ({
-      ...(this.inspection.get(value.key) ?? value),
-    }));
+    const displayed = (value: ValueView): ValueView => {
+      const current = this.inspection.get(value.key);
+      // A replacement is prepared offscreen, including its expanded descendants.
+      // Only its owner publishes it; ordinary reads still update the current tree.
+      return !value.expired && current?.value === value.value ? { ...current } : value;
+    };
+    this.debuggerScopeValues = this.debuggerScopeValues.map(displayed);
     this.debuggerWatches = this.debuggerWatches.map((watch) =>
-      watch.value ? { ...watch, value: { ...this.inspection.get(watch.value.key)! } } : watch,
+      watch.value ? { ...watch, value: displayed(watch.value) } : watch,
     );
     this.debuggerConsole = this.debuggerConsole.map((row) =>
       row.value && this.inspection.get(row.value.key)
@@ -961,7 +967,21 @@ export class DebuggerWorkspace extends WebUIElement {
     this.rememberView();
   }
   private inspectionStateKey(value: ValueView): string {
-    return value.key.startsWith("watch-") ? `watch:${value.label}` : `${value.key}:${value.label}`;
+    return value.key.startsWith("watch-") ? `watch:${value.label}` : value.presentationKey;
+  }
+  private captureInspectionState(value: ValueView): InspectionState | undefined {
+    const current = this.inspection.get(value.key);
+    if (
+      !current ||
+      current.expired ||
+      current.presentationKey !== value.presentationKey ||
+      current.label !== value.label ||
+      // Later staged scopes still have closed defaults until restoration starts.
+      (current.value !== value.value && !current.expanded && !current.restoring)
+    ) {
+      return;
+    }
+    return this.inspection.capture(value.key);
   }
   private currentInspectionOwner(): string {
     const scope = this.inspectionScope();
@@ -996,7 +1016,7 @@ export class DebuggerWorkspace extends WebUIElement {
       };
     });
   }
-  private resetInspection(): void {
+  private resetInspection(preserve = this.debuggerPaused): void {
     if (this.inspectionOwner) {
       const saved =
         this.inspectionMemory.get(this.inspectionOwner) ?? new Map<string, InspectionState>();
@@ -1004,15 +1024,19 @@ export class DebuggerWorkspace extends WebUIElement {
         ...this.debuggerScopeValues,
         ...this.debuggerWatches.flatMap((watch) => (watch.value ? [watch.value] : [])),
       ]) {
-        const state = !value.expired && this.inspection.capture(value.key);
+        const state = this.captureInspectionState(value);
         if (state) {
           saved.set(this.inspectionStateKey(value), state);
         }
       }
       this.inspectionMemory.set(this.inspectionOwner, saved);
       const pane = this.shadowRoot?.querySelector<HTMLElement>(".variables");
-      if (pane) {
-        this.inspectionScroll.set(this.inspectionOwner, pane.scrollTop);
+      if (
+        pane &&
+        this.inspectionScrollOwner &&
+        this.inspectionMemory.has(this.inspectionScrollOwner)
+      ) {
+        this.inspectionScroll.set(this.inspectionScrollOwner, pane.scrollTop);
       }
       let memorySize = [...this.inspectionMemory.values()].reduce(
         (bytes, states) => bytes + JSON.stringify([...states]).length,
@@ -1030,15 +1054,21 @@ export class DebuggerWorkspace extends WebUIElement {
     for (const scope of this.debuggerScopeValues) {
       this.inspection.remove(scope.key);
     }
-    this.debuggerScopeValues = this.debuggerPaused
+    this.debuggerScopeValues = preserve
       ? this.debuggerScopeValues.map((value) => ({ ...value, expired: true, editable: false }))
       : [];
+    if (!preserve) {
+      this.inspectionScrollOwner = "";
+    }
     this.debuggerWatches = this.debuggerWatches.map((watch) => {
       this.inspection.remove(`watch-${watch.id}`);
       return {
         id: watch.id,
         expression: watch.expression,
-        output: this.debuggerPaused ? "Waiting…" : "Not paused",
+        output: preserve ? "Waiting…" : "Not paused",
+        ...(preserve && watch.value
+          ? { value: { ...watch.value, expired: true, editable: false } }
+          : {}),
       };
     });
   }
@@ -1306,13 +1336,16 @@ export class DebuggerWorkspace extends WebUIElement {
     const generation = this.inspectionGeneration;
     const watchGeneration = ++this.watchGeneration;
     const scope = this.inspectionScope();
+    const owner = this.currentInspectionOwner();
+    this.inspectionOwner = owner;
+    this.debuggerWatches = this.debuggerWatches.map((watch) =>
+      watch.value ? { ...watch, value: { ...watch.value, expired: true, editable: false } } : watch,
+    );
     await Promise.all(
       this.debuggerWatches.map(async (watch) => {
         const state =
           this.inspection.capture(`watch-${watch.id}`) ??
-          this.inspectionMemory
-            .get(this.currentInspectionOwner())
-            ?.get(`watch:${watch.expression}`);
+          this.inspectionMemory.get(owner)?.get(`watch:${watch.expression}`);
         const event = await this.inspection.request(
           { kind: "inspect", expression: watch.expression, pause: scope.pause, frame: scope.frame },
           scope,
@@ -1336,6 +1369,16 @@ export class DebuggerWorkspace extends WebUIElement {
         if (!value) {
           this.inspection.remove(`watch-${watch.id}`);
         }
+        if (value && state) {
+          await this.inspection.restore(value.key, state);
+        }
+        if (
+          generation !== this.inspectionGeneration ||
+          watchGeneration !== this.watchGeneration ||
+          !this.validInspection(scope)
+        ) {
+          return;
+        }
         this.debuggerWatches = this.debuggerWatches.map((current) =>
           current.id === watch.id
             ? {
@@ -1347,13 +1390,10 @@ export class DebuggerWorkspace extends WebUIElement {
                     : event?.kind === "rejected"
                       ? event.message
                       : "Inspection unavailable",
-                ...(value ? { value } : {}),
+                ...(value ? { value: { ...value } } : {}),
               }
             : current,
         );
-        if (value && state) {
-          await this.inspection.restore(value.key, state);
-        }
       }),
     );
   }
@@ -2058,6 +2098,7 @@ export class DebuggerWorkspace extends WebUIElement {
             this.pause = event.pause;
             this.debuggerPaused = true;
             this.resetInspection();
+            this.steppingSession = "";
             this.debuggerStackTruncated = event.truncated;
             this.debuggerFrames = event.frames;
             this.debuggerFrame =
@@ -2080,7 +2121,7 @@ export class DebuggerWorkspace extends WebUIElement {
               void this.refreshWatches();
             }
           } else if (event.kind === "resumed" && target.session === this.debuggerTarget) {
-            this.clearPause();
+            this.clearPause(this.steppingSession === target.session);
           } else if (
             event.kind === "scopes" ||
             event.kind === "properties" ||
@@ -2353,12 +2394,15 @@ export class DebuggerWorkspace extends WebUIElement {
       this.busy = false;
     }
   }
-  private clearPause(): void {
+  private clearPause(preserveInspection = false): void {
+    if (!preserveInspection) {
+      this.steppingSession = "";
+    }
     this.debuggerPaused = false;
     this.pause = 0;
     this.debuggerFrames = [];
     this.debuggerStackTruncated = false;
-    this.resetInspection();
+    this.resetInspection(preserveInspection);
     this.updateStack();
     this.renderPoints();
   }
@@ -2520,6 +2564,7 @@ export class DebuggerWorkspace extends WebUIElement {
     const context = this.inspectionScope();
     const generation = this.inspectionGeneration;
     const owner = this.currentInspectionOwner();
+    this.inspectionOwner = owner;
     if (this.debuggerValueEdit && this.debuggerValueEdit.epoch !== JSON.stringify(context)) {
       this.debuggerValueEdit = null;
     }
@@ -2545,8 +2590,7 @@ export class DebuggerWorkspace extends WebUIElement {
       ]);
       return;
     }
-    this.inspectionOwner = owner;
-    this.debuggerScopeValues = event.scopes.map((scope, index) =>
+    const values = event.scopes.map((scope, index) =>
       this.inspection.set(
         `scope-${index}`,
         scope.name ? `${scope.kind} · ${scope.name}` : scope.kind,
@@ -2559,22 +2603,47 @@ export class DebuggerWorkspace extends WebUIElement {
         context,
       ),
     );
-    const local =
-      this.debuggerScopeValues.find((scope) => /^local(?: ·|$)/u.test(scope.label)) ??
-      this.debuggerScopeValues[0];
-    for (const value of this.debuggerScopeValues) {
+    const local = values.find((scope) => /^local(?: ·|$)/u.test(scope.label)) ?? values[0];
+    const labels = new Map<string, number>();
+    for (const value of values) {
+      labels.set(value.label, (labels.get(value.label) ?? 0) + 1);
+    }
+    for (const value of values) {
+      // Entering a block shifts runtime scope indices. Unique scope labels keep
+      // presentation and expansion memory attached to their logical scope.
+      value.presentationKey = JSON.stringify([
+        "scope",
+        value.label,
+        labels.get(value.label) === 1 ? null : value.key,
+      ]);
+    }
+    if (!this.debuggerScopeValues.length) {
+      this.debuggerScopeValues = values.map((value) => ({ ...value }));
+    }
+    for (const value of values) {
       const saved = this.inspectionMemory.get(owner)?.get(this.inspectionStateKey(value));
       if (saved) {
         await this.inspection.restore(value.key, saved);
       } else if (value === local && value.value.handle) {
         await this.inspection.toggle(value.key);
       }
-      if (generation !== this.inspectionGeneration) {
+      if (generation !== this.inspectionGeneration || !this.validInspection(context)) {
+        for (const staged of values) {
+          if (this.inspection.get(staged.key)?.value === staged.value) {
+            this.inspection.remove(staged.key);
+          }
+        }
         return;
       }
     }
-    if (pane && pane.scrollTop === scroll) {
-      pane.scrollTop = this.inspectionScroll.get(owner) ?? scroll ?? 0;
+    this.inspectionScrollOwner = "";
+    this.debuggerScopeValues = values.map((value) => ({ ...value }));
+    await this.$whenRendered();
+    if (generation === this.inspectionGeneration && this.validInspection(context)) {
+      this.inspectionScrollOwner = owner;
+      if (pane && pane.scrollTop === scroll) {
+        pane.scrollTop = this.inspectionScroll.get(owner) ?? scroll ?? 0;
+      }
     }
   }
   async selectFrame(index: number): Promise<void> {
@@ -2922,7 +2991,11 @@ export class DebuggerWorkspace extends WebUIElement {
     if (!this.debuggerPaused) {
       return;
     }
-    await this.action({ kind: "resume", pause: this.pause, action });
+    this.steppingSession = action === "continue" ? "" : this.debuggerTarget;
+    const request = await this.action({ kind: "resume", pause: this.pause, action });
+    if (request === undefined) {
+      this.steppingSession = "";
+    }
   }
   async togglePause(): Promise<void> {
     if (this.debuggerPaused) {
@@ -3549,13 +3622,17 @@ export class DebuggerWorkspace extends WebUIElement {
     }
     const states: Array<[string, InspectionState]> = [];
     const owner = this.currentInspectionOwner();
+    const scroll =
+      this.inspectionScrollOwner === owner
+        ? this.shadowRoot?.querySelector<HTMLElement>(".variables")?.scrollTop
+        : undefined;
     let budget = 128 * 1024;
     for (const value of [
       ...this.debuggerScopeValues,
       ...this.debuggerWatches.flatMap((watch) => (watch.value ? [watch.value] : [])),
     ]) {
       const state =
-        this.inspection.capture(value.key) ??
+        this.captureInspectionState(value) ??
         this.inspectionMemory.get(owner)?.get(this.inspectionStateKey(value));
       if (state && (budget -= JSON.stringify(state).length) >= 0) {
         states.push([this.inspectionStateKey(value), state]);
@@ -3565,7 +3642,7 @@ export class DebuggerWorkspace extends WebUIElement {
       inspection: {
         owner,
         states,
-        scroll: this.shadowRoot?.querySelector<HTMLElement>(".variables")?.scrollTop ?? 0,
+        scroll: scroll ?? this.inspectionScroll.get(owner) ?? 0,
       },
       valueEdit: this.debuggerValueEdit,
       consoleContext: this.debuggerConsoleContext,
@@ -3898,7 +3975,8 @@ export class DebuggerWorkspace extends WebUIElement {
       });
       const text = this.model?.getLineContent(position.line) ?? "";
       const locals =
-        this.debuggerScopeValues.find((scope) => scope.label.startsWith("local"))?.rows ?? [];
+        this.debuggerScopeValues.find((scope) => !scope.expired && scope.label.startsWith("local"))
+          ?.rows ?? [];
       const values = locals
         .filter(
           (row) =>

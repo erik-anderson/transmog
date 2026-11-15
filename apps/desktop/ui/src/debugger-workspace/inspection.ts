@@ -18,12 +18,14 @@ export interface ValueLease {
 }
 export interface ValueView {
   key: string;
+  presentationKey: string;
   label: string;
   value: DebugValue;
   expanded: boolean;
   rows: PropertyRow[];
   expired: boolean;
   loading: boolean;
+  loadingRow?: string | undefined;
   issue: string;
   preview: string;
   editable: boolean;
@@ -128,6 +130,7 @@ export class Inspection {
     this.remove(key);
     const view: ValueView = {
       key,
+      presentationKey: key,
       label,
       value,
       expanded: false,
@@ -408,7 +411,8 @@ export class Inspection {
         return;
       }
       root.view.loading = true;
-      root.view.issue = "Loading…";
+      root.view.loadingRow = row.key;
+      root.view.issue = "";
       this.changed();
       const event = await this.request(
         { kind: "property", pause: root.scope.pause, ...property },
@@ -488,7 +492,8 @@ export class Inspection {
     root.view.rows = this.rows(root);
     if (branch) {
       root.view.loading = true;
-      root.view.issue = "Loading…";
+      root.view.loadingRow = row?.key;
+      root.view.issue = "";
     }
     this.changed();
     if (branch) {

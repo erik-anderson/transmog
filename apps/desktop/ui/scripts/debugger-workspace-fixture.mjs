@@ -534,21 +534,30 @@ export function installDebuggerWorkspaceFixture() {
           },
           request,
         );
-      else if (action.kind === "scopes")
-        emit(
-          {
-            kind: "scopes",
-            pause: action.pause,
-            frame: action.frame,
-            scopes: debug.scopeInventory ?? [
-              { kind: "local", name: "", handle: action.frame === 1 ? 4 : 1 },
-              { kind: "closure", name: "outer", handle: 3 },
-              { kind: "global", name: "", handle: 5 },
-            ],
-          },
-          request,
-        );
-      else if (["properties", "preview-properties", "property"].includes(action.kind)) {
+      else if (action.kind === "scopes") {
+        const response = {
+          kind: "scopes",
+          pause: action.pause,
+          frame: action.frame,
+          scopes: debug.scopeInventory ?? [
+            { kind: "local", name: "", handle: action.frame === 1 ? 4 : 1 },
+            { kind: "closure", name: "outer", handle: 3 },
+            { kind: "global", name: "", handle: 5 },
+          ],
+        };
+        if (debug.holdScopesFrame === action.frame) {
+          debug.finishScopes = () => {
+            emit(response, request);
+            delete debug.finishScopes;
+          };
+        } else emit(response, request);
+      } else if (["properties", "preview-properties", "property"].includes(action.kind)) {
+        if (debug.holdPropertyHandle === action.handle) {
+          await new Promise((resolve) => {
+            debug.finishPropertyRead = resolve;
+          });
+          delete debug.finishPropertyRead;
+        }
         if (
           action.kind === "preview-properties" &&
           action.handle === 2 &&

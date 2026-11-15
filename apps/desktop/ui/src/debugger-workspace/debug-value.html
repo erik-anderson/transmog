@@ -9,10 +9,10 @@
       </div>
       <if condition="value.expanded">
         <table role="presentation" aria-busy="{{value.loading}}"><tbody role="presentation">
-          <for each="property in rows"><tr key="{{property.key}}" role="treeitem" data-row-key="{{property.key}}" data-depth="{{property.depth}}" ?data-changed="{{property.changed}}" ?data-editing="{{property.editing}}" aria-level="{{property.level}}" aria-expanded="{{property.ariaExpanded}}" tabindex="{{property.tabIndex}}" @focus="{focused(property)}" @contextmenu="{menu(e,property)}" @keydown="{key(e,property)}">
+          <for each="property in rows"><tr key="{{property.renderKey}}" role="{{property.role}}" data-row-key="{{property.key}}" data-depth="{{property.depth}}" ?data-loading="{{property.loading}}" ?data-changed="{{property.changed}}" ?data-editing="{{property.editing}}" aria-level="{{property.level}}" aria-expanded="{{property.ariaExpanded}}" tabindex="{{property.tabIndex}}" @focus="{focused(property)}" @contextmenu="{menu(e,property)}" @keydown="{key(e,property)}">
             <th role="presentation" title="{{property.name}}">
-              <if condition="property.expandable"><button type="button" tabindex="-1" aria-disabled="{{value.loading}}" aria-expanded="{{property.expanded}}" @click="{toggle(property)}"><if condition="property.expanded"><span aria-hidden="true">▾ </span></if><if condition="!property.expanded"><span aria-hidden="true">▸ </span></if><span class="property-label">{{property.label}}</span></button></if>
-              <if condition="property.offset"><button type="button" tabindex="-1" data-more data-row-key="{{property.key}}" aria-disabled="{{value.loading}}" @click="{toggle(property)}">{{property.label}}</button></if>
+              <if condition="property.expandable"><button type="button" tabindex="-1" aria-disabled="{{value.loading || value.expired}}" aria-expanded="{{property.expanded}}" @click="{toggle(property)}"><if condition="property.expanded"><span aria-hidden="true">▾ </span></if><if condition="!property.expanded"><span aria-hidden="true">▸ </span></if><span class="property-label">{{property.label}}</span></button></if>
+              <if condition="property.offset"><button type="button" tabindex="-1" data-more data-row-key="{{property.key}}" aria-disabled="{{value.loading || value.expired}}" @click="{toggle(property)}">{{property.label}}</button></if>
               <if condition="!property.expandable && property.offset == undefined"><span>{{property.label}}</span></if>
               <if condition="property.propertyIndex != undefined"><span aria-hidden="true">:</span></if>
             </th>
@@ -21,7 +21,7 @@
               <if condition="property.editing"><form class="value-edit" @submit="{saveEdit(e,property)}">
                 <textarea aria-label="New value for {{property.name}}" rows="2" maxlength="8192" value="{{editDraft}}" ?disabled="{{editBusy}}" @input="{editInput(e)}" @keydown="{editKeydown(e,property)}"></textarea>
                 <small class="current-value" title="{{property.preview}}">Current: {{property.preview}}</small>
-                <div class="edit-actions"><button type="submit" ?disabled="{{editBusy || !editDraft || value.expired}}">Apply value</button><button type="button" ?disabled="{{editBusy}}" @click="{cancelEdit(property)}">Cancel</button></div>
+                <div class="edit-actions"><button type="submit" ?disabled="{{editBusy || !editDraft || value.expired || value.loading}}">Apply value</button><button type="button" ?disabled="{{editBusy}}" @click="{cancelEdit(property)}">Cancel</button></div>
                 <small>{{editHint}} Enter applies; Escape cancels.</small>
                 <if condition="editIssue"><p class="edit-error" role="alert">{{editIssue}}</p></if>
               </form></if>
@@ -30,7 +30,7 @@
           </tr></for>
         </tbody></table>
         <if condition="value.issue"><p role="status">{{value.issue}}</p></if>
-        <if condition="!value.rows.length && !value.issue"><p>No properties</p></if>
+        <if condition="!value.rows.length && !value.issue && !value.loading"><p>No properties</p></if>
       </if>
     </div>
   </if>
