@@ -70,7 +70,18 @@ function Get-OwnedProcesses {
     @(Get-CimInstance Win32_Process -Filter "Name = 'Transmog recovery test.exe'" | Where-Object { $_.ExecutablePath -ieq $exe } | Select-Object ProcessId, ParentProcessId, SessionId, ExecutablePath, CreationDate)
 }
 try {
-    foreach ($case in @('system-control', 'transmog')) {
+    foreach ($case in @('system-control', 'transmog', 'transmog-console-header')) {
+        if ($case -eq 'transmog-console-header') {
+            # Isolate the GUI-versus-console PE subsystem difference without a
+            # rebuild. This variant is diagnostic-only and never a release input.
+            $bytes = [IO.File]::ReadAllBytes($exe)
+            $offset = [BitConverter]::ToInt32($bytes, 0x3c)
+            if ([BitConverter]::ToUInt32($bytes, $offset) -ne 0x4550 -or [BitConverter]::ToUInt16($bytes, $offset + 24) -ne 0x20b -or [BitConverter]::ToUInt16($bytes, $offset + 24 + 68) -ne 2) { throw 'Unexpected original PE subsystem.' }
+            $originalHash = (Get-FileHash -LiteralPath $exe).Hash
+            $bytes[$offset + 24 + 68] = 3
+            [IO.File]::WriteAllBytes($exe, $bytes)
+            Save-Json 'console-variant.json' @{ originalHash = $originalHash; diagnosticHash = (Get-FileHash -LiteralPath $exe).Hash; changedOffset = $offset + 24 + 68; oldByte = 2; newByte = 3; onlyChange = 'PE subsystem GUI to console'; notForRelease = $true }
+        }
         $executable = if ($case -eq 'system-control') { Join-Path $env:WINDIR 'System32/where.exe' } else { $exe }
         Invoke-ProductionOperation 'register' $executable
         $task = $folder.GetTask($name)
