@@ -7,6 +7,10 @@ $null = New-Item -ItemType Directory -Force -Path $out
 function Save-Json($name, $value) {
     $value | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath (Join-Path $out $name) -Encoding UTF8
 }
+trap {
+    Save-Json 'error.json' @{ message = $_.ToString(); position = $_.InvocationInfo.PositionMessage }
+    break
+}
 function Get-ProxySnapshot {
     $key = Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings'
     $values = [ordered]@{}
