@@ -1,0 +1,33 @@
+name: Native Scheduler acceptance budget regression
+on:
+  push:
+    branches: [codex/proxy-recovery-task-probe]
+    paths:
+      - .github/workflows/proxy-recovery-budget-probe.yml
+      - scripts/probe-proxy-recovery-budget.ps1
+      - scripts/probe-proposed-recovery-task-wait.ps1
+permissions: {}
+jobs:
+  budget:
+    runs-on: windows-11-arm
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Compare the original and proposed observers against a valid 35-second task
+        shell: pwsh
+        run: |
+          & "$env:WINDIR/System32/WindowsPowerShell/v1.0/powershell.exe" -NoLogo -NoProfile -NonInteractive -File scripts/probe-proxy-recovery-budget.ps1
+          if ($LASTEXITCODE -ne 0) { throw "Controlled Scheduler regression failed: $LASTEXITCODE" }
+      - name: Retain regression evidence (not application qualification)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: proxy-recovery-task-probe-budget-${{ github.run_id }}
+          path: artifacts/proxy-recovery-budget/
+          if-no-files-found: error
+          retention-days: 14
