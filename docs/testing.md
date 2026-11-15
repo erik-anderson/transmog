@@ -102,6 +102,11 @@ it deliberately fails if task registration is unavailable. The application itsel
 continues capture when registration fails. This test also runs in the native
 release qualification phase.
 
+The task retains its one-minute execution limit. The test observes up to 75
+seconds, allowing dispatch and completion reporting without accepting a hung or
+unsuccessful task. Hosted validation retains source-bound task states, process
+snapshots and completion results in `artifacts/proxy-recovery-task-validation`.
+
 ## Local MCP access
 
 The MCP, application and session suites cover authentication, scope, revocation,

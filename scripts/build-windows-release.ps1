@@ -96,7 +96,11 @@ try {
         # Keep one feature graph for workspace tests and the opt-in native fixtures.
         & cargo test --workspace --all-features --locked --test windows_client_certificates -- --ignored
         & cargo test --workspace --all-features --locked --test client_authentication -- --ignored
-        & cargo test --workspace --all-features --locked --test proxy_recovery_task -- --ignored
+        $previousTaskDiagnostics = $env:TRANSMOG_TEST_TASK_DIAGNOSTICS
+        try {
+            $env:TRANSMOG_TEST_TASK_DIAGNOSTICS = Join-Path $repositoryRoot 'artifacts/proxy-recovery-task-validation'
+            & cargo test --workspace --all-features --locked --test proxy_recovery_task -- --ignored
+        } finally { $env:TRANSMOG_TEST_TASK_DIAGNOSTICS = $previousTaskDiagnostics }
         & cargo build --workspace --all-features --locked
         & (Join-Path $PSScriptRoot 'test-windows-client-certificate-ui.ps1') -SkipBuild -HostedRunnerDevToolsPolicy:$HostedRunnerDevToolsPolicy
     }

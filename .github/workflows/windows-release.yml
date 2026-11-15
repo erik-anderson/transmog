@@ -264,6 +264,7 @@ jobs:
             artifacts/windows-build/evidence/
             artifacts/windows-desktop-validation/
             artifacts/client-certificate-desktop/
+            artifacts/proxy-recovery-task-validation/
           if-no-files-found: warn
           retention-days: 7
 

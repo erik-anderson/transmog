@@ -60,36 +60,7 @@ fn scheduler(script: &str, name: &str) {
     );
 }
 
-const RUN_TASK: &str = r"
-$ErrorActionPreference = 'Stop'
-$service = New-Object -ComObject 'Schedule.Service'
-$service.Connect()
-$task = $service.GetFolder('\').GetTask($env:TRANSMOG_TEST_TASK)
-$definition = $task.Definition
-$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-function Get-AccountSid([string]$account) {
-    if ($account.StartsWith('S-1-')) { return $account }
-    return ([Security.Principal.NTAccount]::new($account)).Translate([Security.Principal.SecurityIdentifier]).Value
-}
-if ((Get-AccountSid $definition.Principal.UserId) -cne $sid -or $definition.Principal.LogonType -ne 3 -or $definition.Principal.RunLevel -ne 0) { throw 'Recovery must run as the current user without elevation or a password.' }
-if ($definition.Triggers.Count -ne 1 -or $definition.Triggers.Item(1).Type -ne 9 -or (Get-AccountSid $definition.Triggers.Item(1).UserId) -cne $sid) { throw 'Expected a logon trigger scoped to this user.' }
-if ($definition.Settings.DisallowStartIfOnBatteries -or $definition.Settings.StopIfGoingOnBatteries -or $definition.Settings.RunOnlyIfNetworkAvailable -or $definition.Settings.RunOnlyIfIdle) { throw 'Recovery must run on battery without networking or idle requirements.' }
-if ($definition.Actions.Item(1).Arguments -notlike '*-WindowStyle Hidden -EncodedCommand *') { throw 'Expected the encoded, hidden headless recovery action.' }
-# Invoke IRegisteredTask.Run, rather than starting the action's executable ourselves.
-$running = $task.Run($null)
-$deadline = [DateTime]::UtcNow.AddSeconds(30)
-do {
-    Start-Sleep -Milliseconds 100
-    try {
-        $running.Refresh()
-        $active = $running.State -in @(2, 4) # Queued or running.
-    } catch {
-        if ($_.Exception.HResult -ne -2147216629) { throw } # SCHED_E_TASK_NOT_RUNNING.
-        $active = $false
-    }
-} while ($active -and [DateTime]::UtcNow -lt $deadline)
-if ($active) { throw 'The recovery task did not finish.' }
-";
+const RUN_TASK: &str = include_str!("support/run_proxy_recovery_task.ps1");
 
 const ASSERT_REMOVED: &str = r"
 $ErrorActionPreference = 'Stop'
