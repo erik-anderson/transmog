@@ -5,9 +5,8 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use transmog_core::intercept::{
     BodyPipeline, BodyPipelineError, BodyPipelineLimits, BufferedHead, CompletedExchange,
-    ExchangeFailure, ExchangeFailureCategory, ExchangeFailureKind, ExchangeStage,
-    HookExecutionError, HookLimits, InterceptorChainFactory, RequestHeadOutcome,
-    ResponseHeadOutcome, TerminalReport,
+    ExchangeChain, ExchangeFailure, ExchangeFailureCategory, ExchangeFailureKind, ExchangeStage,
+    HookLimits, InterceptorChainFactory, RequestHeadOutcome, ResponseHeadOutcome, TerminalReport,
 };
 use transmog_core::{
     BodyFrame, BodyLimitError, ConnectionId, HttpLegVersion, SessionId, SessionMetadata, StreamId,
@@ -213,6 +212,9 @@ impl ScriptRunner for RecordingRunner {
         exchange: &str,
     ) -> Option<Arc<transmog_script_diagnostics::supervision::PauseClock>> {
         self.inner.debug_pause_clock(exchange)
+    }
+    fn terminal_logs(&self, exchange: &str, handler: ScriptHandler) -> Vec<LogRun> {
+        self.inner.terminal_logs(exchange, handler)
     }
     fn invoke(&self, mut event: ScriptInvocation) -> BoxScriptFuture<'_> {
         Box::pin(async move {
@@ -539,7 +541,7 @@ pub async fn test_scenario(
                     message: "Simulated upstream failure".into(),
                 })
                 .await;
-            error = terminal_error(&recorder, ScriptHandler::Failed, &report);
+            error = terminal_error(&recorder, ScriptHandler::Failed, &report, &chain);
             response = None;
             response_body.clear();
             return Ok(());
@@ -661,7 +663,7 @@ pub async fn test_scenario(
                     .ok_or_else(|| "No response fixture".to_owned())?,
             })
             .await;
-        error = terminal_error(&recorder, ScriptHandler::Completed, &report);
+        error = terminal_error(&recorder, ScriptHandler::Completed, &report, &chain);
         Ok(())
     }
     .await;
@@ -717,7 +719,7 @@ pub async fn test_scenario(
                     message: "Scenario stopped".into(),
                 })
                 .await;
-            let _ = terminal_error(&recorder, ScriptHandler::Failed, &report);
+            let _ = terminal_error(&recorder, ScriptHandler::Failed, &report, &chain);
         }
     }
     let mut steps = recorder
@@ -742,6 +744,7 @@ pub async fn test_scenario(
                 if effect.phase == transmog_core::intercept::HookPhase::ResponseBody
                     && let transmog_core::intercept::HookEffectAction::ScriptReport(report) =
                         effect.action
+                    && report.has_content()
                 {
                     Some(report)
                 } else {
@@ -927,8 +930,28 @@ fn terminal_error(
     recorder: &RecordingRunner,
     handler: ScriptHandler,
     report: &TerminalReport,
+    chain: &ExchangeChain,
 ) -> Option<String> {
     let error = report.errors().first()?;
+    let phase = match handler {
+        ScriptHandler::Completed => transmog_core::intercept::HookPhase::Completed,
+        ScriptHandler::Failed => transmog_core::intercept::HookPhase::Failed,
+        _ => return None,
+    };
+    let logs = chain
+        .hook_effects()
+        .into_iter()
+        .filter_map(|effect| match effect.action {
+            transmog_core::intercept::HookEffectAction::ScriptReport(report)
+                if effect.phase == phase =>
+            {
+                Some(report.logs)
+            }
+            _ => None,
+        })
+        .flatten()
+        .take(2)
+        .collect();
     let mut steps = recorder
         .steps
         .lock()
@@ -938,20 +961,9 @@ fn terminal_error(
         .find(|step| step.handler == handler)
         .expect("phase");
     step.selection = ScriptScenarioSelection::Failed;
-    step.error = Some(ScriptFailure {
-        logs: Vec::new(),
-        category: match error.source {
-            HookExecutionError::TimedOut => ScriptFailureCategory::Timeout,
-            HookExecutionError::Panicked => ScriptFailureCategory::Crash,
-            HookExecutionError::Cancelled | HookExecutionError::ShuttingDown => {
-                ScriptFailureCategory::Unavailable
-            }
-        },
-        message: bounded(&error.to_string(), 512),
-        line: None,
-        column: None,
-        exception: None,
-    });
+    let mut failure = super::adapter::terminal_failure(error.source, logs);
+    failure.message = bounded(&error.to_string(), 512);
+    step.error = Some(failure);
     Some(error.to_string())
 }
 

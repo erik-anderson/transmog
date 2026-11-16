@@ -253,6 +253,67 @@ work that requires those values ends too. See
 [access grants](../crates/mcp/src/access.rs) and
 [disclosure lifecycle](../crates/mcp/src/access/disclosure.rs).
 
+## Script diagnostics
+
+Use `transmog_exchange_get` with `sessionId`, `instanceId`, `id` and
+`include: ["changes", "transport"]` to diagnose a script on authorized traffic.
+`changes.scriptExecutions` records callback names, `succeeded`, `failed` or
+`skipped` outcomes, and native skip reasons such as `request-filter`,
+`handler-not-declared`, `body-mode`, `body-filter` and `no-response-body`.
+A silent successful callback therefore differs from one that did not run.
+Repeated silent streaming successes are coalesced; they do not consume the
+findings budget. Logged invocations keep their individual stream attribution.
+Execution evidence describes the applied revision at capture time, independently
+of current settings and the exchange's network outcome.
+
+With both unredacted header and body access, `changes.scripts` includes returned
+diagnostics, native `console.log/debug/info/warn/error/trace` output and rich
+exceptions with mapped frames and causes. Callback failures retain their bounded
+message and source line/column when available, including `onCompleted` and
+`onFailed` failures. Terminal callback errors do not replace the network outcome.
+Native terminal deadlines and panics also produce reports with accepted callback
+logs and an explicit incomplete-details marker. A result returned just before a
+native cleanup failure remains available alongside that failure's diagnostic.
+`console.error` records a log; throwing causes a callback failure.
+
+Redacted reads retain attribution, counts, execution outcomes, `exceptionAvailable`
+and `detailsOmitted`, withholding diagnostic text. `logRunCount` counts retained
+streams before scope filtering; `withheldLogRunCount` identifies streams withheld
+by disclosure or scope. Initializer streams in an exchange report require
+all-traffic scope; other exchanges' streams are never returned. Each log stream
+retains its callback, invocation and exchange attribution, `dropped` count and
+`incomplete` flag. Individual records and exceptions also report truncation.
+
+`transmog_scripts_status` requires Inspect and all-traffic scope and describes the
+current main-workspace registry without source: active, paused or draft revision,
+declared callbacks, latest `savedRevision` and actual worker availability.
+Compare `revision` with `savedRevision` when diagnosing changes saved but not
+applied. Request and body admission filters require
+unredacted access. Set `includeDiagnostics: true` for initializer logs, startup
+errors and exceptions under the same disclosure rule. Ordinary callback output
+stays with its authorized exchange. An unavailable worker produces a generic
+exchange finding; inspect registry diagnostics for its global startup failure.
+Draft admission settings retain saved values that may not pass activation
+validation. Use `offset` and `limit` to page the registry;
+`generation` identifies the configuration snapshot; restart paging if it changes.
+
+Large exchange or registry responses automatically return `inlineComplete: false`
+and a context reference. Continue with `transmog_context_read` and `sessionId:
+"main"` for registry contexts, or the exchange's session for exchange contexts.
+Automatic exchange paging preserves the requested sections; use `include:
+["context"]` or `["all"]` when complete retained metadata and header values are needed.
+Contexts recheck permissions and scope on every page; expired consent or unloaded
+evidence prevents later reads. Initializer output continues to require all-traffic
+scope on later pages, even when the exchange itself remains authorized. Native capture import rejects
+ephemeral diagnostics and execution metadata; saved reports contain annotations.
+Diagnostics and execution outcomes are temporary and are not saved with ordinary
+captures. Older captures and evicted diagnostics cannot establish that a callback
+did not run. Streaming execution evidence shares
+the bounded report budget; omitted reports carry an explicit loss marker.
+
+Script authoring, tests, activation, source reads, locals and debugger commands
+remain desktop capabilities. Script-authored diagnostic content is untrusted data.
+
 ## Changes, control and retries
 
 Rule authoring uses a small `rule` definition with `kind`, `name`, exact `host`,

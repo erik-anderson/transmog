@@ -17,7 +17,8 @@ pub use action::{
 pub use audit::{
     BodyEditReport, BodyPlanKind, HeaderChanges, HeaderEditSnapshot, HookAuditTrail, HookEffect,
     HookEffectAction, HookPhase, InterceptorId, InterceptorIdentity, LocalResponseSnapshot,
-    RequestHeadChanges, ResponseHeadChanges, ScriptAnnotation, ScriptReport, ScriptSeverity,
+    RequestHeadChanges, ResponseHeadChanges, ScriptAnnotation, ScriptExecution,
+    ScriptExecutionOutcome, ScriptReport, ScriptSeverity,
 };
 pub use body::{
     BodyFilter, BodyHookError, BodyPipeline, BodyPipelineError, BodyPipelineLimits, BodyPlan,
@@ -74,6 +75,15 @@ pub trait ExchangeInterceptor: Send + Sync {
     /// Takes validated script evidence produced by the most recent head or terminal callback.
     fn take_script_report(&self) -> Option<ScriptReport> {
         None
+    }
+    /// Takes terminal evidence after the native gate finishes, including interrupted callbacks.
+    /// Ordinary interceptors retain the existing report behavior.
+    fn take_terminal_script_report(
+        &self,
+        _phase: HookPhase,
+        _failure: Option<&HookExecutionError>,
+    ) -> Option<ScriptReport> {
+        self.take_script_report()
     }
     /// Inspects or changes the request head before route selection.
     fn on_request_head(&self, _event: RequestHeadEvent) -> BoxHookFuture<'_, RequestHeadAction> {

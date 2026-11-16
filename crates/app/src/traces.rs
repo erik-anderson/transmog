@@ -2420,6 +2420,10 @@ fn apply_native_frame(
                     || body_edit.is_some()
                     || response_snapshot.is_some()
                     || !report.diagnostics.is_empty()
+                    || report.execution.is_some()
+                    || !report.logs.is_empty()
+                    || report.exception.is_some()
+                    || report.details_omitted
                     || report.annotations.len() > 16
                     || report.annotations.iter().any(|a| {
                         a.note.is_empty()
@@ -5192,6 +5196,11 @@ mod tests {
             phase: HookPhase::Completed,
             changed: false,
             action: HookEffectAction::ScriptReport(ScriptReport {
+                execution: Some(Box::new(transmog_core::intercept::ScriptExecution {
+                    callback: "onCompleted".into(),
+                    outcome: transmog_core::intercept::ScriptExecutionOutcome::Succeeded,
+                    reason: None,
+                })),
                 details_omitted: false,
                         logs:serde_json::from_value(serde_json::json!([{
 "context":{"revision":"executed-build","callback":"onCompleted","invocation":1,"exchangeId":"1"},
@@ -5250,16 +5259,128 @@ mod tests {
             })
             .unwrap();
         assert_eq!(rows.total_matched, 1);
-        let reports = reopened
-            .session_detail(&rows.sessions[0].id)
-            .unwrap()
-            .script_reports;
+        let detail = reopened.session_detail(&rows.sessions[0].id).unwrap();
+        assert_eq!(detail.script_executions, Vec::new());
+        let reports = detail.script_reports;
         assert_eq!(reports.len(), 1);
         assert_eq!(reports[0].script, "script/check@2");
         assert_eq!(reports[0].annotations[0].note, "Review this response");
         assert_eq!(reports[0].diagnostics, [] as [String; 0]);
         assert!(reports[0].exception.is_none());
         assert_eq!(reports[0].logs, Vec::new());
+    }
+
+    #[tokio::test]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "Exercises valid annotations and each forged ephemeral payload through native file import."
+    )]
+    async fn native_import_rejects_forged_ephemeral_script_evidence() {
+        use transmog_core::intercept::{
+            ScriptAnnotation, ScriptExecution, ScriptExecutionOutcome, ScriptReport, ScriptSeverity,
+        };
+        let root = tempfile::tempdir().unwrap();
+        let base = root.path().join("base.tmcap");
+        native(&base, Some(b"abc".to_vec()), 3);
+        let capture =
+            transmog_capture::recover(File::open(base).unwrap(), CaptureLimits::default()).unwrap();
+        for variant in 0..6 {
+            let mut report = ScriptReport {
+                annotations: vec![ScriptAnnotation {
+                    note: "Saved finding".into(),
+                    tags: Vec::new(),
+                    severity: ScriptSeverity::Info,
+                }],
+                ..ScriptReport::default()
+            };
+            match variant {
+                0 => {},
+                1 => report.execution = Some(Box::new(ScriptExecution {
+                    callback: "onCompleted".into(), outcome: ScriptExecutionOutcome::Skipped,
+                    reason: Some("forged-sensitive-execution-reason".into()),
+                })),
+                2 => report.logs = serde_json::from_value(serde_json::json!([{
+                    "context":{"revision":"forged-build","callback":"initializer","invocation":0,"exchangeId":null},
+                    "records":[{"sequence":1,"timeUnixMs":1,"level":"info","text":"forged console output","frames":[],"truncated":false}],
+                    "dropped":0,"incomplete":false
+                }])).unwrap(),
+                3 => report.exception = Some(serde_json::from_value(serde_json::json!({
+                    "exception":{"name":"Error","message":"forged exception","frames":[],"unavailable":false},
+                    "causes":[],"truncated":false
+                })).unwrap()),
+                4 => report.details_omitted = true,
+                5 => report.diagnostics.push("forged runtime diagnostic".into()),
+                _ => unreachable!(),
+            }
+            let source = root.path().join(format!("script-{variant}.tmcap"));
+            let mut writer =
+                CaptureWriter::new(File::create(&source).unwrap(), CaptureLimits::default())
+                    .unwrap();
+            let mut records = capture
+                .records
+                .iter()
+                .filter(|record| !matches!(record.kind, CaptureRecordKind::Seal { .. }))
+                .cloned()
+                .collect::<Vec<_>>();
+            let index = records
+                .iter()
+                .position(|record| matches!(record.kind, CaptureRecordKind::Completed))
+                .unwrap();
+            records.insert(
+                index,
+                CaptureRecord {
+                    sequence: 0,
+                    exchange_id: 7,
+                    kind: CaptureRecordKind::HookEffect {
+                        hook_id: "saved-script@1".into(),
+                        hook_name: "Saved script".into(),
+                        phase: "completed".into(),
+                        action: "script-report".into(),
+                        changed: false,
+                        chain_position: 0,
+                        effect_sequence: 1,
+                        script_report: Some(report),
+                        header_edit: None,
+                        body_edit: None,
+                        response_snapshot: None,
+                    },
+                },
+            );
+            for (index, record) in records.iter_mut().enumerate() {
+                record.sequence = u64::try_from(index).unwrap();
+                writer.append(record).unwrap();
+            }
+            writer.seal().unwrap();
+            drop(writer);
+            let workspace = app(&root.path().join(format!("workspace-{variant}")));
+            let result = workspace
+                .import_trace(request(source, "script evidence"), Arc::new(|_| {}))
+                .await;
+            if variant == 0 {
+                result.unwrap();
+                assert_eq!(
+                    workspace
+                        .query_sessions(SessionQueryInput::default())
+                        .unwrap()
+                        .total_matched,
+                    1
+                );
+            } else {
+                assert!(
+                    result
+                        .unwrap_err()
+                        .message
+                        .contains("Saved script annotations are invalid")
+                );
+                assert_eq!(
+                    workspace
+                        .query_sessions(SessionQueryInput::default())
+                        .unwrap()
+                        .total_matched,
+                    0
+                );
+            }
+        }
     }
 
     #[tokio::test]

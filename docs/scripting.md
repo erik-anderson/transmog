@@ -60,7 +60,7 @@ Enable the capabilities your changes need. List edited header names in Writable 
 
 Method and URL changes need Rewrite request method and URL. A different origin also needs Allow cross-origin URL changes. URLs must be absolute HTTP(S), without credentials or fragments. Status changes need Change response status and accept 200–599. Local responses need Return responses or select assets; abort needs Abort requests.
 
-Errors or unpermitted edits in request/response callbacks fail the request. Once response headers reach the client, failures end the stream. Errors in onCompleted and onFailed become diagnostics.
+Errors or unpermitted edits in request/response callbacks fail the request. Once response headers reach the client, failures end the stream. Errors in onCompleted and onFailed become diagnostics. Native terminal cleanup deadlines also produce diagnostics and preserve accepted console output without replacing the network outcome.
 
 | Handler | Additional input | Decisions |
 | --- | --- | --- |
@@ -126,7 +126,7 @@ respondText and respondJson return a local response. respondAsset("id@revision")
 
 Use console.log, debug, info, warn, error, or trace to inspect execution. Log individual fields: objects appear as labels rather than expanded values.
 
-Open Developer details in test results or Script findings for logs, exceptions, and call frames. Selecting a frame shows the code that ran, preserving your draft.
+Open Developer details in test results or Script findings for logs, exceptions, and call frames. Selecting a frame shows the code that ran, preserving your draft. Authorized MCP exchange reads with include changes can also return retained console output, exceptions and native callback outcomes under the unredacted-access setting.
 
 Annotations add notes to saved traffic and need Add saved traffic annotations. Diagnostics and console output are temporary and are not saved with traffic. Avoid logging credentials or other sensitive content.
 
@@ -551,4 +551,4 @@ export function onResponseChunk(event: ResponseChunkEvent): ResponseChunkResult 
 
 ## MCP support
 
-MCP can read this help and inspect script effects on traffic it has access to. It cannot read or edit script source, test scripts, or enable them. Use Automation → Scripts for those actions.
+MCP can inspect script effects, callback execution outcomes, console output and rich exceptions on authorized exchanges through transmog_exchange_get with include changes. Diagnostic text requires unredacted header and body access. Large output returns a context for transmog_context_read. transmog_scripts_status reports current main-workspace activation and worker availability with all-traffic scope; includeDiagnostics adds initializer logs and errors under the same unredacted-access rule. MCP cannot read or edit source, test scripts, enable them, inspect locals or control the debugger. Use Automation → Scripts for those actions.

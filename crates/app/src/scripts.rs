@@ -152,6 +152,46 @@ pub struct ScriptRuntimeStatus {
     pub exception: Option<Box<transmog_script::ExceptionDiagnostic>>,
 }
 
+/// Source-free registry snapshot for authorized diagnostic inspection.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScriptInspectionStatus {
+    /// Registry generation at this snapshot.
+    pub generation: u64,
+    /// Saved and applied scripts without source or unrelated callback output.
+    pub scripts: Vec<ScriptInspectionItem>,
+}
+
+/// Source-free script configuration and initialized worker health.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScriptInspectionItem {
+    /// Stable script identity.
+    pub script_id: String,
+    /// Applied, paused, or draft revision described by these settings.
+    pub revision: u64,
+    /// Latest saved draft, which may differ from the applied revision.
+    pub saved_revision: Option<u64>,
+    /// Active, paused, or draft; availability is independent of activation.
+    pub state: &'static str,
+    /// Whether this active worker can execute; absent for paused scripts and drafts.
+    pub available: Option<bool>,
+    /// Declared callbacks in this revision.
+    pub handlers: std::collections::BTreeSet<ScriptHandler>,
+    /// Native request admission settings.
+    pub prefilter: ScriptPrefilter,
+    /// Native request body admission settings.
+    pub request_body_filter: transmog_script::ScriptBodyFilter,
+    /// Native response body admission settings.
+    pub response_body_filter: transmog_script::ScriptBodyFilter,
+    /// Initializer output only; live callback output belongs to its exchange.
+    pub logs: Vec<transmog_script::LogRun>,
+    /// Startup or worker availability explanation, subject to diagnostic disclosure.
+    pub error: Option<String>,
+    /// Startup exception, subject to diagnostic disclosure.
+    pub exception: Option<Box<transmog_script::ExceptionDiagnostic>>,
+}
+
 /// Current atomic script registry status.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -935,6 +975,74 @@ impl ScriptRegistry {
         (active.workspace.generation, active.workspace.active.len())
     }
 
+    pub(crate) fn inspection_status(&self) -> ScriptInspectionStatus {
+        let active = self
+            .active
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut scripts = Vec::new();
+        for (revision, script) in active.workspace.active.iter().zip(&active.scripts) {
+            let available = script
+                .runner
+                .as_ref()
+                .is_some_and(|runner| !runner.has_failed());
+            scripts.push(ScriptInspectionItem {
+                script_id: revision.manifest.id.clone(), revision: revision.manifest.revision,
+                saved_revision: active.workspace.saved.iter().find(|draft| draft.id == revision.manifest.id).map(|draft| draft.revision),
+                state: "active", available: Some(available), handlers: revision.manifest.handlers.clone(),
+                prefilter: revision.manifest.prefilter.clone(),
+                request_body_filter: revision.manifest.request_body_filter.clone(), response_body_filter: revision.manifest.response_body_filter.clone(),
+                logs: script.runner.as_ref().map_or_else(|| script.startup_logs.clone(), |runner| runner.startup_logs()),
+                error: (!available).then(|| script.startup_error.clone().unwrap_or_else(|| "The script host stopped after a runtime failure. Retry the applied build or pause this script.".into())),
+                exception: script.startup_exception.clone(),
+            });
+        }
+        for revision in &active.workspace.paused {
+            scripts.push(ScriptInspectionItem {
+                script_id: revision.manifest.id.clone(),
+                revision: revision.manifest.revision,
+                saved_revision: active
+                    .workspace
+                    .saved
+                    .iter()
+                    .find(|draft| draft.id == revision.manifest.id)
+                    .map(|draft| draft.revision),
+                state: "paused",
+                available: None,
+                handlers: revision.manifest.handlers.clone(),
+                prefilter: revision.manifest.prefilter.clone(),
+                request_body_filter: revision.manifest.request_body_filter.clone(),
+                response_body_filter: revision.manifest.response_body_filter.clone(),
+                logs: Vec::new(),
+                error: None,
+                exception: None,
+            });
+        }
+        for draft in &active.workspace.saved {
+            if !scripts.iter().any(|script| script.script_id == draft.id) {
+                scripts.push(ScriptInspectionItem {
+                    script_id: draft.id.clone(),
+                    revision: draft.revision,
+                    saved_revision: Some(draft.revision),
+                    state: "draft",
+                    available: None,
+                    handlers: draft.handlers.clone(),
+                    prefilter: draft.prefilter.clone(),
+                    request_body_filter: draft.request_body_filter.clone(),
+                    response_body_filter: draft.response_body_filter.clone(),
+                    logs: Vec::new(),
+                    error: None,
+                    exception: None,
+                });
+            }
+        }
+        scripts.sort_by(|left, right| left.script_id.cmp(&right.script_id));
+        ScriptInspectionStatus {
+            generation: active.workspace.generation,
+            scripts,
+        }
+    }
+
     fn build_snapshot(
         &self,
         workspace: ScriptWorkspace,
@@ -961,14 +1069,9 @@ impl ScriptRegistry {
             };
         let invocation_runner: Arc<dyn ScriptRunner> = match &runner {
             Some(runner) => runner.clone(),
-            None => Arc::new(UnavailableRunner(ScriptFailure {
-                logs: startup_logs.clone(),
-                category: transmog_script::ScriptFailureCategory::Unavailable,
-                message: startup_error.clone().unwrap_or_default(),
-                line: None,
-                column: None,
-                exception: startup_exception.clone(),
-            })),
+            // Startup evidence is global, so keep it in registry diagnostics.
+            // An exchange may be inspected with a narrower traffic scope.
+            None => Arc::new(UnavailableRunner),
         };
         let registration = registration_with_assets(
             revision.manifest.clone(),
@@ -1104,12 +1207,20 @@ fn retire_debuggers(snapshot: &ActiveSnapshot) {
     }
 }
 
-struct UnavailableRunner(ScriptFailure);
+struct UnavailableRunner;
 
 impl ScriptRunner for UnavailableRunner {
     fn invoke(&self, _invocation: ScriptInvocation) -> BoxScriptFuture<'_> {
-        let failure = self.0.clone();
-        Box::pin(async move { Err(failure) })
+        Box::pin(async {
+            Err(ScriptFailure {
+                logs: Vec::new(),
+                category: transmog_script::ScriptFailureCategory::Unavailable,
+                message: "The applied script host is unavailable. Inspect startup diagnostics in Automation > Scripts, then retry or pause the script.".into(),
+                line: None,
+                column: None,
+                exception: None,
+            })
+        })
     }
 }
 
@@ -1555,6 +1666,97 @@ mod tests {
             .clone()
     }
 
+    #[tokio::test]
+    async fn unavailable_exchange_reports_do_not_copy_global_startup_evidence() {
+        use transmog_core::{
+            ConnectionId, HeaderBlock, HttpLegVersion, RequestHead, SessionId, SessionMetadata,
+            StreamId, Target,
+            intercept::{
+                HookEffectAction, HookLimits, InterceptorChainFactory, RequestHeadOutcome,
+            },
+        };
+        let mut registry = registry(None);
+        registry.host = Some(Arc::new(PathBuf::from("unused-script-host")));
+        registry.debug_factory(Some(Arc::new(|_| {
+            Err(AppError::new(ErrorCategory::Unavailable, "global-startup-secret", true)
+                .with_logs(serde_json::from_value(serde_json::json!([{
+                    "context":{"revision":"user-script@1","callback":"initialize","invocation":0,"exchangeId":null},
+                    "records":[{"sequence":1,"timeUnixMs":1,"level":"error","text":"global-startup-log","frames":[],"truncated":false}],
+                    "dropped":0,"incomplete":true
+                }])).unwrap())
+                .with_exception(Some(serde_json::from_value(serde_json::json!({
+                    "exception":{"name":"Error","message":"global-startup-exception","frames":[],"unavailable":false},
+                    "causes":[],"truncated":false
+                })).unwrap())))
+        })));
+        let applied = revision(&registry, draft(1));
+        let snapshot = registry
+            .build_snapshot(
+                ScriptWorkspace {
+                    schema_version: SCRIPT_WORKSPACE_SCHEMA_VERSION,
+                    active: vec![applied],
+                    ..ScriptWorkspace::default()
+                },
+                false,
+            )
+            .unwrap();
+        let registration = snapshot.scripts[0].registration.clone();
+        *registry.active.write().unwrap() = Arc::new(snapshot);
+        let global = serde_json::to_string(&registry.inspection_status()).unwrap();
+        for needle in [
+            "global-startup-secret",
+            "global-startup-log",
+            "global-startup-exception",
+        ] {
+            assert!(global.contains(needle));
+        }
+        let request = RequestHead {
+            method: "GET".into(),
+            target: Target {
+                scheme: "https".into(),
+                authority: "example.test".into(),
+                host: "example.test".into(),
+                port: 443,
+                path: "/".into(),
+                query: None,
+            },
+            headers: HeaderBlock::new(),
+            source_version: HttpLegVersion::Http2,
+        };
+        let metadata = ExchangeMetadata::from_session(
+            &SessionMetadata {
+                session_id: SessionId(1),
+                downstream_connection_id: ConnectionId(2),
+                stream_id: StreamId(3),
+                client_addr: "127.0.0.1:1".parse().unwrap(),
+                client_identity: transmog_core::ClientIdentity::default(),
+                proxy_addr: "127.0.0.1:2".parse().unwrap(),
+                ingress_version: HttpLegVersion::Http2,
+                egress_version: None,
+            },
+            request.target.clone(),
+        );
+        let mut chain = InterceptorChainFactory::new(vec![registration], HookLimits::default())
+            .create_exchange(metadata)
+            .unwrap();
+        assert!(matches!(
+            chain.request_head(request).await.unwrap(),
+            RequestHeadOutcome::Abort(_)
+        ));
+        let reports = chain
+            .hook_effects()
+            .into_iter()
+            .filter_map(|effect| match effect.action {
+                HookEffectAction::ScriptReport(report) => Some(report),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(reports.len(), 1);
+        let exchange = serde_json::to_string(&reports).unwrap();
+        assert!(!exchange.contains("global-startup"));
+        assert!(exchange.contains("unavailable"));
+    }
+
     #[test]
     fn startup_discards_older_schema_slots_without_compiling_or_restoring_scripts() {
         for version in 0..SCRIPT_WORKSPACE_SCHEMA_VERSION {
@@ -1914,6 +2116,25 @@ mod tests {
         .unwrap();
         let reopened = registry_with_path(path);
         let before = reopened.status();
+        let inspected = reopened.inspection_status();
+        assert_eq!(inspected.generation, before.generation);
+        assert_eq!(inspected.scripts.len(), 1);
+        assert_eq!(inspected.scripts[0].state, "active");
+        assert_eq!(inspected.scripts[0].available, Some(false));
+        assert_eq!(inspected.scripts[0].revision, 1);
+        assert_eq!(inspected.scripts[0].saved_revision, Some(2));
+        assert!(
+            inspected.scripts[0]
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("unavailable")
+        );
+        assert!(
+            !serde_json::to_string(&inspected)
+                .unwrap()
+                .contains("export function")
+        );
         assert!(!before.runtimes[0].available);
         assert_eq!(before.runtimes[0].revision, 1);
         assert!(

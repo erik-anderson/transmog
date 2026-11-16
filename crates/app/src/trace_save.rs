@@ -584,6 +584,7 @@ pub(crate) fn write_session<W: Write>(
         let script_report = match &effect.action {
             HookEffectAction::ScriptReport(report) if !report.annotations.is_empty() => {
                 Some(transmog_core::intercept::ScriptReport {
+                    execution: None,
                     details_omitted: false,
                     logs: Vec::new(),
                     exception: None,

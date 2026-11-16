@@ -234,6 +234,9 @@ async fn state_parameters_body_edits_and_terminal_reports_share_one_exchange() {
             .response_body_pipeline(&head, &response, false, BodyPipelineLimits::default())
             .await
             .unwrap();
+        assert!(chain.hook_effects().iter().any(|effect| matches!(&effect.action,
+            HookEffectAction::ScriptReport(report) if report.execution.as_ref().is_some_and(|execution|
+                execution.callback == "onResponseBody" && execution.reason.as_deref() == Some("body-filter")))));
         assert!(pipeline.buffers_head());
         assert_eq!(
             pipeline
@@ -262,7 +265,7 @@ async fn state_parameters_body_edits_and_terminal_reports_share_one_exchange() {
                 response_head: head.clone(),
             })
             .await;
-        assert!(chain.hook_effects().iter().any(|e| matches!(&e.action, HookEffectAction::ScriptReport(report) if report.annotations[0].note == "Processed")));
+        assert!(chain.hook_effects().iter().any(|e| matches!(&e.action, HookEffectAction::ScriptReport(report) if report.annotations.first().is_some_and(|annotation| annotation.note == "Processed"))));
         assert!(
             chain
                 .hook_effects()
@@ -310,6 +313,120 @@ fn tests_cannot_override_applied_parameters_or_header_read_authority() {
 }
 
 #[tokio::test]
+async fn silent_callbacks_and_native_filter_skips_have_distinct_execution_evidence() {
+    use transmog_core::intercept::ScriptExecutionOutcome;
+    for matches in [true, false] {
+        let mut config = manifest("", &[ScriptHandler::RequestHead]);
+        if !matches {
+            config.prefilter.host = Some("unrelated.test".into());
+        }
+        let runner = Arc::new(Runner(move |_: ScriptInvocation| {
+            assert!(matches, "native filtering must prevent invocation");
+            ScriptAction::Continue.into()
+        }));
+        let factory = InterceptorChainFactory::new(
+            vec![registration(config, runner).unwrap()],
+            HookLimits::default(),
+        );
+        let mut chain = factory.create_exchange(metadata()).unwrap();
+        chain.request_head(request()).await.unwrap();
+        let effects = chain.hook_effects();
+        let evidence = effects
+            .iter()
+            .find_map(|effect| match &effect.action {
+                HookEffectAction::ScriptReport(report) => report.execution.as_ref(),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(evidence.callback, "onRequestHead");
+        assert_eq!(
+            evidence.outcome,
+            if matches {
+                ScriptExecutionOutcome::Succeeded
+            } else {
+                ScriptExecutionOutcome::Skipped
+            }
+        );
+        assert_eq!(
+            evidence.reason.as_deref(),
+            if matches {
+                None
+            } else {
+                Some("request-filter")
+            }
+        );
+    }
+}
+
+#[tokio::test]
+async fn terminal_callback_failures_preserve_the_message_and_source_location() {
+    struct Failing;
+    impl ScriptRunner for Failing {
+        fn invoke(&self, _: ScriptInvocation) -> BoxScriptFuture<'_> {
+            Box::pin(async {
+                Err(ScriptFailure {
+                    category: ScriptFailureCategory::Exception,
+                    message: "missing diagnostic configuration".into(),
+                    line: Some(17),
+                    column: Some(9),
+                    logs: Vec::new(),
+                    exception: None,
+                })
+            })
+        }
+    }
+    for handler in [ScriptHandler::Completed, ScriptHandler::Failed] {
+        let factory = InterceptorChainFactory::new(
+            vec![registration(manifest("", &[handler]), Arc::new(Failing)).unwrap()],
+            HookLimits::default(),
+        );
+        let mut chain = factory.create_exchange(metadata()).unwrap();
+        chain.request_head(request()).await.unwrap();
+        if handler == ScriptHandler::Completed {
+            chain
+                .completed(CompletedExchange {
+                    metadata: Arc::clone(chain.context().metadata()),
+                    request_head: request(),
+                    response_head: ResponseHead {
+                        status: 200,
+                        source_version: HttpLegVersion::Http1,
+                        headers: HeaderBlock::new(),
+                    },
+                })
+                .await;
+        } else {
+            chain
+                .failed(transmog_core::intercept::ExchangeFailure {
+                    metadata: Arc::clone(chain.context().metadata()),
+                    stage: transmog_core::intercept::ExchangeStage::Upstream,
+                    kind: transmog_core::intercept::ExchangeFailureKind::Upstream,
+                    request_committed: false,
+                    response_committed: false,
+                    message: "upstream failed".into(),
+                })
+                .await;
+        }
+        let effects = chain.hook_effects();
+        let report = effects
+            .iter()
+            .find_map(|effect| match &effect.action {
+                HookEffectAction::ScriptReport(report) if !report.diagnostics.is_empty() => {
+                    Some(report)
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert!(report.diagnostics[0].contains(handler.export_name()));
+        assert!(report.diagnostics[0].contains("17:9"));
+        assert!(report.diagnostics[0].contains("missing diagnostic configuration"));
+        assert_eq!(
+            report.execution.as_ref().unwrap().outcome,
+            transmog_core::intercept::ScriptExecutionOutcome::Failed
+        );
+    }
+}
+
+#[tokio::test]
 async fn failed_callback_receives_category_and_reports_validation_failures() {
     use transmog_core::intercept::{
         ExchangeFailure, ExchangeFailureKind, ExchangeStage, HookPhase,
@@ -325,13 +442,14 @@ async fn failed_callback_receives_category_and_reports_validation_failures() {
             assert!(event.response.is_none());
             assert!(event.body.is_none());
             if invalid {
-                ScriptAction::Edit {
-                    edits: ScriptEdits {
-                        bytes: Some(vec![]),
-                        ..Default::default()
-                    },
+                ScriptResult {
+                    logs: serde_json::from_value(serde_json::json!([{
+                        "context":{"revision":"test-build","callback":"onFailed","invocation":1,"exchangeId":"1"},
+                        "records":[{"sequence":1,"timeUnixMs":1,"level":"info","text":"before invalid result","frames":[],"truncated":false}],
+                        "dropped":0,"incomplete":false
+                    }])).unwrap(),
+                    ..ScriptAction::Edit { edits: ScriptEdits { bytes: Some(vec![]), ..Default::default() } }.into()
                 }
-                .into()
             } else {
                 ScriptResult {
                     diagnostics: vec!["Upstream failed".into()],
@@ -367,7 +485,9 @@ async fn failed_callback_receives_category_and_reports_validation_failures() {
             .unwrap();
         assert_eq!(report.diagnostics.len(), 1);
         if invalid {
-            assert!(report.diagnostics[0].contains("Terminal script callback failed"));
+            assert!(report.diagnostics[0].contains("onFailed failed"));
+            assert!(report.diagnostics[0].contains("decision is not authorized for this phase"));
+            assert_eq!(report.logs[0].records[0].text, "before invalid result");
         } else {
             assert_eq!(report.diagnostics[0], "Upstream failed");
         }
@@ -863,6 +983,13 @@ async fn scenario_preserves_callback_evidence_when_body_output_processing_fails(
 async fn scenario_reports_terminal_gate_panics_and_timeouts() {
     struct GateFailure(bool);
     impl ScriptRunner for GateFailure {
+        fn terminal_logs(&self, exchange: &str, handler: ScriptHandler) -> Vec<LogRun> {
+            serde_json::from_value(serde_json::json!([{
+                "context":{"revision":"test-build","callback":handler.export_name(),"invocation":1,"exchangeId":exchange},
+                "records":[{"sequence":1,"timeUnixMs":1,"level":"info","text":"before terminal gate failure","frames":[],"truncated":false}],
+                "dropped":0,"incomplete":true
+            }])).unwrap()
+        }
         fn invoke(&self, _: ScriptInvocation) -> BoxScriptFuture<'_> {
             Box::pin(async move {
                 assert!(!self.0, "contained terminal panic");
@@ -870,21 +997,109 @@ async fn scenario_reports_terminal_gate_panics_and_timeouts() {
             })
         }
     }
-    for (panic, category) in [
-        (true, ScriptFailureCategory::Crash),
-        (false, ScriptFailureCategory::Timeout),
-    ] {
-        let result = test_scenario(
-            manifest("", &[ScriptHandler::Completed]),
-            Arc::new(GateFailure(panic)),
-            scenario_fixture(),
-        )
-        .await
-        .unwrap();
-        assert_eq!(result.outcome, "completed");
-        assert_eq!(result.verdict, ScriptScenarioVerdict::Failed);
-        assert_eq!(result.steps[5].selection, ScriptScenarioSelection::Failed);
-        assert_eq!(result.steps[5].error.as_ref().unwrap().category, category);
-        assert!(result.error.is_some());
+    for handler in [ScriptHandler::Completed, ScriptHandler::Failed] {
+        for (panic, category) in [
+            (true, ScriptFailureCategory::Crash),
+            (false, ScriptFailureCategory::Timeout),
+        ] {
+            let mut fixture = scenario_fixture();
+            if handler == ScriptHandler::Failed {
+                fixture.response = None;
+                fixture.failure = Some(transmog_core::intercept::ExchangeFailureCategory::Upstream);
+            }
+            let result = test_scenario(
+                manifest("", &[handler]),
+                Arc::new(GateFailure(panic)),
+                fixture,
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                result.outcome,
+                if handler == ScriptHandler::Completed {
+                    "completed"
+                } else {
+                    "failed"
+                }
+            );
+            assert_eq!(result.verdict, ScriptScenarioVerdict::Failed);
+            let step = result
+                .steps
+                .iter()
+                .find(|step| step.handler == handler)
+                .unwrap();
+            assert_eq!(step.selection, ScriptScenarioSelection::Failed);
+            let failure = step.error.as_ref().unwrap();
+            assert_eq!(failure.category, category);
+            assert_eq!(
+                failure.logs[0].records[0].text,
+                "before terminal gate failure"
+            );
+            assert!(result.error.is_some());
+        }
     }
+}
+
+#[tokio::test]
+async fn terminal_gate_failure_preserves_an_already_returned_result() {
+    let factory = ScriptFactory {
+        manifest: Arc::new(manifest("", &[ScriptHandler::Completed])),
+        runner: Arc::new(Runner(|_| ScriptResult {
+            diagnostics: (0..32)
+                .map(|index| format!("authored diagnostic {index}"))
+                .collect(),
+            ..ScriptAction::Continue.into()
+        })),
+        assets: None,
+    };
+    let interceptor = factory.create(&metadata()).unwrap();
+    let chain = InterceptorChainFactory::new(Vec::new(), HookLimits::default())
+        .create_exchange(metadata())
+        .unwrap();
+    let action = interceptor
+        .on_request_head(RequestHeadEvent {
+            context: chain.context().clone(),
+            head: request(),
+        })
+        .await;
+    assert!(matches!(action, RequestHeadAction::Continue));
+    assert!(interceptor.take_script_report().is_some());
+    interceptor
+        .on_completed(CompletedExchange {
+            metadata: Arc::clone(chain.context().metadata()),
+            request_head: request(),
+            response_head: ResponseHead {
+                status: 200,
+                headers: HeaderBlock::new(),
+                source_version: HttpLegVersion::Http1,
+            },
+        })
+        .await;
+    let report = interceptor
+        .take_terminal_script_report(
+            transmog_core::intercept::HookPhase::Completed,
+            Some(&transmog_core::intercept::HookExecutionError::TimedOut),
+        )
+        .unwrap();
+    assert_eq!(report.diagnostics.len(), 32);
+    assert_eq!(report.diagnostics[0], "authored diagnostic 0");
+    assert!(report.diagnostics[31].contains("Native terminal callback failed"));
+    assert!(report.details_omitted);
+    assert_eq!(
+        report.execution.as_ref().unwrap().outcome,
+        transmog_core::intercept::ScriptExecutionOutcome::Succeeded
+    );
+}
+
+#[test]
+fn diagnostic_messages_follow_the_configured_byte_budget() {
+    let mut config = manifest("", &[ScriptHandler::RequestHead]);
+    config.limits.max_log_bytes = 128 * 1024;
+    let result = ScriptResult {
+        diagnostics: vec!["x".repeat(80_000)],
+        ..ScriptAction::Continue.into()
+    };
+    assert!(validate_result(&config, ScriptHandler::RequestHead, &request(), &result).is_ok());
+    config.limits.max_log_bytes = 64 * 1024;
+    assert!(validate_result(&config, ScriptHandler::RequestHead, &request(), &result).is_err());
 }

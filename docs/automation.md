@@ -986,6 +986,12 @@ return on reopening. While closed, breakpoints and `debugger;` do not pause exec
 
 The live proxy uses the main window's workspace; capture-window visualizers use
 their own workspace. Extension breakpoints are shared, but worker control stays
-with its owning window. Source, variables, exceptions and console output are
-local and temporary, outside normal trace, case, support and MCP output. See the
-[Script API](scripting.md#debug-a-script) for inspection and console semantics.
+with its owning window. Source and variables stay local. Exceptions and console
+output are temporary and excluded from normal trace, case and support output.
+Authorized agents can inspect scoped script logs and exceptions under the
+[MCP diagnostic disclosure rules](mcp-reference.md#script-diagnostics).
+When an applied worker cannot start, exchange findings report its unavailability.
+Inspect startup errors, exceptions and logs in Automation → Scripts or, with
+all-traffic scope and unredacted access, `transmog_scripts_status` with
+`includeDiagnostics: true`.
+See the [Script API](scripting.md#debug-a-script) for inspection and console semantics.

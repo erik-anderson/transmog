@@ -24,6 +24,7 @@ mod authoring;
 mod context;
 mod inspection;
 mod rule_tests;
+mod scripts;
 mod sends;
 mod sessions;
 pub use sessions::SessionReview;
@@ -331,6 +332,7 @@ impl AgentApplication {
                 json!({"connected":true,"instanceId":self.instance_id,"grant":{"id":grant.id,"name":grant.name,"permissions":grant.permissions,"scope":grant.scope,"expiresAt":grant.expires_at,"omitSensitiveValues":grant.omit_sensitive_values},"sensitiveAccess":self.access.sensitive_access_status(&grant)?,"proxy":self.application.status(),"recordingActive":matches!(self.application.capture_status(), transmog_app::CaptureReadModel::Active{..}),"limits":{"pageSize":200,"bodyReadBytes":65536,"controlLeaseSeconds":600}}),
             ),
             "transmog_traffic_list" => self.traffic_page(&grant, &input),
+            "transmog_scripts_status" => self.scripts_status(&grant, &input),
             "transmog_exchange_get" => self.exchange(&grant, &input),
             "transmog_exchanges_get" => self.exchanges(&grant, &input),
             "transmog_body_extract" => self.extract_body(&grant, &input).await,
@@ -1308,8 +1310,21 @@ fn mask_headers(value: &mut Value, reveal: bool) {
 fn can_read_script_reports(grant: &Grant) -> bool {
     grant.allows(Permission::ReadCredentials) && grant.allows(Permission::ReadBodies)
 }
+
+fn has_initializer_logs(reports: &Value) -> bool {
+    reports.as_array().is_some_and(|reports| {
+        reports.iter().any(|report| {
+            report["logs"].as_array().is_some_and(|logs| {
+                logs.iter()
+                    .any(|run| run["context"]["exchangeId"].is_null())
+            })
+        })
+    })
+}
+
 fn project_script_reports(detail: &mut Value, grant: &Grant) {
     let reveal = can_read_script_reports(grant);
+    let exchange_id = detail["id"].as_str().unwrap_or_default().to_owned();
     // Script exceptions and abort reasons also enter native diagnostic strings.
     // Preserve structural state while withholding free text through every view.
     detail["diagnosticsAvailable"] = json!(reveal);
@@ -1323,20 +1338,23 @@ fn project_script_reports(detail: &mut Value, grant: &Grant) {
         .and_then(Value::as_array_mut)
     {
         for report in reports {
-            // Detailed source/exception inspection is a local authoring surface.
-            // Keep the existing MCP findings contract independent of it.
-            report
-                .as_object_mut()
-                .expect("script report")
-                .remove("exception");
-            report
-                .as_object_mut()
-                .expect("script report")
-                .remove("detailsOmitted");
-            report
-                .as_object_mut()
-                .expect("script report")
-                .remove("logs");
+            report["logRunCount"] = json!(report["logs"].as_array().map_or(0, Vec::len));
+            report["exceptionAvailable"] = json!(report["exception"].is_object());
+            let mut withheld = 0;
+            if reveal && let Some(logs) = report["logs"].as_array_mut() {
+                logs.retain(|run| {
+                    let allowed = run["context"]["exchangeId"]
+                        .as_str()
+                        .map_or_else(|| matches!(grant.scope, Scope::All), |id| id == exchange_id);
+                    withheld += usize::from(!allowed);
+                    allowed
+                });
+            }
+            report["withheldLogRunCount"] = if reveal {
+                json!(withheld)
+            } else {
+                report["logRunCount"].clone()
+            };
             report["contentAvailable"] = json!(reveal);
             report["annotationCount"] = json!(report["annotations"].as_array().map_or(0, Vec::len));
             report["diagnosticCount"] = json!(report["diagnostics"].as_array().map_or(0, Vec::len));
@@ -1344,6 +1362,8 @@ fn project_script_reports(detail: &mut Value, grant: &Grant) {
                 let fields = report.as_object_mut().expect("script report");
                 fields.remove("annotations");
                 fields.remove("diagnostics");
+                fields.remove("logs");
+                fields.remove("exception");
             }
         }
     }

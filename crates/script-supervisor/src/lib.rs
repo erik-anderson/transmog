@@ -399,6 +399,19 @@ impl ScriptRunner for SupervisedScriptRunner {
     ) -> Option<Arc<transmog_script_diagnostics::supervision::PauseClock>> {
         self.clock_for_exchange(exchange)
     }
+    fn terminal_logs(
+        &self,
+        exchange: &str,
+        handler: transmog_script::ScriptHandler,
+    ) -> Vec<transmog_script::LogRun> {
+        self.logs()
+            .into_iter()
+            .filter(|run| {
+                run.context.exchange_id.as_deref() == Some(exchange)
+                    && run.context.callback == handler.export_name()
+            })
+            .collect()
+    }
     fn invoke(&self, invocation: ScriptInvocation) -> BoxScriptFuture<'_> {
         if self.failed.load(Ordering::Acquire) {
             return Box::pin(async { Err(unavailable("script host is unavailable")) });

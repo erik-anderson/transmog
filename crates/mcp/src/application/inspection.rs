@@ -291,19 +291,12 @@ impl AgentApplication {
                 .application
                 .copy_message_url(string(input, "id")?, "client-request")
                 .map_err(app_error)?;
-            let mut required = if grant.allows(Permission::ReadCredentials) {
-                vec![Permission::Inspect, Permission::ReadCredentials]
-            } else {
-                vec![Permission::Inspect]
-            };
-            if can_read_script_reports(grant) {
-                required.push(Permission::ReadBodies);
-            }
+            let required = exchange_context_permissions(grant);
             Some(self.context_json(
                 grant,
                 &complete,
                 required,
-                json!({"kind":"exchange","id":input["id"]}),
+                json!({"kind":"exchange","id":input["id"],"requiresAllTraffic":has_initializer_logs(&complete["scriptReports"])}),
                 url,
                 Some(string(input, "id")?.into()),
             )?)
@@ -322,7 +315,7 @@ impl AgentApplication {
             result["timing"] = json!({"points":detail["performance"]["points"],"work":detail["performance"]["work"],"protocols":detail["performance"]["protocols"]});
         }
         if sections.contains(&"changes") || sections.contains(&"all") {
-            result["changes"] = json!({"hooks":detail["hookEffects"],"scripts":detail["scriptReports"],"headers":detail["headerEffects"],"bodies":detail["bodyEdits"],"autoResponse":detail["autoResponse"]});
+            result["changes"] = json!({"hooks":detail["hookEffects"],"scripts":detail["scriptReports"],"scriptExecutions":detail["scriptExecutions"],"headers":detail["headerEffects"],"bodies":detail["bodyEdits"],"autoResponse":detail["autoResponse"]});
         }
         if sections.contains(&"transport") || sections.contains(&"all") {
             result["transport"] = json!({"connections":detail["performance"]["transports"],"routeSelection":detail["routeSelection"],"routeAttempts":detail["routeAttempts"],"diagnostics":detail["diagnostics"],"diagnosticsAvailable":detail["diagnosticsAvailable"],"stream":detail["stream"],"sequenceLoss":detail["sequenceLoss"]});
@@ -330,9 +323,20 @@ impl AgentApplication {
         if let Some(context) = context {
             result["context"] = context;
         }
-        if result.get("context").is_some()
-            && serde_json::to_vec(&result).is_ok_and(|bytes| bytes.len() > 512 * 1024)
-        {
+        if serde_json::to_vec(&result).is_ok_and(|bytes| bytes.len() > 512 * 1024) {
+            if result.get("context").is_none() {
+                let required = exchange_context_permissions(grant);
+                result["context"] = self.context_json(
+                    grant,
+                    &result,
+                    required,
+                    json!({"kind":"exchange","id":input["id"],"requiresAllTraffic":has_initializer_logs(&result["changes"]["scripts"])}),
+                    self.application
+                        .copy_message_url(string(input, "id")?, "client-request")
+                        .map_err(app_error)?,
+                    Some(string(input, "id")?.into()),
+                )?;
+            }
             result = json!({"instanceId":self.instance_id,"id":detail["id"],"requestNumber":detail["requestNumber"],"startedAt":detail["startedAt"],"terminal":detail["terminal"],"terminalState":detail["terminalState"],"terminalDetailsAvailable":detail["terminalDetailsAvailable"],"context":result["context"],"inlineComplete":false});
         }
         bounded(result, 512 * 1024)
@@ -671,7 +675,18 @@ impl AgentApplication {
     }
 }
 
-fn bounded(value: Value, max: usize) -> Result<Value, Error> {
+fn exchange_context_permissions(grant: &Grant) -> Vec<Permission> {
+    let mut required = vec![Permission::Inspect];
+    if grant.allows(Permission::ReadCredentials) {
+        required.push(Permission::ReadCredentials);
+    }
+    if can_read_script_reports(grant) {
+        required.push(Permission::ReadBodies);
+    }
+    required
+}
+
+pub(super) fn bounded(value: Value, max: usize) -> Result<Value, Error> {
     if serde_json::to_vec(&value)
         .map_err(|_| invalid("Result encoding failed."))?
         .len()

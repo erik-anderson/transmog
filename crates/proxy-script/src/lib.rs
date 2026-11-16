@@ -1013,6 +1013,11 @@ pub trait ScriptRunner: Send + Sync {
     }
     /// Executes one already-bounded invocation.
     fn invoke(&self, invocation: ScriptInvocation) -> BoxScriptFuture<'_>;
+    /// Bounded accepted output for an interrupted terminal callback on this exact exchange.
+    /// Must exclude initializer streams and other exchanges' or callbacks' output.
+    fn terminal_logs(&self, _exchange: &str, _handler: ScriptHandler) -> Vec<LogRun> {
+        Vec::new()
+    }
     /// Authenticated pause clock for this exact exchange; ordinary runners return none.
     fn debug_pause_clock(
         &self,

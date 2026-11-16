@@ -145,6 +145,14 @@ impl AgentApplication {
         for permission in &context.required {
             grant.require(*permission)?;
         }
+        if (context.source["kind"] == "script-status"
+            || context.source["requiresAllTraffic"] == true)
+            && !matches!(grant.scope, Scope::All)
+        {
+            return Err(denied(
+                "This context includes global script diagnostics and requires all-traffic scope.",
+            ));
+        }
         let allowed = context.entry_id.as_deref().map_or_else(
             || grant.scope.allows_url(&context.url),
             |id| {

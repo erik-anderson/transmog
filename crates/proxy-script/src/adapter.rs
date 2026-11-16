@@ -7,7 +7,10 @@ use std::sync::{
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use transmog_core::intercept::{BufferedHead, CompletedExchange, ExchangeFailure, ScriptReport};
+use transmog_core::intercept::{
+    BufferedHead, CompletedExchange, ExchangeFailure, HookExecutionError, HookPhase,
+    ScriptExecution, ScriptExecutionOutcome, ScriptReport,
+};
 
 use super::{
     Arc, BTreeMap, BodyHookError, BodyPlan, BoxBodyFuture, BoxHookFuture, BufferedBody,
@@ -130,10 +133,17 @@ impl Shared {
         event.context.elapsed_ms =
             u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let result = self.runner.invoke(event).await?;
-        validate_result(&self.manifest, handler, request, &result)?;
-        if let Some((bytes, end, editable)) = chunk {
-            validate_stream_window(&self.manifest, &result, bytes.len(), end, editable)?;
-        }
+        validate_result(&self.manifest, handler, request, &result)
+            .and_then(|()| {
+                if let Some((bytes, end, editable)) = chunk {
+                    validate_stream_window(&self.manifest, &result, bytes.len(), end, editable)?;
+                }
+                Ok(())
+            })
+            .map_err(|mut failure| {
+                failure.logs.clone_from(&result.logs);
+                failure
+            })?;
         if let Some(next) = &result.state {
             state.clone_from(next);
         }
@@ -158,28 +168,90 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-fn report(result: &ScriptResult) -> Option<ScriptReport> {
-    (!result.annotations.is_empty() || !result.diagnostics.is_empty() || !result.logs.is_empty())
-        .then(|| ScriptReport {
-            logs: result.logs.clone(),
-            details_omitted: false,
-            annotations: result.annotations.clone(),
-            diagnostics: result.diagnostics.clone(),
-            exception: None,
-        })
+fn execution(
+    handler: ScriptHandler,
+    outcome: ScriptExecutionOutcome,
+    reason: Option<&str>,
+) -> ScriptExecution {
+    ScriptExecution {
+        callback: handler.export_name().into(),
+        outcome,
+        reason: reason.map(str::to_owned),
+    }
 }
 
-fn failure_report(failure: &ScriptFailure) -> ScriptReport {
+fn report(result: &ScriptResult, handler: ScriptHandler) -> ScriptReport {
     ScriptReport {
+        execution: Some(Box::new(execution(
+            handler,
+            ScriptExecutionOutcome::Succeeded,
+            None,
+        ))),
+        logs: result.logs.clone(),
+        details_omitted: false,
+        annotations: result.annotations.clone(),
+        diagnostics: result.diagnostics.clone(),
+        exception: None,
+    }
+}
+
+fn failure_report(failure: &ScriptFailure, handler: ScriptHandler) -> ScriptReport {
+    let location = failure
+        .line
+        .map_or_default(|line| format!(" at {line}:{}", failure.column.unwrap_or(1)));
+    ScriptReport {
+        execution: Some(Box::new(execution(
+            handler,
+            ScriptExecutionOutcome::Failed,
+            None,
+        ))),
         logs: failure.logs.clone(),
         details_omitted: false,
         annotations: Vec::new(),
-        diagnostics: vec![format!("Script callback failed: {:?}", failure.category)],
+        diagnostics: vec![format!(
+            "{} failed{location}: {:?}: {}",
+            handler.export_name(),
+            failure.category,
+            super::bounded(&failure.message, 512)
+        )],
         exception: failure.exception.clone(),
     }
 }
 
+pub(super) fn terminal_failure(
+    failure: HookExecutionError,
+    logs: Vec<super::LogRun>,
+) -> ScriptFailure {
+    ScriptFailure {
+        category: match failure {
+            HookExecutionError::TimedOut => super::ScriptFailureCategory::Timeout,
+            HookExecutionError::Panicked => super::ScriptFailureCategory::Crash,
+            HookExecutionError::Cancelled | HookExecutionError::ShuttingDown => {
+                super::ScriptFailureCategory::Unavailable
+            }
+        },
+        message: super::bounded(&failure.to_string(), 512),
+        logs,
+        line: None,
+        column: None,
+        exception: None,
+    }
+}
+
 impl ScriptInterceptor {
+    fn skipped(&self, handler: ScriptHandler, reason: &str) {
+        // One request-filter decision explains all callbacks for a rejected exchange.
+        if handler == ScriptHandler::RequestHead || self.selected(handler) {
+            *lock(&self.report) = Some(ScriptReport {
+                execution: Some(Box::new(execution(
+                    handler,
+                    ScriptExecutionOutcome::Skipped,
+                    Some(reason),
+                ))),
+                ..ScriptReport::default()
+            });
+        }
+    }
     fn selected(&self, handler: ScriptHandler) -> bool {
         self.shared.manifest.handlers.contains(&handler) && self.admitted.load(Ordering::Acquire)
     }
@@ -225,20 +297,13 @@ impl ScriptInterceptor {
                 )
                 .await
             {
-                Ok(result) => *lock(&self.report) = report(&result),
+                Ok(result) => *lock(&self.report) = Some(report(&result, handler)),
                 Err(error) => {
-                    *lock(&self.report) = Some(ScriptReport {
-                        logs: error.logs,
-                        details_omitted: false,
-                        annotations: Vec::new(),
-                        diagnostics: vec![format!(
-                            "Terminal script callback failed: {:?}",
-                            error.category
-                        )],
-                        exception: error.exception,
-                    });
+                    *lock(&self.report) = Some(failure_report(&error, handler));
                 }
             }
+        } else {
+            self.skipped(handler, "handler-not-declared");
         }
         self.shared.state.lock().await.clear();
         self.shared.terminal.store(true, Ordering::Release);
@@ -270,6 +335,42 @@ impl ExchangeInterceptor for ScriptInterceptor {
     fn take_script_report(&self) -> Option<ScriptReport> {
         lock(&self.report).take()
     }
+    fn take_terminal_script_report(
+        &self,
+        phase: HookPhase,
+        failure: Option<&HookExecutionError>,
+    ) -> Option<ScriptReport> {
+        let report = self.take_script_report();
+        let Some(failure) = failure else {
+            return report;
+        };
+        let handler = match phase {
+            HookPhase::Completed => ScriptHandler::Completed,
+            HookPhase::Failed => ScriptHandler::Failed,
+            _ => return report,
+        };
+        let mut report = if let Some(mut report) = report {
+            // A result can arrive just before native cleanup hits its deadline.
+            // Preserve that result and make the separate native failure visible.
+            report.diagnostics.truncate(31);
+            report
+                .diagnostics
+                .push(format!("Native terminal callback failed: {failure}"));
+            report
+        } else {
+            if !self.selected(handler) {
+                return None;
+            }
+            let logs = self.shared.runner.terminal_logs(
+                &format!("{:032x}", self.shared.metadata.exchange_id.0),
+                handler,
+            );
+            failure_report(&terminal_failure(*failure, logs), handler)
+        };
+        // Native cancellation can stop output before its ordered end marker.
+        report.details_omitted = true;
+        Some(report)
+    }
 
     fn on_request_head(&self, event: RequestHeadEvent) -> BoxHookFuture<'_, RequestHeadAction> {
         self.admitted.store(
@@ -279,13 +380,21 @@ impl ExchangeInterceptor for ScriptInterceptor {
         *lock(&self.shared.request) = Some(event.head.clone());
         Box::pin(async move {
             if let Some(error) = lock(&self.debug_admission).take() {
-                *lock(&self.report) = Some(failure_report(&error));
+                *lock(&self.report) = Some(failure_report(&error, ScriptHandler::RequestHead));
                 return RequestHeadAction::Abort(script_failure_abort(
                     &self.shared.manifest,
                     &error,
                 ));
             }
             if !self.selected(ScriptHandler::RequestHead) {
+                self.skipped(
+                    ScriptHandler::RequestHead,
+                    if self.admitted.load(Ordering::Acquire) {
+                        "handler-not-declared"
+                    } else {
+                        "request-filter"
+                    },
+                );
                 return RequestHeadAction::Continue;
             }
             let result = match self
@@ -302,14 +411,14 @@ impl ExchangeInterceptor for ScriptInterceptor {
             {
                 Ok(result) => result,
                 Err(error) => {
-                    *lock(&self.report) = Some(failure_report(&error));
+                    *lock(&self.report) = Some(failure_report(&error, ScriptHandler::RequestHead));
                     return RequestHeadAction::Abort(script_failure_abort(
                         &self.shared.manifest,
                         &error,
                     ));
                 }
             };
-            *lock(&self.report) = report(&result);
+            *lock(&self.report) = Some(report(&result, ScriptHandler::RequestHead));
             match result.decision {
                 ScriptAction::NeedMore
                 | ScriptAction::Forward { .. }
@@ -370,6 +479,7 @@ impl ExchangeInterceptor for ScriptInterceptor {
         *lock(&self.shared.request) = Some(event.request_head.clone());
         Box::pin(async move {
             if !self.selected(ScriptHandler::ResponseHead) {
+                self.skipped(ScriptHandler::ResponseHead, "handler-not-declared");
                 return ResponseHeadAction::Continue;
             }
             let result = match self
@@ -386,14 +496,14 @@ impl ExchangeInterceptor for ScriptInterceptor {
             {
                 Ok(result) => result,
                 Err(error) => {
-                    *lock(&self.report) = Some(failure_report(&error));
+                    *lock(&self.report) = Some(failure_report(&error, ScriptHandler::ResponseHead));
                     return ResponseHeadAction::Abort(script_failure_abort(
                         &self.shared.manifest,
                         &error,
                     ));
                 }
             };
-            *lock(&self.report) = report(&result);
+            *lock(&self.report) = Some(report(&result, ScriptHandler::ResponseHead));
             *lock(&self.response_mode) = result.body;
             self.defer_headers
                 .store(result.defer_headers, Ordering::Release);
@@ -443,6 +553,14 @@ impl ExchangeInterceptor for ScriptInterceptor {
                 false,
             ))
         } else {
+            self.skipped(
+                ScriptHandler::RequestBody,
+                if self.selected(ScriptHandler::RequestBody) {
+                    "body-filter"
+                } else {
+                    "handler-not-declared"
+                },
+            );
             RequestBodyAction::pass_through()
         };
         Box::pin(async move { action })
@@ -452,7 +570,19 @@ impl ExchangeInterceptor for ScriptInterceptor {
         self.local.store(event.local_response, Ordering::Release);
         let mode = lock(&self.response_mode)
             .unwrap_or_else(|| default_response_mode(&self.shared.manifest));
-        let handler = if mode == super::ScriptBodyMode::Stream {
+        let handler = if mode == super::ScriptBodyMode::Stream
+            || (mode == super::ScriptBodyMode::Skip
+                && self
+                    .shared
+                    .manifest
+                    .handlers
+                    .contains(&ScriptHandler::ResponseChunk)
+                && !self
+                    .shared
+                    .manifest
+                    .handlers
+                    .contains(&ScriptHandler::ResponseBody))
+        {
             ScriptHandler::ResponseChunk
         } else {
             ScriptHandler::ResponseBody
@@ -487,6 +617,22 @@ impl ExchangeInterceptor for ScriptInterceptor {
                 )
             })
         } else {
+            self.skipped(
+                handler,
+                if mode == super::ScriptBodyMode::Skip {
+                    "body-mode"
+                } else if !self.selected(handler) {
+                    "handler-not-declared"
+                } else if transmog_core::body_semantics(
+                    &event.request_head.method,
+                    event.response_head.status,
+                ) != transmog_core::BodySemantics::Allowed
+                {
+                    "no-response-body"
+                } else {
+                    "body-filter"
+                },
+            );
             ResponseBodyAction::pass_through()
         };
         Box::pin(async move { action })
@@ -568,10 +714,10 @@ impl BufferedBodyHandler for ScriptBodyHandler {
                 )
                 .await
                 .map_err(|error| {
-                    self.report = Some(failure_report(&error));
+                    self.report = Some(failure_report(&error, self.handler));
                     BodyHookError::Abort(script_failure_abort(&self.shared.manifest, &error))
                 })?;
-            self.report = report(&result);
+            self.report = Some(report(&result, self.handler));
             let mut data = body.data().clone();
             let mut trailers = body.trailers().cloned();
             match result.decision {

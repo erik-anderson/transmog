@@ -17,9 +17,15 @@ pub(super) struct ScriptResponseStream {
     trailers: Option<HeaderBlock>,
     head_edit: Option<BufferedHead>,
     reports: Vec<ScriptReport>,
-    report_bytes: usize,
-    report_count: usize,
-    reports_omitted: bool,
+    retention: ReportRetention,
+}
+
+#[derive(Default)]
+struct ReportRetention {
+    bytes: usize,
+    count: usize,
+    omitted: bool,
+    execution_reported: bool,
 }
 
 impl ScriptResponseStream {
@@ -40,21 +46,30 @@ impl ScriptResponseStream {
             trailers: None,
             head_edit: None,
             reports: Vec::new(),
-            report_bytes: 0,
-            report_count: 0,
-            reports_omitted: false,
+            retention: ReportRetention::default(),
         }
     }
 
     fn record_report(&mut self, report: ScriptReport) {
+        // One silent success establishes execution without consuming the findings
+        // budget or retaining one audit record for every chunk of a long stream.
+        if !report.has_content() {
+            if !self.retention.execution_reported {
+                self.retention.execution_reported = true;
+                self.reports.push(report);
+            }
+            return;
+        }
+        self.retention.execution_reported = true;
         let bytes = serde_json::to_vec(&report).map_or(usize::MAX, |bytes| bytes.len());
-        if self.report_count < 128 && bytes <= (1024 * 1024usize).saturating_sub(self.report_bytes)
+        if self.retention.count < 128
+            && bytes <= (1024 * 1024usize).saturating_sub(self.retention.bytes)
         {
-            self.report_bytes += bytes;
-            self.report_count += 1;
+            self.retention.bytes += bytes;
+            self.retention.count += 1;
             self.reports.push(report);
-        } else if !self.reports_omitted {
-            self.reports_omitted = true;
+        } else if !self.retention.omitted {
+            self.retention.omitted = true;
             self.reports.push(ScriptReport {
                 details_omitted: true,
                 diagnostics: vec!["Additional streaming findings and diagnostics omitted after the exchange budget was reached".into()],
@@ -112,16 +127,15 @@ impl ScriptResponseStream {
             {
                 Ok(result) => result,
                 Err(error) => {
-                    self.reports.push(failure_report(&error));
+                    self.reports
+                        .push(failure_report(&error, ScriptHandler::ResponseChunk));
                     return Err(BodyHookError::Abort(script_failure_abort(
                         &self.shared.manifest,
                         &error,
                     )));
                 }
             };
-            if let Some(report) = report(&result) {
-                self.record_report(report);
-            }
+            self.record_report(report(&result, ScriptHandler::ResponseChunk));
             let (consumed, bytes, headers, status) = match result.decision {
                 ScriptAction::NeedMore => {
                     if read == input.len() {

@@ -259,10 +259,37 @@ pub struct ScriptAnnotation {
     pub severity: ScriptSeverity,
 }
 
+/// Observed callback execution, independent of findings or traffic changes.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ScriptExecution {
+    /// Declared callback name.
+    pub callback: String,
+    /// Succeeded, failed, or skipped.
+    pub outcome: ScriptExecutionOutcome,
+    /// Native selection reason when the callback was skipped.
+    pub reason: Option<String>,
+}
+
+/// Whether a callback ran, separately from the exchange's network outcome.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ScriptExecutionOutcome {
+    /// The callback returned a valid result.
+    Succeeded,
+    /// Invocation or result validation failed.
+    Failed,
+    /// Native selection prevented invocation.
+    Skipped,
+}
+
 /// Output of one script invocation after validation.
 #[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ScriptReport {
+    /// Ephemeral native execution evidence; omitted from saved traces.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<Box<ScriptExecution>>,
     /// Ephemeral console evidence from the native supervisor.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub logs: Vec<transmog_script_diagnostics::LogRun>,
@@ -276,6 +303,18 @@ pub struct ScriptReport {
     /// Exception or console evidence was omitted or evicted at a native retention boundary.
     #[serde(default, skip_serializing_if = "is_false")]
     pub details_omitted: bool,
+}
+
+impl ScriptReport {
+    /// Whether the report contains findings, developer details or a loss marker.
+    /// Native execution metadata alone does not create a user-facing finding.
+    pub fn has_content(&self) -> bool {
+        !self.annotations.is_empty()
+            || !self.diagnostics.is_empty()
+            || !self.logs.is_empty()
+            || self.exception.is_some()
+            || self.details_omitted
+    }
 }
 
 #[allow(clippy::trivially_copy_pass_by_ref)] // serde skip predicate receives a reference.

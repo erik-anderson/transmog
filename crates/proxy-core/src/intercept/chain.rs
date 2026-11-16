@@ -648,6 +648,7 @@ impl ExchangeChain {
                     name: Arc::clone(&entry.identity.name),
                     source,
                 })?;
+            self.record_script_report(entry, HookPhase::RequestBody);
             if let Some(effect) = body_plan_effect(action.0.plan(), action.0.representation()) {
                 self.context.audit().record(
                     entry.identity.clone(),
@@ -793,6 +794,7 @@ impl ExchangeChain {
                     name: Arc::clone(&entry.identity.name),
                     source,
                 })?;
+            self.record_script_report(entry, HookPhase::ResponseBody);
             if let Some(effect) = body_plan_effect(action.0.plan(), action.0.representation()) {
                 self.context.audit().record(
                     entry.identity.clone(),
@@ -906,11 +908,14 @@ impl ExchangeChain {
                             .await
                     }
                 };
-                if let Some(script_report) = entry.interceptor.take_script_report() {
-                    let phase = match &outcome {
-                        TerminalOutcome::Completed(_) => super::HookPhase::Completed,
-                        TerminalOutcome::Failed(_) => super::HookPhase::Failed,
-                    };
+                let phase = match &outcome {
+                    TerminalOutcome::Completed(_) => super::HookPhase::Completed,
+                    TerminalOutcome::Failed(_) => super::HookPhase::Failed,
+                };
+                if let Some(script_report) = entry
+                    .interceptor
+                    .take_terminal_script_report(phase, result.as_ref().err())
+                {
                     context.audit().record(
                         entry.identity.clone(),
                         phase,

@@ -33,7 +33,7 @@ pub(crate) const INSPECTION_DECODER_OPTIONS: ContentDecoderOptions =
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScriptReportView {
-    /// Ephemeral native console streams, local inspection only.
+    /// Ephemeral native console streams, subject to inspection disclosure.
     pub logs: Vec<transmog_script::LogRun>,
     /// Exact script ID and applied revision.
     pub script: String,
@@ -48,6 +48,19 @@ pub struct ScriptReportView {
     pub exception: Option<Box<transmog_script::ExceptionDiagnostic>>,
     /// Native retention omitted older detailed exception evidence.
     pub details_omitted: bool,
+}
+
+/// Attributed native execution evidence without authored diagnostic text.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScriptExecutionView {
+    /// Exact script ID and applied revision.
+    pub script: String,
+    /// Native hook phase.
+    pub phase: String,
+    /// Actual callback outcome or native skip reason.
+    #[serde(flatten)]
+    pub execution: Box<transmog_core::intercept::ScriptExecution>,
 }
 
 // Findings have their own structured projection and disclosure policy. Never duplicate
@@ -506,6 +519,8 @@ pub struct SessionDetail {
     pub hook_effects: Vec<String>,
     /// Script-authored annotations and live diagnostics, with immutable revision attribution.
     pub script_reports: Vec<ScriptReportView>,
+    /// Ephemeral callback outcomes, including silent successes and native skips.
+    pub script_executions: Vec<ScriptExecutionView>,
     /// Observed head edits in exchange-local execution order, excluding header values.
     pub header_effects: Vec<HeaderEffectView>,
     /// Actual bounded response-body edit outcomes, without body content.
@@ -802,6 +817,7 @@ pub(crate) fn detail_from_snapshot(
     let hook_effects = snapshot
         .hook_effects
         .iter()
+        .filter(|effect| !matches!(&effect.action, HookEffectAction::ScriptReport(report) if !report.has_content()))
         .take(MAX_DIAGNOSTICS)
         .map(|effect| {
             display_text(
@@ -910,15 +926,34 @@ pub(crate) fn detail_from_snapshot(
             .hook_effects
             .iter()
             .filter_map(|e| match &e.action {
-                HookEffectAction::ScriptReport(report) => Some(ScriptReportView {
-                    logs: report.logs.clone(),
-                    script: e.interceptor.id.as_str().to_owned(),
-                    phase: format!("{:?}", e.phase),
-                    annotations: report.annotations.clone(),
-                    diagnostics: report.diagnostics.clone(),
-                    exception: report.exception.clone(),
-                    details_omitted: report.details_omitted,
-                }),
+                HookEffectAction::ScriptReport(report) if report.has_content() => {
+                    Some(ScriptReportView {
+                        logs: report.logs.clone(),
+                        script: e.interceptor.id.as_str().to_owned(),
+                        phase: format!("{:?}", e.phase),
+                        annotations: report.annotations.clone(),
+                        diagnostics: report.diagnostics.clone(),
+                        exception: report.exception.clone(),
+                        details_omitted: report.details_omitted,
+                    })
+                }
+                _ => None,
+            })
+            .collect(),
+        script_executions: snapshot
+            .hook_effects
+            .iter()
+            .filter_map(|effect| match &effect.action {
+                HookEffectAction::ScriptReport(report) => {
+                    report
+                        .execution
+                        .clone()
+                        .map(|execution| ScriptExecutionView {
+                            script: effect.interceptor.id.as_str().to_owned(),
+                            phase: format!("{:?}", effect.phase),
+                            execution,
+                        })
+                }
                 _ => None,
             })
             .collect(),

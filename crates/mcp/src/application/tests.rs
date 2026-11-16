@@ -1,5 +1,6 @@
 use super::*;
 mod api;
+mod scripts;
 mod sessions;
 
 #[test]

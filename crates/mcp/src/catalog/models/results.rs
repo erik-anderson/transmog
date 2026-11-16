@@ -21,6 +21,66 @@ fn count() -> Value {
 fn maybe_text() -> Value {
     nullable(text(16_384))
 }
+fn script_frame() -> Value {
+    let location = object(
+        json!({"source":text(16_384),"line":count(),"column":count()}),
+        &["source", "line", "column"],
+    );
+    object(
+        json!({"function":text(16_384),"generated":nullable(location.clone()),"original":location,"mappingIssue":choice(&["missing","invalid","unmapped","source","budget"])}),
+        &["function", "generated"],
+    )
+}
+fn script_exception() -> Value {
+    let value = object(
+        json!({"name":maybe_text(),"message":text(16_384),"frames":array(script_frame(),32),"unavailable":flag()}),
+        &["name", "message", "frames", "unavailable"],
+    );
+    object(
+        json!({"artifact":text(512),"exception":value.clone(),"causes":array(value,4),"truncated":flag()}),
+        &["exception", "causes", "truncated"],
+    )
+}
+fn script_logs() -> Value {
+    let value = object(
+        json!({"name":text(2048),"parent":nullable(uint(65_535)),"kind":text(32),"display":text(2048),"truncated":flag()}),
+        &["name", "parent", "kind", "display", "truncated"],
+    );
+    let record = object(
+        json!({"sequence":count(),"timeUnixMs":count(),"level":choice(&["info","debug","warn","error","trace"]),"text":text(2048),"frames":array(script_frame(),8),"truncated":flag(),"values":array(value,64)}),
+        &[
+            "sequence",
+            "timeUnixMs",
+            "level",
+            "text",
+            "frames",
+            "truncated",
+        ],
+    );
+    array(
+        object(
+            json!({"context":object(json!({"artifact":text(512),"worker":text(128),"revision":text(512),"callback":text(64),"invocation":count(),"exchangeId":nullable(id())}), &["worker","revision","callback","invocation","exchangeId"]),"records":array(record,128),"dropped":count(),"incomplete":flag()}),
+            &["context", "records", "dropped", "incomplete"],
+        ),
+        2,
+    )
+}
+fn script_report() -> Value {
+    object(
+        json!({"script":text(256),"phase":text(64),"contentAvailable":flag(),"annotationCount":count(),"diagnosticCount":count(),"logRunCount":count(),"withheldLogRunCount":count(),"exceptionAvailable":flag(),"detailsOmitted":flag(),"annotations":array(object(json!({"note":text(2048),"tags":array(text(64),8),"severity":choice(&["info","warning","error"])}), &["note","tags","severity"]),16),"diagnostics":array(text(1_048_576),32),"logs":script_logs(),"exception":script_exception()}),
+        &[
+            "script",
+            "phase",
+            "contentAvailable",
+            "annotationCount",
+            "diagnosticCount",
+            "logRunCount",
+            "withheldLogRunCount",
+            "exceptionAvailable",
+            "detailsOmitted",
+        ],
+    )
+}
 fn caller() -> Value {
     object(
         json!({"kind":choice(&["local-process","local-unknown","remote"]),"processName":maybe_text(),"processId":nullable(count())}),
@@ -207,6 +267,33 @@ pub(super) fn complete(tool: &mut ToolSpec) {
                 ],
             );
         }
+        "transmog_scripts_status" => {
+            // Saved drafts retain admission settings before activation validation.
+            // Their native types apply here; response/context budgets bound disclosure.
+            let admission_text = json!({"type":"string"});
+            let mut row = object(
+                json!({"scriptId":id(),"revision":count(),"state":choice(&["active","paused","draft"]),"available":nullable(flag()),"handlers":array(choice(&["onRequestHead","onRequestBody","onResponseHead","onResponseBody","onResponseChunk","onCompleted","onFailed"]),7),"contentAvailable":flag(),"prefilter":object(json!({"host":nullable(admission_text.clone()),"method":nullable(admission_text.clone()),"pathPrefix":nullable(admission_text)}), &["host","method","pathPrefix"]),"logs":script_logs(),"error":maybe_text(),"exception":nullable(script_exception())}),
+                &[
+                    "scriptId",
+                    "revision",
+                    "state",
+                    "available",
+                    "handlers",
+                    "contentAvailable",
+                ],
+            );
+            row["properties"]["savedRevision"] = nullable(count());
+            let body_filter = object(
+                json!({"contentTypes":{"type":"array","items":{"type":"string"}},"statuses":{"type":"array","items":uint(u64::from(u16::MAX))},"includeLocal":flag()}),
+                &["contentTypes", "statuses", "includeLocal"],
+            );
+            row["properties"]["requestBodyFilter"] = body_filter.clone();
+            row["properties"]["responseBodyFilter"] = body_filter;
+            tool.output_schema = object(
+                json!({"instanceId":instance(),"generation":count(),"scripts":array(row,100),"total":count(),"nextOffset":nullable(count()),"coverage":text(1024),"context":super::context_ref(),"inlineComplete":flag()}),
+                &["instanceId", "generation", "total", "nextOffset"],
+            );
+        }
         "transmog_sensitive_access_request" | "transmog_sensitive_access_status" => {
             tool.output_schema = disclosure();
         }
@@ -254,7 +341,7 @@ pub(super) fn complete(tool: &mut ToolSpec) {
                 "Measured request-relative timing; negative offsets precede request admission.",
             );
             tool.output_schema["properties"]["changes"] = open(
-                json!({"hooks":strings(),"scripts":array(object(json!({"script":text(256),"phase":text(64),"contentAvailable":flag(),"annotationCount":count(),"diagnosticCount":count(),"annotations":array(object(json!({"note":text(2048),"tags":array(text(64),8),"severity":choice(&["info","warning","error"])}), &["note","tags","severity"]),16),"diagnostics":array(text(65_536),32)}), &["script","phase","contentAvailable","annotationCount","diagnosticCount"]),1024),"headers":array(json!({"type":"object","description":"Recorded hook ID, name, phase, changed flag and changed header names; no credential values."}),1024),"bodies":array(json!({"type":"object","description":"Recorded literal replacement outcomes with revision attribution; no payloads."}),1024),"autoResponse":nullable(json!({"type":"object","description":"Recorded winning local response and its immutable revision."}))}),
+                json!({"hooks":strings(),"scripts":array(script_report(),4096),"scriptExecutions":array(object(json!({"script":text(256),"phase":text(64),"callback":text(64),"outcome":choice(&["succeeded","failed","skipped"]),"reason":maybe_text()}), &["script","phase","callback","outcome","reason"]),4096),"headers":array(json!({"type":"object","description":"Recorded hook ID, name, phase, changed flag and changed header names; no credential values."}),1024),"bodies":array(json!({"type":"object","description":"Recorded literal replacement outcomes with revision attribution; no payloads."}),1024),"autoResponse":nullable(json!({"type":"object","description":"Recorded winning local response and its immutable revision."}))}),
                 "Captured change attribution independent of current saved rules.",
             );
             tool.output_schema["properties"]["transport"] = open(

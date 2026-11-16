@@ -271,6 +271,12 @@ when changing the experience.
 
 ## Present evidence and failures honestly
 
+- Agent script diagnostics follow the authorized exchange and unredacted-access
+  setting. Keep callback outcomes separate from network outcomes and authored
+  findings; distinguish skipped callbacks, silent success, withheld text and lost
+  details. Global script health and initializer diagnostics require all-traffic
+  scope. Source, locals and debugger control remain local authoring capabilities.
+
 - Agent inspection offers complete retained sources through bounded pages, with
   source scope and disclosure checked on each read. Display previews never stand
   in for complete evidence. Keep replay context available across later sends.

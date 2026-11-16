@@ -564,6 +564,72 @@ async fn every_callback_preserves_structured_exception_evidence() {
 }
 
 #[tokio::test]
+async fn native_terminal_deadline_preserves_console_output_in_scenario_failure() {
+    use std::sync::Arc;
+    let source = r"
+        console.log('initializer output');
+        export function onRequestHead() {
+            console.log('request-head output');
+            return {decision:{action:'continue'}};
+        }
+        export function onCompleted() {
+            console.log('before native terminal deadline');
+            while (true) {}
+        }
+    ";
+    let mut manifest = compile(
+        "export function onRequestHead() { return {decision:{action:'continue'}}; }",
+        5_000,
+    )
+    .manifest;
+    manifest.handlers = BTreeSet::from([ScriptHandler::RequestHead, ScriptHandler::Completed]);
+    manifest.source_hash = source_hash(source.as_bytes());
+    let runner = SupervisedScriptRunner::start(
+        &config(),
+        compile_typescript(manifest.clone(), source).unwrap(),
+    )
+    .unwrap();
+    let scenario = serde_json::from_value(serde_json::json!({
+        "request":invocation().request,"response":{"status":200,"headers":[]},
+        "requestBody":[],"responseBody":[],"localResponse":false,"failure":null,
+        "httpVersion":"Http1","startedUnixMs":0,"durationMs":100
+    }))
+    .unwrap();
+    let result = transmog_script::test_scenario(
+        manifest,
+        Arc::clone(&runner) as Arc<dyn ScriptRunner>,
+        scenario,
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.outcome, "completed");
+    assert_eq!(
+        result.verdict,
+        transmog_script::ScriptScenarioVerdict::Failed
+    );
+    let failure = result
+        .steps
+        .iter()
+        .find(|step| step.handler == ScriptHandler::Completed)
+        .unwrap()
+        .error
+        .as_ref()
+        .unwrap();
+    assert_eq!(
+        failure.category,
+        transmog_script::ScriptFailureCategory::Timeout
+    );
+    assert_eq!(failure.logs.len(), 1);
+    assert_eq!(
+        failure.logs[0].records[0].text,
+        "before native terminal deadline"
+    );
+    assert_eq!(failure.logs[0].context.callback, "onCompleted");
+    assert!(failure.logs[0].incomplete);
+    assert!(runner.has_failed());
+}
+
+#[tokio::test]
 async fn complete_scenario_uses_native_helpers_state_selection_and_timing() {
     let source = r"
       import {pass, readCookies, readForm, replaceForm, replaceJson} from 'transmog:api';

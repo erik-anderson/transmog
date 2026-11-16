@@ -1846,6 +1846,7 @@ mod tests {
                     phase: HookPhase::RequestHead,
                     changed: false,
                     action: HookEffectAction::ScriptReport(ScriptReport {
+                        execution: None,
                         annotations: vec![],
                         diagnostics: vec!["retained diagnostic".into()],
                         exception: with_exception.then_some(exception),

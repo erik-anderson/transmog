@@ -895,6 +895,7 @@ async fn long_streams_bound_diagnostic_retention_and_report_omission() {
         .into_iter()
         .filter_map(|effect| {
             if let transmog_core::intercept::HookEffectAction::ScriptReport(report) = effect.action
+                && report.has_content()
             {
                 Some(report)
             } else {
@@ -907,6 +908,52 @@ async fn long_streams_bound_diagnostic_retention_and_report_omission() {
         reports
             .iter()
             .filter(|report| report.details_omitted)
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn silent_stream_execution_is_coalesced_without_consuming_the_findings_budget() {
+    let mut config = manifest("", &[ScriptHandler::ResponseChunk]);
+    config.capabilities.read_bodies = true;
+    let factory = InterceptorChainFactory::new(
+        vec![registration(config, Arc::new(Runner(|_| ScriptAction::Continue.into()))).unwrap()],
+        HookLimits::default(),
+    );
+    let mut chain = factory.create_exchange(metadata()).unwrap();
+    chain.request_head(request()).await.unwrap();
+    let head = ResponseHead {
+        status: 200,
+        headers: HeaderBlock::new(),
+        source_version: request().source_version,
+    };
+    let mut pipeline = chain
+        .response_body_pipeline(&request(), &head, false, BodyPipelineLimits::default())
+        .await
+        .unwrap();
+    for _ in 0..400 {
+        pipeline.process(data(b"x")).await.unwrap();
+    }
+    pipeline.finish().await.unwrap();
+    let effects = chain.hook_effects();
+    let reports = effects
+        .iter()
+        .filter_map(|effect| match &effect.action {
+            transmog_core::intercept::HookEffectAction::ScriptReport(report) => Some(report),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(!reports.iter().any(|report| report.has_content()));
+    assert_eq!(
+        reports
+            .iter()
+            .filter(|report| report
+                .execution
+                .as_ref()
+                .is_some_and(|execution| execution.callback == "onResponseChunk"
+                    && execution.outcome
+                        == transmog_core::intercept::ScriptExecutionOutcome::Succeeded))
             .count(),
         1
     );

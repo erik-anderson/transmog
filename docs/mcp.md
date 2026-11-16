@@ -28,7 +28,10 @@ Bundled script guidance is available without connecting or starting the desktop:
 use `transmog_help` with `topic: "scripts"` and a section such as `authoring`,
 `languages`, `sandbox`, `debugging`, `console`, `examples` or `types`. It includes
 the installed API revision and required settings.
-MCP can inspect script effects but cannot author, test or activate scripts.
+MCP can inspect script effects, callback outcomes, logs and exceptions, and read
+script activation and runtime health. Diagnostic text requires unredacted access;
+the global registry and initializer output require all-traffic scope. It cannot
+author, test or activate scripts. See [script diagnostics](mcp-reference.md#script-diagnostics).
 Use **Automation → Scripts → Open API docs** for the same reference in the app.
 
 The desktop must be running for traffic operations. Select **Start Transmog when

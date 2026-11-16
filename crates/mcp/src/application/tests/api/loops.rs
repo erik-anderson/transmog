@@ -27,6 +27,137 @@ async fn context_bytes(h: &Harness, grant: &Grant, reference: &Value) -> Vec<u8>
 }
 
 #[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "Exercises complete and automatic context paging across global and narrowed traffic scopes."
+)]
+async fn large_script_output_is_paged_without_requesting_context_and_rechecks_disclosure() {
+    use transmog_core::intercept::{
+        HookEffect, HookEffectAction, HookPhase, InterceptorId, InterceptorIdentity, ScriptReport,
+    };
+    let h = fixture();
+    let mut owner = full(&h);
+    owner.scope = Scope::All;
+    let sent = send(&h, &owner, "large-script-output").await;
+    let catalog = h.adapter.application.session_service().catalog();
+    let mut snapshot = catalog
+        .get(transmog_core::intercept::ExchangeId(
+            u128::from_str_radix(sent["id"].as_str().unwrap(), 16).unwrap(),
+        ))
+        .unwrap();
+    snapshot.exchange_id.0 += 10_000;
+    Arc::make_mut(&mut snapshot.metadata).exchange_id = snapshot.exchange_id;
+    let id = format!("{:032x}", snapshot.exchange_id.0);
+    snapshot.hook_effects = (0..32).map(|sequence| HookEffect {
+        sequence, interceptor: InterceptorIdentity { id: InterceptorId::new("verbose-script@1"), name: "Verbose".into(), chain_position: 0 },
+        phase: HookPhase::ResponseBody, changed: false,
+        action: HookEffectAction::ScriptReport(ScriptReport {
+            logs: serde_json::from_value(json!([{
+                "context":{"revision":"executed-build","callback":"onResponseChunk","invocation":sequence + 1,"exchangeId":id},
+                "records":(0..64).map(|index|json!({"sequence":index + 1,"timeUnixMs":1,"level":"debug","text":"x".repeat(256),"frames":[],"truncated":false})).collect::<Vec<_>>(),
+                "dropped":3,"incomplete":true
+            }])).unwrap(),
+            ..ScriptReport::default()
+        }),
+    }).collect();
+    if let HookEffectAction::ScriptReport(report) = &mut snapshot.hook_effects[0].action {
+        report.logs.extend(serde_json::from_value::<Vec<transmog_app::LogRun>>(json!([{
+            "context":{"revision":"executed-build","callback":"initializer","invocation":0,"exchangeId":null},
+            "records":[{"sequence":1,"timeUnixMs":1,"level":"info","text":"global-initializer-canary","frames":[],"truncated":false}],
+            "dropped":0,"incomplete":false
+        }])).unwrap());
+    }
+    catalog.import_sessions(vec![snapshot]).unwrap();
+    for section in ["changes", "all"] {
+        let response = h
+            .call(
+                &owner,
+                "transmog_exchange_get",
+                json!({"id":id,"include":[section]}),
+            )
+            .await
+            .unwrap();
+        contract("transmog_exchange_get", &response);
+        assert_eq!(response["inlineComplete"], false);
+        let complete: Value =
+            serde_json::from_slice(&context_bytes(&h, &owner, &response["context"]).await).unwrap();
+        let reports = if section == "all" {
+            &complete["scriptReports"]
+        } else {
+            &complete["changes"]["scripts"]
+        };
+        assert!(complete.to_string().contains("global-initializer-canary"));
+        assert_eq!(reports.as_array().unwrap().len(), 32);
+        assert_eq!(
+            reports[31]["logs"][0]["records"].as_array().unwrap().len(),
+            64
+        );
+        assert_eq!(reports[0]["logs"][0]["dropped"], 3);
+        assert_eq!(reports[0]["logs"][0]["incomplete"], true);
+        let mut restricted = owner.clone();
+        restricted.permissions.remove(&Permission::ReadBodies);
+        assert!(
+            h.call(
+                &restricted,
+                "transmog_context_read",
+                json!({"contextId":response["context"]["contextId"]})
+            )
+            .await
+            .is_err()
+        );
+        restricted = owner.clone();
+        restricted.scope = Scope::Hosts {
+            hosts: vec!["outside.test".into()],
+        };
+        assert!(
+            h.call(
+                &restricted,
+                "transmog_context_read",
+                json!({"contextId":response["context"]["contextId"]})
+            )
+            .await
+            .is_err()
+        );
+        for scope in [
+            Scope::Hosts {
+                hosts: vec!["127.0.0.1".into()],
+            },
+            Scope::Requests {
+                instance_id: h.adapter.instance_id.clone(),
+                ids: vec![id.clone()],
+            },
+        ] {
+            let mut restricted = owner.clone();
+            restricted.scope = scope;
+            assert!(
+                h.call(
+                    &restricted,
+                    "transmog_context_read",
+                    json!({"contextId":response["context"]["contextId"]})
+                )
+                .await
+                .is_err()
+            );
+            let scoped = h
+                .call(
+                    &restricted,
+                    "transmog_exchange_get",
+                    json!({"id":id,"include":[section]}),
+                )
+                .await
+                .unwrap();
+            let scoped_bytes = context_bytes(&h, &restricted, &scoped["context"]).await;
+            assert!(
+                !String::from_utf8(scoped_bytes)
+                    .unwrap()
+                    .contains("global-initializer-canary")
+            );
+        }
+    }
+    h.adapter.application.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn complete_decoded_context_pages_preserve_unicode_and_recheck_authority() {
     let h = traffic(serde_json::to_vec(&json!({"data":"λ🦀".repeat(30000)})).unwrap());
     let owner = full(&h);
@@ -508,9 +639,10 @@ async fn script_findings_follow_disclosure_in_changes_context_search_and_later_p
             },
             phase: HookPhase::Completed,
             action: HookEffectAction::ScriptReport(ScriptReport {
+                execution: None,
                 details_omitted: false,
                         logs:serde_json::from_value(serde_json::json!([{
-"context":{"revision":"executed-build","callback":"onCompleted","invocation":1,"exchangeId":"1"},
+"context":{"revision":"executed-build","callback":"onCompleted","invocation":1,"exchangeId":format!("{:032x}", imported_id.0)},
 "records":[{"sequence":1,"timeUnixMs":1,"level":"info","text":"local-console-canary","frames":[],"truncated":false}],"dropped":0,"incomplete":false
 }])).unwrap(),
                 exception: Some(serde_json::from_value(json!({
@@ -522,7 +654,7 @@ async fn script_findings_follow_disclosure_in_changes_context_search_and_later_p
                     tags: vec!["script-secret-tag".into()],
                     severity: ScriptSeverity::Warning,
                 }],
-                diagnostics: vec!["script-secret-diagnostic".into()],
+                diagnostics: vec![format!("script-secret-diagnostic{}", "x".repeat(80_000))],
             }),
             changed: false,
         }];
@@ -533,6 +665,20 @@ async fn script_findings_follow_disclosure_in_changes_context_search_and_later_p
             action: HookEffectAction::Abort(transmog_core::intercept::HookAbort::Policy(
                 "script-secret-abort".into(),
             )),
+            changed: false,
+        });
+        snapshot.hook_effects.push(HookEffect {
+            sequence: 3,
+            interceptor: snapshot.hook_effects[0].interceptor.clone(),
+            phase: HookPhase::RequestHead,
+            action: HookEffectAction::ScriptReport(ScriptReport {
+                execution: Some(Box::new(transmog_core::intercept::ScriptExecution {
+                    callback: "onRequestHead".into(),
+                    outcome: transmog_core::intercept::ScriptExecutionOutcome::Succeeded,
+                    reason: None,
+                })),
+                ..ScriptReport::default()
+            }),
             changed: false,
         });
         snapshot.terminal = Some(transmog_session::SessionTerminal::Failed(
@@ -573,6 +719,15 @@ async fn script_findings_follow_disclosure_in_changes_context_search_and_later_p
             "local-console-canary"
         );
         assert!(!detail.hook_effects.join(" ").contains("script-secret"));
+        assert_eq!(
+            detail.script_reports.len(),
+            1,
+            "silent executions must not create empty desktop findings"
+        );
+        assert_eq!(
+            detail.script_executions[0].execution.callback,
+            "onRequestHead"
+        );
         entries.push(sent);
     }
     let (reader, key) = h
@@ -595,6 +750,10 @@ async fn script_findings_follow_disclosure_in_changes_context_search_and_later_p
     assert!(!redacted.to_string().contains("local-exception-canary"));
     assert!(!redacted.to_string().contains("local-console-canary"));
     let report = &redacted["changes"]["scripts"][0];
+    assert_eq!(
+        redacted["changes"]["scriptExecutions"][0]["outcome"],
+        "succeeded"
+    );
     assert_eq!(report["script"], "user-script@7");
     assert_eq!(report["annotationCount"], 1);
     assert_eq!(report["diagnosticCount"], 1);
@@ -631,15 +790,15 @@ async fn script_findings_follow_disclosure_in_changes_context_search_and_later_p
         .await
         .unwrap();
     contract("transmog_exchange_get", &revealed);
-    assert!(!revealed.to_string().contains("local-exception-canary"));
-    assert!(!revealed.to_string().contains("local-console-canary"));
+    assert!(revealed.to_string().contains("local-exception-canary"));
+    assert!(revealed.to_string().contains("local-console-canary"));
     assert!(
-        !String::from_utf8(context_bytes(&h, &allowed, &revealed["context"]).await)
+        String::from_utf8(context_bytes(&h, &allowed, &revealed["context"]).await)
             .unwrap()
             .contains("local-console-canary")
     );
     assert!(
-        !String::from_utf8(context_bytes(&h, &allowed, &revealed["context"]).await)
+        String::from_utf8(context_bytes(&h, &allowed, &revealed["context"]).await)
             .unwrap()
             .contains("local-exception-canary")
     );

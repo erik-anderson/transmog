@@ -162,7 +162,7 @@ pub use experiment_pages::{ExperimentPreviewPage, ExperimentPreviewPages};
 pub use inspector::{
     AutoResponseMatchView, BodyEditView, BodyInspection, BodyInspectionRequest, BodyRepresentation,
     BodyView, HeadView, HeaderCopy, HeaderEffectView, HeaderPage, HeaderSummary, HeaderView,
-    ScriptReportView, SessionDetail,
+    ScriptExecutionView, ScriptReportView, SessionDetail,
 };
 pub use lifecycle::{
     CaCreateRequest, CaIdentity, ProxyRoute, ProxyStartRequest, protect_ca_private_key,
@@ -180,7 +180,8 @@ pub use response_assets::{
 };
 pub use response_file::{ResponseFile, ResponseFileResult};
 pub use scripts::{
-    ScriptCandidate, ScriptDraft, ScriptLanguage, ScriptRevision, ScriptRuntimeStatus, ScriptStatus,
+    ScriptCandidate, ScriptDraft, ScriptInspectionItem, ScriptInspectionStatus, ScriptLanguage,
+    ScriptRevision, ScriptRuntimeStatus, ScriptStatus,
 };
 pub use search::{
     TrafficSearchEntry, TrafficSearchMatch, TrafficSearchMode, TrafficSearchProgress,
@@ -1345,6 +1346,12 @@ impl Application {
     /// Returns saved drafts, built/applied revisions, runtime health and candidate/history counts.
     pub fn script_status(&self) -> ScriptStatus {
         self.scripts.status()
+    }
+
+    /// Returns source-free script configuration, health and initializer diagnostics.
+    /// Consumers must authorize global scope and diagnostic disclosure independently.
+    pub fn script_inspection_status(&self) -> ScriptInspectionStatus {
+        self.scripts.inspection_status()
     }
 
     /// Builds a draft and retains its latest successful artifact without changing traffic.

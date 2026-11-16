@@ -56,10 +56,20 @@ distinct from current failures and mark stopped instances as frozen.
 
 ## Consequences
 
-Locals, source, console output and rich exceptions are sensitive ephemeral local
-evidence. They are excluded from normal trace/case persistence, support errors and
-MCP projections. Desktop commands are scoped to the calling window and are not
-registered as MCP tools. An explicit copy action can copy local developer details.
+Locals, source, console output and rich exceptions are sensitive ephemeral
+evidence, excluded from normal trace/case persistence and support errors.
+MCP may read retained callback logs and exceptions for an authorized exchange
+with both unredacted header and body access. Native callback outcomes remain
+visible without diagnostic text. Initializer output and the source-free script
+registry require all-traffic scope; registry diagnostics also require unredacted
+access. Reads never expose unrelated exchanges' log streams, source-cache
+contents, live locals or debugger controls. Large results use key-owned paged
+contexts that recheck disclosure and scope, including all-traffic authorization
+for retained initializer output. Capture import rejects ephemeral diagnostic
+and execution fields rather than trusting them as native evidence.
+Desktop commands remain scoped to
+the calling window and are not registered as MCP tools. An explicit copy action
+can copy local developer details.
 
 Session records, events, property replies, sources and logs have independent
 bounds. These caps trade older evidence and unavailable locals for bounded
