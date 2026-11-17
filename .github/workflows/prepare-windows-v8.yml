@@ -1,241 +1,79 @@
-name: Prepare reusable Windows V8
+name: Diagnose extension debugger sandbox
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'third_party/rusty-v8/**'
-      - 'rust-toolchain.toml'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'crates/js-runtime/Cargo.toml'
-      - 'scripts/setup-windows-ci.ps1'
-      - 'scripts/repo_tools.py'
-      - 'scripts/v8_artifact.py'
-      - 'scripts/v8_consumer.py'
-      - 'scripts/windows_cross.py'
-      - 'scripts/cache-v8.py'
-      - 'scripts/v8_native.py'
-      - 'scripts/v8_cache.py'
-      - 'scripts/v8_bindgen.py'
-      - 'scripts/icu_data.py'
-      - '.github/actions/windows-release-setup/**'
-      - '.github/workflows/prepare-windows-v8.yml'
-
-  workflow_call:
-    inputs:
-      include_arm64:
-        type: boolean
-        default: true
-      use_cache:
-        type: boolean
-        default: true
-    outputs:
-      artifact-id-x64:
-        value: ${{ jobs.engine.outputs.artifact-id-x64 }}
-      artifact-id-arm64:
-        value: ${{ jobs.engine.outputs.artifact-id-arm64 }}
   workflow_dispatch:
-    inputs:
-      include_arm64:
-        type: boolean
-        default: true
-      use_cache:
-        type: boolean
-        default: true
 permissions:
   contents: read
+  actions: read
 defaults:
   run:
     shell: pwsh
 env:
   PYTHONUTF8: '1'
+  CARGO_INCREMENTAL: '0'
+  RUST_BACKTRACE: '1'
 jobs:
-  engine:
-    if: github.event.repository.private == false
-    name: Prepare V8 (${{ matrix.arch }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJSON((github.event_name == 'push' || inputs.include_arm64) && '[{"arch":"x64","target":"x86_64-pc-windows-msvc"},{"arch":"arm64","target":"aarch64-pc-windows-msvc"}]' || '[{"arch":"x64","target":"x86_64-pc-windows-msvc"}]') }}
-    concurrency:
-      group: windows-v8-${{ github.ref }}-${{ matrix.target }}
-      cancel-in-progress: false
-      # Keep waiting releases when later pushes queue more prewarm work.
-      queue: max
-    runs-on: windows-2025
-    permissions:
-      contents: read
-      actions: read
-    # Cold native compilation gets its own budget; ordinary release jobs stay <=120m.
-    timeout-minutes: 240
-    outputs:
-      artifact-id-x64: ${{ steps.reference.outputs.artifact-id-x64 }}
-      artifact-id-arm64: ${{ steps.reference.outputs.artifact-id-arm64 }}
-      native-reused-arm64: ${{ steps.native_proof.outputs.reused-arm64 }}
-    env:
-      CARGO_INCREMENTAL: '0'
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/windows-release-setup
-        timeout-minutes: 10
-        with:
-          target: ${{ matrix.target }}
-          host-target: x86_64-pc-windows-msvc
-          use-cache: ${{ github.event_name == 'push' || inputs.use_cache }}
-      - name: Compute engine inputs and compiler identity
-        id: identity
-        run: |
-          $PSNativeCommandUseErrorActionPreference = $true
-          . ./scripts/dev-env.ps1 -Target ${{ matrix.target }}
-          $key = python ./scripts/v8_artifact.py key --target ${{ matrix.target }}
-          if ($LASTEXITCODE -ne 0) { throw 'Could not compute V8 identity.' }
-          "V8_PREPARATION_STARTED=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())" | Add-Content -LiteralPath $env:GITHUB_ENV
-          "key=$key" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
-      - name: Restore verified engine only
-        timeout-minutes: 3
-        id: engine
-        if: github.event_name == 'push' || inputs.use_cache
-        uses: actions/cache/restore@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
-        with:
-          path: artifacts/v8-engine
-          key: windows-v8-v1-${{ matrix.target }}-${{ steps.identity.outputs.key }}
-      - name: Compile cold V8 with visible native progress
-        if: steps.engine.outputs.cache-hit != 'true'
-        timeout-minutes: 210
-        run: |
-          $PSNativeCommandUseErrorActionPreference = $true
-          . ./scripts/dev-env.ps1 -Target ${{ matrix.target }}
-          python ./scripts/dev-env.py --check
-          python ./scripts/cache-v8.py --target ${{ matrix.target }} --export artifacts/v8-engine --verbose
-      - name: Verify prepared engine and report cold or warm timing
-        id: prepared
-        timeout-minutes: 2
-        run: |
-          $PSNativeCommandUseErrorActionPreference = $true
-          . ./scripts/dev-env.ps1 -Target ${{ matrix.target }}
-          python ./scripts/v8_artifact.py verify --target ${{ matrix.target }} --directory artifacts/v8-engine
-          $seconds = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$env:V8_PREPARATION_STARTED
-          $hit = '${{ steps.engine.outputs.cache-hit }}' -eq 'true'
-          @{ Target='${{ matrix.target }}'; CacheHit=$hit; DurationSeconds=$seconds; Key='${{ steps.identity.outputs.key }}'; Commit=$env:GITHUB_SHA; RunId=$env:GITHUB_RUN_ID } | ConvertTo-Json | Set-Content -Encoding utf8NoBOM artifacts/v8-preparation.json
-          "### V8 ${{ matrix.arch }}: cache hit = $hit, preparation = $seconds seconds" | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
-      # Recheck after compilation before uploading, then confirm availability.
-      - name: Confirm prepared V8 cache checkpoint
-        timeout-minutes: 3
-        uses: ./.github/actions/cache-checkpoint
-        with:
-          label: V8 ${{ matrix.arch }}
-          path: artifacts/v8-engine
-          key: windows-v8-v1-${{ matrix.target }}-${{ steps.identity.outputs.key }}
-          restored: ${{ steps.engine.outputs.cache-hit }}
-          enabled: ${{ github.event_name == 'push' || inputs.use_cache }}
-          report: artifacts/v8-cache-checkpoint.json
-      - name: Upload immutable engine for this run
-        if: always() && steps.prepared.conclusion == 'success'
-        timeout-minutes: 3
-        id: payload
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: windows-v8-${{ matrix.arch }}-${{ github.run_attempt }}
-          path: artifacts/v8-engine/
-          compression-level: 0
-          if-no-files-found: error
-          retention-days: 7
-      - id: reference
-        env:
-          ARTIFACT_ID: ${{ steps.payload.outputs.artifact-id }}
-        run: '"artifact-id-${{ matrix.arch }}=$env:ARTIFACT_ID" | Add-Content -LiteralPath $env:GITHUB_OUTPUT'
-      - name: Reuse a successful native ARM64 proof before allocating a native runner
-        id: native_proof
-        if: matrix.arch == 'arm64' && (github.event_name == 'push' || inputs.use_cache)
-        timeout-minutes: 3
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          V8_ARTIFACT_ID: ${{ steps.payload.outputs.artifact-id }}
-        run: |
-          $PSNativeCommandUseErrorActionPreference = $true
-          . ./scripts/dev-env.ps1 -Target ${{ matrix.target }}
-          python ./scripts/v8_consumer.py --probe --directory artifacts/v8-engine --report artifacts/v8-native-consumer.json
-      - name: Retain the reused native proof bound to this engine producer
-        if: steps.native_proof.outputs.reused-arm64 == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: windows-v8-arm64-consumer-${{ steps.native_proof.outputs.key }}-${{ github.run_attempt }}
-          path: artifacts/v8-native-consumer.json
-          if-no-files-found: error
-          retention-days: 7
-      - name: Retain native preparation diagnostics
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: windows-v8-diagnostics-${{ matrix.arch }}-${{ github.run_attempt }}
-          include-hidden-files: true
-          path: |
-            artifacts/v8-preparation.json
-            artifacts/v8-cache-checkpoint.json
-            artifacts/native-tools-cache-checkpoint.json
-            artifacts/windows-msvc.json
-            artifacts/v8-engine/manifest.json
-            target/native-v8/**/args.gn
-            target/native-v8/**/.ninja_log
-            target/*/release/build/v8-*/output
-            target/*/release/build/v8-*/stderr
-          if-no-files-found: warn
-
-  verify_arm64:
-    name: Verify cross-built V8 on native ARM64
-    needs: engine
-    if: (github.event_name == 'push' || inputs.include_arm64) && needs.engine.outputs.artifact-id-arm64 != '' && needs.engine.outputs.native-reused-arm64 != 'true'
+  probe:
+    name: Extension debugger probe (arm64)
     runs-on: windows-11-arm
     timeout-minutes: 30
-    permissions:
-      contents: read
-      actions: read
-    # Wait for a preceding proof to become a successful immutable artifact.
-    concurrency:
-      group: windows-v8-native-consumer-${{ github.ref }}
-      cancel-in-progress: false
-      queue: max
-    env:
-      CARGO_INCREMENTAL: '0'
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
       - uses: ./.github/actions/windows-release-setup
         timeout-minutes: 10
         with:
           target: aarch64-pc-windows-msvc
-          use-cache: ${{ github.event_name == 'push' || inputs.use_cache }}
-      - name: Download immutable ARM64 engine producer
-        timeout-minutes: 3
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - name: Download exact failed-candidate engine
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          artifact-ids: ${{ needs.engine.outputs.artifact-id-arm64 }}
+          artifact-ids: '14311907603'
+          run-id: '44046670292'
+          github-token: ${{ github.token }}
           path: artifacts/v8-engine
-      - name: Verify current SDK and engine, reuse or run the native Cargo check
-        id: consumer
-        timeout-minutes: 12
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          V8_ARTIFACT_ID: ${{ needs.engine.outputs.artifact-id-arm64 }}
-          ALLOW_REUSE: ${{ github.event_name == 'push' || inputs.use_cache }}
+      - name: Verify existing engine and build only the affected sandbox test
+        timeout-minutes: 15
         run: |
+          $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
           . ./scripts/dev-env.ps1
           python ./scripts/dev-env.py --check
-          $reuseArguments = if ($env:ALLOW_REUSE -eq 'true') { @() } else { @('--no-reuse') }
-          python ./scripts/v8_consumer.py --directory artifacts/v8-engine --report artifacts/v8-native-consumer.json @reuseArguments
-      - name: Retain native consumer identity and diagnostics
+          python ./scripts/v8_artifact.py verify --target aarch64-pc-windows-msvc --directory artifacts/v8-engine
+          $env:TRANSMOG_V8_ARTIFACT = (Resolve-Path artifacts/v8-engine).Path
+          New-Item -ItemType Directory -Force artifacts/debugger-probe | Out-Null
+          cargo test --locked -p transmog-extension-host --test sandbox --no-run --message-format=json 1> artifacts/debugger-probe/build.jsonl 2> artifacts/debugger-probe/build.log
+          $build = @(Get-Content artifacts/debugger-probe/build.jsonl | ForEach-Object { $_ | ConvertFrom-Json })
+          $test = @($build | Where-Object { $_.reason -eq 'compiler-artifact' -and $_.target.name -eq 'sandbox' -and $_.executable })
+          if ($test.Count -ne 1) { throw 'Expected exactly one native sandbox test binary.' }
+          $test[0].executable | Set-Content artifacts/debugger-probe/test-path.txt
+          Get-FileHash -LiteralPath $test[0].executable | ConvertTo-Json | Set-Content artifacts/debugger-probe/test-hash.json
+      - name: Reproduce concurrent and focused debugger sessions without changing limits
+        timeout-minutes: 8
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $test = (Get-Content artifacts/debugger-probe/test-path.txt).Trim()
+          $results = [Collections.Generic.List[object]]::new()
+          foreach ($iteration in 1..60) {
+            $arguments = @('--nocapture')
+            if ($iteration -gt 20) { $arguments += @('debugger_preserves_initializer_heap_locals_and_idle_detach_in_the_real_sandbox', '--exact') }
+            $started = [Diagnostics.Stopwatch]::StartNew()
+            & $test @arguments *> "artifacts/debugger-probe/run-$iteration.log"
+            $code = $LASTEXITCODE
+            $started.Stop()
+            $results.Add(@{Iteration=$iteration;ExitCode=$code;ElapsedSeconds=$started.Elapsed.TotalSeconds;Focused=($iteration -gt 20)})
+            $results | ConvertTo-Json -Depth 5 | Set-Content artifacts/debugger-probe/results.json
+            Get-Content "artifacts/debugger-probe/run-$iteration.log" -Tail 12
+            if ($code) { throw "Native sandbox failed in iteration $iteration; exact session state is retained." }
+          }
+      - name: Retain native diagnostics
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: windows-v8-arm64-consumer-${{ steps.consumer.outputs.key || 'failed' }}-${{ github.run_attempt }}
+          name: extension-debugger-probe-arm64-${{ github.run_attempt }}
           path: |
-            artifacts/v8-engine/manifest.json
-            artifacts/native-tools-cache-checkpoint.json
+            artifacts/debugger-probe/
             artifacts/windows-msvc.json
-            artifacts/v8-native-consumer.json
-          if-no-files-found: warn
+            artifacts/native-tools-cache-checkpoint.json
+          if-no-files-found: error
           retention-days: 7
