@@ -366,8 +366,9 @@ pub(crate) fn validate_rule(inputs: &Inputs, rule: &MatchRule) -> Result<(), Err
 pub struct Payload {
     /// Portable package-relative file path.
     pub path: String,
-    /// Exact bounded bytes, not an allocation request.
-    pub bytes: u64,
+    /// Exact bounded bytes; may be omitted only in unpacked development manifests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<u64>,
     /// Lowercase SHA-256; omitted only in registered development directories.
     pub sha256: Option<String>,
 }
@@ -452,13 +453,15 @@ impl Manifest {
             transmog_package_zip::name(file.path.as_bytes())?;
             if file.path.eq_ignore_ascii_case("manifest.json")
                 || files.insert(file.path.to_ascii_lowercase(), file).is_some()
-                || file.bytes > 16 * 1024 * 1024
+                || file.bytes.is_some_and(|bytes| bytes > 16 * 1024 * 1024)
                 || file.sha256.as_ref().is_some_and(|d| !digest(d))
-                || (!development && file.sha256.is_none())
+                || (!development && (file.bytes.is_none() || file.sha256.is_none()))
             {
                 return Err(invalid("Invalid payload inventory"));
             }
-            total = total.checked_add(file.bytes).ok_or(Error::Limit)?;
+            total = total
+                .checked_add(file.bytes.unwrap_or(0))
+                .ok_or(Error::Limit)?;
         }
         if total > MAX_PACKAGE_BYTES {
             return Err(Error::Limit);

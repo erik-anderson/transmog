@@ -43,7 +43,7 @@ impl<R: Read + Seek> Package<R> {
             let member = members
                 .get(&file.path)
                 .ok_or_else(|| invalid("A declared extension payload is missing"))?;
-            if member.length != file.bytes {
+            if Some(member.length) != file.bytes {
                 return Err(invalid(
                     "Extension payload length disagrees with its manifest",
                 ));
@@ -126,7 +126,7 @@ pub struct Snapshot {
     pub digest: String,
 }
 impl Snapshot {
-    /// Validates already-collected immutable sources and computes missing development digests.
+    /// Validates already-collected immutable sources and fills missing development lengths/digests.
     /// Directory registration must securely collect sources before calling this method.
     /// # Errors
     /// Rejects inventory drift, size/hash mismatches and malformed metadata.
@@ -135,14 +135,21 @@ impl Snapshot {
         if files.len() != manifest.files.len() {
             return Err(invalid("Snapshot has undeclared or missing files"));
         }
+        let mut total = 0_u64;
         for payload in &mut manifest.files {
             let bytes = files.get(&payload.path).ok_or(Error::AccessDenied)?;
+            let length = bytes.len() as u64;
+            total = total.checked_add(length).ok_or(Error::Limit)?;
+            if length > 16 * 1024 * 1024 || total > MAX_PACKAGE_BYTES {
+                return Err(Error::Limit);
+            }
             let digest = sha256(bytes);
-            if bytes.len() as u64 != payload.bytes
+            if payload.bytes.is_some_and(|declared| declared != length)
                 || payload.sha256.as_ref().is_some_and(|old| old != &digest)
             {
                 return Err(invalid("Snapshot bytes differ from the declared revision"));
             }
+            payload.bytes = Some(length);
             payload.sha256 = Some(digest);
         }
         manifest.validate(false)?;
@@ -181,7 +188,12 @@ pub fn write_package(
     )?;
     for file in &checked.manifest.files {
         let bytes = &checked.files[&file.path];
-        writer.member(&file.path, &mut bytes.as_ref(), file.bytes, canceled)?;
+        writer.member(
+            &file.path,
+            &mut bytes.as_ref(),
+            bytes.len() as u64,
+            canceled,
+        )?;
     }
     writer.finish()?;
     Ok(())

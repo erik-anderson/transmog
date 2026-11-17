@@ -156,6 +156,9 @@ when changing the experience.
   message direction are equivalent.
   Keep development reload actions in those settings and apply them only to active
   instances across windows, preserving each last good result on replacement failure.
+  Unpacked authoring inventories source paths without requiring byte lengths or
+  hashes. Calculate exact integrity metadata from bounded source snapshots and
+  retain strict length and hash validation for distributed packages.
   Optional column cells read bounded header metadata after primary row rendering;
   their results must not delay unfiltered traffic queries, rebuild ordinary cells
   or mount installed-extension controls while those settings are closed. Explicit

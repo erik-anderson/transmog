@@ -5,6 +5,10 @@ are authored under **Automation → Scripts**; see the separate
 [traffic-script guide](automation.md#traffic-script-authoring-and-execution)
 for TypeScript/JavaScript editing and saved executable builds.
 
+For external-editor development, copy the [minimal starter](../extensions/starter),
+edit its ID and JavaScript, and choose **Settings → Extensions → Load unpacked…**.
+The starter needs no build tools and demonstrates a read-only response viewer.
+
 `transmog-extensions` provides the UI-independent revision-1 visualizer metadata,
 native matching, input projection, output validation and `.tmext` container
 primitives. `transmog-extension-host` and `transmog-extension-supervisor` provide
@@ -218,8 +222,12 @@ choice forward without opening code. MAPI migrates `com.transmog.mapi` to
 Registering an unpacked developer directory reads only its manifest. Activation
 uses pinned local directory handles, rejects reparse points and links, bounds
 every file read and collects an immutable snapshot. Source lengths and digests
-are calculated for that snapshot, so authors do not maintain them after each
-edit. The exact executing declaration is published only after the worker returns
+are calculated for that snapshot, so unpacked `files` entries can contain just
+`{"path":"main.js"}`: both `bytes` and `sha256` may be omitted. Authors still
+inventory every declared file, but do not maintain lengths or hashes after edits.
+Packaged manifests require exact lengths, including an explicit `0` for empty
+files, and hashes; **Package extension…** generates both.
+The exact executing declaration is published only after the worker returns
 a host-validated visualization document. Initialization alone, parser failures and
 invalid output preserve the prior catalog. Publication rechecks the active owner,
 worker and catalog revision so a stopped or superseded candidate cannot publish.

@@ -163,7 +163,9 @@ fn run_stream(
                         Failure::new(FailureKind::Protocol, "Invalid source encoding")
                     })?;
                     if next.len() > PAYLOAD_CHUNK_BYTES
-                        || bytes.len().saturating_add(next.len()) as u64 > declared.bytes
+                        || declared.bytes.is_none_or(|limit| {
+                            bytes.len().saturating_add(next.len()) as u64 > limit
+                        })
                     {
                         return Err(Failure::new(
                             FailureKind::Limit,

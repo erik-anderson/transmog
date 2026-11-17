@@ -136,7 +136,7 @@ impl Directory {
             }
             // Registered developer files are mutable. Snapshot exact bytes, lengths
             // and hashes together rather than require hash edits after each save.
-            file.bytes = bytes.len() as u64;
+            file.bytes = Some(bytes.len() as u64);
             file.sha256 = None;
             files.insert(file.path.clone(), Arc::<[u8]>::from(bytes));
         }

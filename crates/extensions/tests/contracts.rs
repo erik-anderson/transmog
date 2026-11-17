@@ -193,12 +193,12 @@ fn executable_contract_is_explicit_javascript_with_optional_inert_authoring_sour
         // An author can include source/maps for development; they never become entry modules.
         other.files.push(Payload {
             path: "source/main.ts".into(),
-            bytes: 0,
+            bytes: Some(0),
             sha256: None,
         });
         other.files.push(Payload {
             path: "src/main.js.map".into(),
-            bytes: 0,
+            bytes: Some(0),
             sha256: None,
         });
         other.validate(true).unwrap();
@@ -353,6 +353,106 @@ fn tmext_round_trip_is_zip64_and_payloads_are_integrity_checked_on_activation() 
     bytes[pos] = b'z';
     let mut changed = Package::open(Cursor::new(bytes)).unwrap();
     assert!(changed.payload("src/main.js").is_err());
+}
+
+#[test]
+fn missing_development_lengths_are_computed_without_relaxing_declared_lengths() {
+    let mut metadata = serde_json::to_value(manifest()).unwrap();
+    metadata["files"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("bytes");
+    let development = Manifest::parse(&serde_json::to_vec(&metadata).unwrap(), true).unwrap();
+    assert_eq!(development.files[0].bytes, None);
+    assert!(
+        serde_json::to_value(&development).unwrap()["files"][0]
+            .get("bytes")
+            .is_none()
+    );
+    let files = BTreeMap::from([("src/main.js".into(), Arc::<[u8]>::from(&b"abc"[..]))]);
+    let snapshot = Snapshot::new(development.clone(), files.clone()).unwrap();
+    assert_eq!(snapshot.manifest.files[0].bytes, Some(3));
+    assert_eq!(snapshot.manifest.files[0].sha256, Some(sha256(b"abc")));
+    snapshot.manifest.validate(false).unwrap();
+    let mut declared = development;
+    declared.files[0].bytes = Some(0);
+    assert!(Snapshot::new(declared, files).is_err());
+    for bytes in [
+        serde_json::json!(-1),
+        serde_json::json!(1.5),
+        serde_json::json!("3"),
+        serde_json::json!(16 * 1024 * 1024 + 1),
+    ] {
+        metadata["files"][0]["bytes"] = bytes;
+        assert!(Manifest::parse(&serde_json::to_vec(&metadata).unwrap(), true).is_err());
+    }
+}
+
+#[test]
+fn packaged_manifests_require_lengths_even_for_empty_payloads() {
+    for length in [
+        None,
+        Some(serde_json::Value::Null),
+        Some(serde_json::json!(0)),
+    ] {
+        let mut metadata = serde_json::to_value(manifest()).unwrap();
+        metadata["files"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("bytes");
+        metadata["files"][0]["sha256"] = serde_json::json!(sha256(b""));
+        if let Some(length) = &length {
+            metadata["files"][0]["bytes"] = length.clone();
+        }
+        let metadata = serde_json::to_vec(&metadata).unwrap();
+        let mut archive = Vec::new();
+        let mut writer = transmog_package_zip::Writer::new(&mut archive);
+        let canceled = AtomicBool::new(false);
+        writer
+            .member(
+                "manifest.json",
+                &mut metadata.as_slice(),
+                metadata.len() as u64,
+                &canceled,
+            )
+            .unwrap();
+        writer
+            .member("src/main.js", &mut b"".as_slice(), 0, &canceled)
+            .unwrap();
+        writer.finish().unwrap();
+        let package = Package::open(Cursor::new(archive));
+        if length == Some(serde_json::json!(0)) {
+            assert_eq!(package.unwrap().payload("src/main.js").unwrap(), b"");
+        } else {
+            assert!(package.is_err());
+        }
+    }
+}
+
+#[test]
+fn development_snapshots_bound_actual_payload_sizes_before_hashing() {
+    let mut metadata = manifest();
+    metadata.files[0].bytes = None;
+    let too_large = Arc::<[u8]>::from(vec![0; 16 * 1024 * 1024 + 1]);
+    assert!(matches!(
+        Snapshot::new(
+            metadata.clone(),
+            BTreeMap::from([("src/main.js".into(), too_large)])
+        ),
+        Err(Error::Limit)
+    ));
+    let chunk = Arc::<[u8]>::from(vec![0; 16 * 1024 * 1024]);
+    let mut files = BTreeMap::from([("src/main.js".into(), Arc::clone(&chunk))]);
+    for index in 1..5 {
+        let path = format!("src/part-{index}.js");
+        metadata.files.push(Payload {
+            path: path.clone(),
+            bytes: None,
+            sha256: None,
+        });
+        files.insert(path, Arc::clone(&chunk));
+    }
+    assert!(matches!(Snapshot::new(metadata, files), Err(Error::Limit)));
 }
 
 #[test]

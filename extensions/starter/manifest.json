@@ -1,0 +1,22 @@
+{
+  "formatVersion": 1,
+  "apiVersion": 1,
+  "runtime": "javascript-es2022",
+  "id": "example.response-overview",
+  "version": "1.0.0",
+  "name": "Response overview starter",
+  "visualizers": [
+    {
+      "id": "response-overview",
+      "name": "Response overview",
+      "entry": "main.js",
+      "surfaces": ["headers"],
+      "inputs": {
+        "request": { "headers": [], "body": "none" },
+        "response": { "headers": [], "body": "none" }
+      },
+      "matches": [{ "direction": "response", "pathPrefixes": ["/"] }]
+    }
+  ],
+  "files": [{ "path": "main.js" }]
+}

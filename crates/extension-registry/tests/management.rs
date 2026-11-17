@@ -23,7 +23,7 @@ fn package_version(path: &std::path::Path, version: &str) {
     let mut m = manifest();
     m.version = version.into();
     let source=b"export function visualize(){return {kind:'document',document:{title:'Headers',status:'complete',presentation:'tree',roots:[]}};}";
-    m.files[0].bytes = source.len() as u64;
+    m.files[0].bytes = Some(source.len() as u64);
     let snapshot = Snapshot::new(
         m,
         BTreeMap::from([("src/main.js".into(), Arc::<[u8]>::from(source.as_slice()))]),
@@ -114,9 +114,11 @@ fn developer_registration_and_listing_do_not_read_code_and_uninstall_keeps_sourc
     let root = tempfile::tempdir().unwrap();
     let sources = root.path().join("developer");
     std::fs::create_dir_all(&sources).unwrap();
+    let mut metadata = manifest();
+    metadata.files[0].bytes = None;
     std::fs::write(
         sources.join("manifest.json"),
-        serde_json::to_vec(&manifest()).unwrap(),
+        serde_json::to_vec(&metadata).unwrap(),
     )
     .unwrap();
     let registry = Registry::load(root.path().join("registry"), None);
@@ -140,6 +142,48 @@ fn developer_registration_and_listing_do_not_read_code_and_uninstall_keeps_sourc
     assert_ne!(first.digest, second.digest);
     registry.uninstall("example.headers").unwrap();
     assert!(sources.join("src/main.js").is_file());
+}
+
+#[test]
+fn starter_loads_edits_and_packages_without_authored_lengths_or_hashes() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("starter");
+    let template =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../extensions/starter");
+    std::fs::create_dir(&source).unwrap();
+    for name in ["manifest.json", "main.js"] {
+        std::fs::copy(template.join(name), source.join(name)).unwrap();
+    }
+    let authored = std::fs::read(source.join("manifest.json")).unwrap();
+    let registry = Registry::load(root.path().join("registry"), None);
+    let entry = registry.register_directory(&source, false).unwrap();
+    let id = &entry.catalog.manifest.id;
+    assert_eq!(entry.catalog.manifest.files[0].bytes, None);
+    assert_eq!(entry.catalog.manifest.files[0].sha256, None);
+    let first = registry.snapshot(id).unwrap();
+    let mut edited = std::fs::read(source.join("main.js")).unwrap();
+    edited.extend_from_slice(b"\n// edited externally\n");
+    std::fs::write(source.join("main.js"), &edited).unwrap();
+    let next = registry.snapshot(id).unwrap();
+    assert_ne!(first.digest, next.digest);
+    assert_eq!(next.manifest.files[0].bytes, Some(edited.len() as u64));
+    assert_eq!(
+        next.manifest.files[0].sha256,
+        Some(transmog_extensions::sha256(&edited))
+    );
+    let destination = root.path().join("starter.tmext");
+    registry.package_directory(id, &destination).unwrap();
+    let mut package =
+        transmog_extensions::Package::open(File::open(&destination).unwrap()).unwrap();
+    assert_eq!(package.snapshot().unwrap().digest, next.digest);
+    assert_eq!(package.payload("main.js").unwrap(), edited);
+    assert_eq!(
+        std::fs::read(source.join("manifest.json")).unwrap(),
+        authored
+    );
+    let recipient = Registry::load(root.path().join("recipient"), None);
+    recipient.install(&destination).unwrap();
+    assert_eq!(recipient.snapshot(id).unwrap().digest, next.digest);
 }
 
 fn development(registry: &Registry, root: &std::path::Path) {

@@ -11,6 +11,59 @@ use transmog_extensions::*;
 use worker_tests::WorkerTest;
 
 #[tokio::test]
+async fn minimal_starter_executes_without_header_or_body_access() {
+    let case = WorkerTest::acquire(1).await;
+    let mut manifest = Manifest::parse(
+        include_bytes!("../../../extensions/starter/manifest.json"),
+        true,
+    )
+    .unwrap();
+    manifest.id = case.package().into();
+    let snapshot = Snapshot::new(
+        manifest,
+        BTreeMap::from([(
+            "main.js".into(),
+            Arc::<[u8]>::from(include_bytes!("../../../extensions/starter/main.js").as_slice()),
+        )]),
+    )
+    .unwrap();
+    let runner = Runner::start(
+        &HostConfig {
+            executable: support::host_executable().into(),
+        },
+        snapshot,
+        "response-overview",
+    )
+    .unwrap();
+    for (status, expected) in [
+        (Some(200), ParseStatus::Complete),
+        (None, ParseStatus::Unavailable),
+    ] {
+        let mut fixture = input();
+        fixture.response.as_mut().unwrap().status = status;
+        let step = runner
+            .invoke(Invocation::Visualize {
+                input: Box::new(fixture),
+            })
+            .await
+            .unwrap();
+        let VisualizationStep::Document { document } = step else {
+            panic!("document required")
+        };
+        assert_eq!(document.title, "Response overview");
+        assert_eq!(document.status, expected);
+        assert_eq!(
+            document.roots[0].value,
+            Some(Value::String(status.map_or_else(
+                || "No retained response status".into(),
+                |status| status.to_string()
+            )))
+        );
+    }
+    runner.stop();
+}
+
+#[tokio::test]
 async fn debugger_logpoints_complete_visualizers_through_the_authenticated_host_pipe() {
     use transmog_extensions::debugger::{DebugAction, DebugEventKind, SourceBreakpoint};
     let test = WorkerTest::acquire(1).await;
@@ -159,7 +212,7 @@ impl WorkerTest {
         for &(path, source) in modules {
             candidate.manifest.files.push(Payload {
                 path: path.into(),
-                bytes: source.len() as u64,
+                bytes: Some(source.len() as u64),
                 sha256: None,
             });
             candidate
@@ -1382,7 +1435,7 @@ async fn typescript_and_non_javascript_dependencies_are_not_transpiled() {
     let bytes = b"export const title = 'This is inert authoring source';";
     candidate.manifest.files.push(Payload {
         path: "src/author.ts".into(),
-        bytes: bytes.len() as u64,
+        bytes: Some(bytes.len() as u64),
         sha256: None,
     });
     candidate
