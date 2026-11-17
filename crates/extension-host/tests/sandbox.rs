@@ -113,7 +113,10 @@ async fn debugger_logpoints_complete_visualizers_through_the_authenticated_host_
 #[tokio::test]
 async fn debugger_preserves_initializer_heap_locals_and_idle_detach_in_the_real_sandbox() {
     use transmog_extensions::debugger::{DebugAction, DebugEventKind};
-    let test = WorkerTest::acquire(1).await;
+    // This case deliberately outlasts the callback budget while paused and then
+    // exercises the production subsecond inspection deadlines. Keep unrelated
+    // worker allocation and timeout stress out of that timing measurement.
+    let test = WorkerTest::acquire(worker_tests::PARALLEL_TESTS).await;
     let snapshot=test.snapshot("globalThis.starts=1;debugger; export function visualize(input){const local=7;debugger;console.log('starts',globalThis.starts++);return {kind:'document',document:{title:'Debug',status:'complete',presentation:'tree',roots:[]}}} ");
     let session = debugger::session('a');
     let owner = Arc::clone(&session);
