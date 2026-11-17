@@ -26,16 +26,21 @@ pub async fn wait(
         let page = session.page(0);
         if let Some(event) = page
             .events
-            .into_iter()
+            .iter()
             .rev()
             .find(|event| predicate(&event.event))
         {
-            return event.event;
+            return event.event.clone();
         }
-        assert!(!page.closed, "Debugger closed before expected event");
+        assert!(
+            !page.closed,
+            "Debugger closed before expected event: {}",
+            serde_json::to_string(&page).unwrap()
+        );
         assert!(
             start.elapsed() < Duration::from_secs(10),
-            "Timed out waiting for debugger event"
+            "Timed out waiting for debugger event: {}",
+            serde_json::to_string(&page).unwrap()
         );
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
