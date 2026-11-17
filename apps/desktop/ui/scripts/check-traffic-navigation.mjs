@@ -47,6 +47,8 @@ export async function checkTrafficNavigation(page) {
       t.sessionScroller.scrollTop = 0;
       t.queryRevision++;
       t.selectSearchMatches = false;
+      // Each scenario exercises a cold viewport, independently of earlier navigation.
+      t.rowCache.clear();
       await t.refreshSessions(undefined, true);
     });
     await page.waitForFunction(() =>

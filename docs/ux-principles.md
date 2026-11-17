@@ -168,6 +168,8 @@ when changing the experience.
 ## Preserve work across changes
 
 - Preserve selection, scroll and drafts across live updates and workspace changes.
+  Keep loaded Traffic summaries visible while their replacements load. Background
+  refreshes must not replace known evidence with loading or unknown placeholders.
   Resolve unsaved work before replacing it. Allocate one editor per visible task.
   Check a requested destination before offering to discard a draft. If navigation
   aborts after Discard, still-visible typed fields remain dirty; do not overwrite

@@ -271,6 +271,55 @@ export async function smokeTrafficList(client, screenshot) {
   await wait(
     `${t}.sessionScroller.scrollTop>${t}.virtualList.total*.2 && ${t}.sessionScroller.scrollTop<${t}.virtualList.total*.8 && ${t}.sessions.every(row=>!row.loading)`,
   );
+  // Hold native row replies beyond the first page and watch for even transient
+  // loss of known cells, row identity, focus or scroll position during refresh.
+  await wait(`!${t}.rowRequests.size`);
+  await client.evaluate(`(()=>{
+    const w=${t},raw=w.loadWindow;
+    const rows=[...w.trafficTable.querySelectorAll('tr[data-session-id]')].map(row=>({row,text:row.textContent}));
+    const probe=globalThis.__nativeTrafficRefresh={raw,held:[],pending:[],rows,flashes:[],top:w.sessionScroller.scrollTop,focus:w.getRootNode().activeElement};
+    probe.observer=new MutationObserver(()=>{
+      for(const {row,text} of rows) if(!row.isConnected || row.textContent!==text || row.getAttribute('aria-busy')!=='false') probe.flashes.push(row.dataset.sessionId);
+    });
+    probe.observer.observe(w.trafficTable,{subtree:true,childList:true,characterData:true,attributes:true});
+    w.loadWindow=(...args)=>{
+      const pending=(async()=>{
+        await new Promise(resolve=>probe.held.push(resolve));
+        await raw.apply(w,args);
+      })();
+      probe.pending.push(pending);
+      return pending;
+    };
+  })()`);
+  try {
+    await client.evaluate(`${t}.refreshSessions()`);
+    await wait(`globalThis.__nativeTrafficRefresh.held.length>0`);
+    const presentation = await client.evaluate(`(()=>{
+      const w=${t},p=globalThis.__nativeTrafficRefresh;
+      return {flashes:p.flashes,position:w.sessionScroller.scrollTop===p.top,focus:w.getRootNode().activeElement===p.focus};
+    })()`);
+    assert.deepEqual(
+      presentation,
+      { flashes: [], position: true, focus: true },
+      "Native refresh invalidated populated traffic",
+    );
+  } finally {
+    const flashes = await client.evaluate(`(async()=>{
+      const w=${t},p=globalThis.__nativeTrafficRefresh;
+      delete w.loadWindow;
+      for(const resolve of p.held) resolve();
+      try {
+        await Promise.all(p.pending);
+        await w.renderViewport();
+        return p.flashes;
+      } finally {
+        p.observer.disconnect();
+        delete globalThis.__nativeTrafficRefresh;
+      }
+    })()`);
+    await wait(`!${t}.rowRequests.size`);
+    assert.deepEqual(flashes, [], "Native row replacement briefly invalidated known cells");
+  }
   await client.evaluate(`${t}.revealCurrent(${JSON.stringify(ids[0])},true)`);
   await click(ids[0]);
   await wait(`${t}.selectedSessionId===${JSON.stringify(ids[0])}`);

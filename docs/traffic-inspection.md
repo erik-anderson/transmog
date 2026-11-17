@@ -128,7 +128,9 @@ actions; a captured-page preview does not run the standalone live editors.
 
 Traffic uses one continuous list and a native scrollbar spanning all matching
 entries. Only rows near the viewport are rendered, so large captures remain
-usable. Compact and ordinary rows have consistent heights. Headers and cells
+usable. Live refreshes keep loaded row values visible until fresh summaries arrive,
+preserving selection, focus and the reading position. Compact and ordinary rows
+have consistent heights. Headers and cells
 stay on one line and clip with ellipsis when columns are narrow; hover shows
 the complete value. Protocol keeps the WebSocket or SSE identity beside the
 secondary HTTP version through closure and import, and participates in column fitting.

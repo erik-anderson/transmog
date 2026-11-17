@@ -6,6 +6,7 @@ import { checkFormatConverter } from "./check-format-converter.mjs";
 import { checkRequestControls } from "./check-request-controls.mjs";
 import { checkTrafficShortcuts } from "./check-traffic-shortcuts.mjs";
 import { checkTrafficFollowing } from "./check-traffic-following.mjs";
+import { checkTrafficRefresh } from "./check-traffic-refresh.mjs";
 import {
   checkResponseSetWorkspaces,
   checkResponseSetDraftRegressions,
@@ -5176,6 +5177,13 @@ try {
     process.stdout.write(
       "Request cancellation, uncached selections and delayed removal focus verified.\n",
     );
+    process.exit(0);
+  }
+  if (process.argv.includes("--traffic-refresh-only")) {
+    await checkTrafficRefresh(page, root);
+    assert.deepEqual(errors, []);
+    process.stdout.write("Traffic refresh presentation and stale row reads verified.\n");
+    await browser.close();
     process.exit(0);
   }
   if (process.argv.includes("--traffic-following-only")) {
@@ -10993,6 +11001,7 @@ try {
   await runBrowserCheck(checkHeaderRules, page, root);
   await runBrowserCheck(checkTextEdits, page, root);
   await runBrowserCheck(checkTrafficFollowing, page, root);
+  await runBrowserCheck(checkTrafficRefresh, page, root);
   await runBrowserCheck(checkHeaderEditor, page, root);
   await runBrowserCheck(checkComposerAuthoring, page, root);
   await runBrowserCheck(checkInspectorLayout, page, root);

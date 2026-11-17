@@ -2079,6 +2079,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   private virtualList = new VirtualList();
   private trafficView: TrafficView | null = null;
   private rowCache = new Map<string, SessionSummary>();
+  private staleRows = new Set<string>();
   private rowRevision = 0;
   private rowRequests = new Map<string, Promise<void>>();
   private rowObserver: ResizeObserver | null = null;
@@ -4931,15 +4932,30 @@ export class TrafficWorkspace extends WorkspaceElement {
     for (const row of rows) {
       this.rowCache.delete(row.id);
       this.rowCache.set(row.id, row);
+      this.staleRows.delete(row.id);
     }
     // Only metadata near the viewport is retained by the renderer. Selection keeps IDs.
+    // Loading another page must not evict the summaries currently on screen.
+    if (this.rowCache.size > 1024) {
+      for (const row of this.sessions) {
+        const cached = this.rowCache.get(row.id);
+        if (cached) {
+          this.rowCache.delete(row.id);
+          this.rowCache.set(row.id, cached);
+        }
+      }
+    }
     while (this.rowCache.size > 1024) {
       const first = this.rowCache.keys().next().value;
       if (first === undefined) {
         break;
       }
       this.rowCache.delete(first);
+      this.staleRows.delete(first);
     }
+  }
+  private rowNeedsRefresh(id: string): boolean {
+    return !this.rowCache.has(id) || this.staleRows.has(id);
   }
   private updateSpacers(): void {
     this.topSpace = this.virtualList.offset(this.viewportStart) + "px";
@@ -5062,7 +5078,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       }
     }
     for (let offset = Math.floor(range.start / 100) * 100; offset < range.end; offset += 100) {
-      if (this.virtualList.ids.slice(offset, offset + 100).some((id) => !this.rowCache.has(id))) {
+      if (this.virtualList.ids.slice(offset, offset + 100).some((id) => this.rowNeedsRefresh(id))) {
         void this.loadWindow(offset).catch((error) => {
           this.queryError = "Traffic rows could not be loaded: " + describeError(error);
           this.renderSessionState();
@@ -5081,7 +5097,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     if (pending) {
       return pending;
     }
-    if (!force && !view.ids.slice(offset, offset + 100).some((id) => !this.rowCache.has(id))) {
+    if (!force && !view.ids.slice(offset, offset + 100).some((id) => this.rowNeedsRefresh(id))) {
       return;
     }
     const request = invoke<SessionSummary[]>("traffic_view_rows", {
@@ -5117,9 +5133,16 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.releaseView(this.trafficView);
     this.trafficView = view;
     this.rowRevision++;
-    this.rowCache.clear();
-    this.cacheRows(view.page.sessions);
     this.virtualList.reset(view.ids);
+    for (const id of this.rowCache.keys()) {
+      if (!this.virtualList.indexes.has(id)) {
+        this.rowCache.delete(id);
+      }
+    }
+    // A new projection invalidates freshness, not the evidence already on screen.
+    // Keep retained summaries visible until this view's row reads replace them.
+    this.staleRows = new Set(this.rowCache.keys());
+    this.cacheRows(view.page.sessions);
     this.totalMatched = view.ids.length;
     this.rowCount = Math.max(2, view.ids.length + 1);
     for (const id of this.trafficSelection.ids) {
@@ -5139,8 +5162,8 @@ export class TrafficWorkspace extends WorkspaceElement {
     ) {
       this.trafficSelection.anchor = null;
     }
-    this.viewportStart = 0;
-    this.viewportEnd = 0;
+    this.viewportStart = Math.min(this.viewportStart, view.ids.length);
+    this.viewportEnd = Math.min(this.viewportEnd, view.ids.length);
     this.updateSpacers();
     const revision = this.rowRevision;
     await this.$whenRendered();
@@ -5190,7 +5213,7 @@ export class TrafficWorkspace extends WorkspaceElement {
         this.sessionScroller.scrollTop = Math.max(0, bottom - height);
       }
       await this.renderViewport();
-      if (!this.rowCache.has(id)) {
+      if (this.rowNeedsRefresh(id)) {
         await this.loadWindow(Math.floor(index / 100) * 100);
       }
       if (generation !== this.scrollGeneration || !this.isConnected || !current()) {
@@ -5202,7 +5225,7 @@ export class TrafficWorkspace extends WorkspaceElement {
         continue;
       }
       const row = this.rowCache.get(id);
-      if (!row) {
+      if (!row || this.staleRows.has(id)) {
         await this.refreshSessions(undefined, true);
         if (view === this.trafficView && revision === this.rowRevision) {
           return null;
@@ -5210,6 +5233,12 @@ export class TrafficWorkspace extends WorkspaceElement {
         continue;
       }
       await this.renderViewport();
+      if (generation !== this.scrollGeneration || !this.isConnected || !current()) {
+        return null;
+      }
+      if (view !== this.trafficView || revision !== this.rowRevision) {
+        continue;
+      }
       const element = (this.getRootNode() as ShadowRoot).getElementById("session-" + id);
       element?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
       if (focus && !this.matchDialog.open) {
