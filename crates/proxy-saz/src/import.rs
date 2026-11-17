@@ -277,6 +277,9 @@ impl<R: Read + Seek + Clone> SazArchive<R> {
         if archive.len() > limits.max_members {
             return Err(SazError::ImportLimitExceeded);
         }
+        // Validate the same entry identity in both ZIP header views before
+        // accepting names or indexing lazy body locations from this archive.
+        archive.validate_header_consistency()?;
         let mut names = HashSet::new();
         let mut total = 0_u64;
         for index in 0..archive.len() {
@@ -1485,6 +1488,28 @@ mod tests {
             archive.index(|_, _| {}, || true),
             Err(SazError::Canceled)
         ));
+    }
+
+    #[test]
+    fn inconsistent_local_headers_fail_before_indexing() {
+        let bytes = zip(
+            &[(
+                "raw/1_c.txt",
+                b"GET http://example.invalid/ HTTP/1.1\r\n\r\n",
+            )],
+            CompressionMethod::Stored,
+        );
+        assert_eq!(&bytes[..4], b"PK\x03\x04");
+        // A safe central-directory name must not hide a different local name
+        // or conflicting compression, flags, timestamp, CRC or size metadata.
+        for offset in [30, 8, 6, 10, 14, 18, 22] {
+            let mut changed = bytes.clone();
+            changed[offset] ^= 1;
+            assert!(
+                SazArchive::open(Cursor::new(changed), SazImportLimits::default()).is_err(),
+                "accepted conflicting local header at byte {offset}"
+            );
+        }
     }
 
     #[derive(Clone)]
