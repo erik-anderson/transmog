@@ -252,6 +252,9 @@ await page.addInitScript(
       httpsDecryption: ["running", "draining", "stopping"].includes(state.lifecycle)
         ? (state.runtimeDecrypt ?? true)
         : null,
+      routingMode: ["running", "draining", "stopping"].includes(state.lifecycle)
+        ? (state.runtimeRoutingMode ?? "system")
+        : null,
       unresolvedProcessConnections: state.unresolvedProcessConnections ?? 0,
     });
     const caller = { kind: "local-process", processName: "Fixture", processId: 42 };
@@ -910,6 +913,23 @@ await page.addInitScript(
           case "mcp_review_session":
             state.reviewedSession = args.sessionId;
             return "viewer-agent";
+          case "mcp_stop_listener": {
+            const session = state.mcpInspectionSessions.find(
+              (candidate) => candidate.sessionId === args.sessionId,
+            );
+            session.listener = {
+              endpoint: null,
+              lifecycle: "stopped",
+              recordingState: "sealed",
+              recordingArtifact: "local-client.tmcap",
+            };
+            return {
+              enabled: true,
+              controls: 0,
+              sessions: structuredClone(state.mcpInspectionSessions),
+              capturePasswords: structuredClone(state.mcpCapturePasswords),
+            };
+          }
           case "mcp_end_session":
             state.mcpInspectionSessions = state.mcpInspectionSessions.filter(
               (session) => session.sessionId !== args.sessionId,
@@ -918,6 +938,7 @@ await page.addInitScript(
               enabled: true,
               controls: 0,
               sessions: structuredClone(state.mcpInspectionSessions),
+              capturePasswords: structuredClone(state.mcpCapturePasswords),
             };
           case "mcp_capture_password":
             state.capturePasswordSubmitted = args.password.length > 0;
@@ -2610,7 +2631,7 @@ await page.addInitScript(
             return {
               lifecycle: state.lifecycle,
               listener: ["running", "draining", "stopping"].includes(state.lifecycle)
-                ? "127.0.0.1:8888"
+                ? (state.listenerAddress ?? "127.0.0.1:8888")
                 : null,
               summary: state.statusSummary ?? "Proxy " + state.lifecycle,
               hostRestorePending: state.hostRestorePending ?? false,
@@ -2634,11 +2655,18 @@ await page.addInitScript(
             else await new Promise((resolve) => setTimeout(resolve, 80));
             state.lifecycle = "running";
             state.runtimeDecrypt = state.savedProduct?.preferences.decryptHttps ?? true;
+            state.runtimeRoutingMode =
+              (state.savedProduct?.preferences.configureSystemProxy ??
+              state.configureSystemProxy ??
+              true)
+                ? "system"
+                : "manual";
             return {
               lifecycle: "running",
-              listener: "127.0.0.1:8888",
+              listener: state.listenerAddress ?? "127.0.0.1:8888",
               summary: "Proxy running",
-              hostRestorePending: false,
+              hostRestorePending:
+                state.runtimeRoutingMode === "manual" && !!state.hostRestorePending,
               ...processStatus(),
             };
           case "stop_application":
@@ -2651,7 +2679,8 @@ await page.addInitScript(
                 lifecycle: "draining",
                 listener: "127.0.0.1:8888",
                 summary: "Finishing 1 active request/connection",
-                hostRestorePending: false,
+                hostRestorePending:
+                  state.runtimeRoutingMode === "manual" && !!state.hostRestorePending,
                 ...processStatus(),
               };
             }
@@ -2660,7 +2689,7 @@ await page.addInitScript(
               lifecycle: "stopped",
               listener: null,
               summary: "Proxy stopped",
-              hostRestorePending: false,
+              hostRestorePending: state.hostRestorePending ?? false,
               ...processStatus(),
             };
           case "resume_application":
@@ -2669,7 +2698,8 @@ await page.addInitScript(
               lifecycle: "running",
               listener: "127.0.0.1:8888",
               summary: "Proxy resumed",
-              hostRestorePending: false,
+              hostRestorePending:
+                state.runtimeRoutingMode === "manual" && !!state.hostRestorePending,
               ...processStatus(),
             };
           case "recover_windows_proxy":
@@ -4247,6 +4277,12 @@ await page.addInitScript(
             };
             return structuredClone(state.networkProfiles);
           }
+          case "save_proxy_routing":
+            if (state.routingSaveError) throw new Error("Fixture routing persistence failed");
+            if (state.savedProduct)
+              state.savedProduct.preferences.configureSystemProxy = args.configureSystemProxy;
+            state.configureSystemProxy = args.configureSystemProxy;
+            return null;
           case "save_product_state": {
             if (state.settingsSaveError) throw new Error("Fixture settings persistence failed");
             if (state.holdSettingsSave)
@@ -4269,6 +4305,12 @@ await page.addInitScript(
               );
             const currentDecrypt = state.savedProduct?.preferences.decryptHttps ?? true;
             const savedProduct = structuredClone(args.productState);
+            if (args.preserveProxyRouting) {
+              savedProduct.preferences.configureSystemProxy =
+                state.savedProduct?.preferences.configureSystemProxy ??
+                state.configureSystemProxy ??
+                true;
+            }
             if (
               typeof args.expectedDecryptHttps === "boolean" &&
               args.expectedDecryptHttps === args.productState.preferences.decryptHttps
@@ -4293,7 +4335,10 @@ await page.addInitScript(
             );
             state.savedProduct = savedProduct;
             if (live) state.runtimeDecrypt = savedProduct.preferences.decryptHttps ?? true;
-            return structuredClone(state.savedProduct);
+            const reply = structuredClone(state.savedProduct);
+            if (state.holdSettingsSaveReply)
+              await new Promise((resolve) => (state.releaseSettingsSaveReply = resolve));
+            return reply;
           }
           case "pick_support_path":
             return state.supportPick ?? null;
@@ -8902,9 +8947,6 @@ try {
   await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 1280, height: 800 });
   await view("settings");
-  const setupCertificate = page
-    .locator("#settings")
-    .getByRole("button", { name: "Set up interception certificate", exact: true });
   const resetCertificate = page
     .locator("#settings")
     .getByRole("button", { name: "Reset certificate and set up again", exact: true });
@@ -8951,9 +8993,7 @@ try {
     await preferences.getByLabel("Decrypt HTTPS traffic", { exact: true }).isChecked(),
     true,
   );
-  await page.evaluate(() => {
-    globalThis.__workspaceFixture.configureSystemProxy = false;
-  });
+  await preferences.evaluate((settings) => settings.saveProxyRouting(false));
   await preferences
     .getByLabel("Isolate outbound connections by caller process", { exact: true })
     .uncheck();
@@ -8972,6 +9012,7 @@ try {
   await runBrowserCheck(checkProcessInspection, page, root);
   await runBrowserCheck(checkNetworkProfiles, page, root);
   assert.equal(networkSaved.configureSystemProxy, false, "Saving preferences enabled host routing");
+  await page.locator("settings-workspace").evaluate((settings) => settings.saveProxyRouting(true));
   await preferences
     .getByLabel("Isolate outbound connections by caller process", { exact: true })
     .check();
@@ -9368,7 +9409,7 @@ try {
       state.caBootstrap = bootstrap;
       state.caEvents = [];
     }, bootstrap);
-    await setupCertificate.click();
+    await preferences.evaluate((settings) => settings.refreshCertificateState());
     await caIdle();
     assert.match(await certificateNotice.textContent(), /Interception certificate needs a reset/);
     if (bootstrap.caKeyError) {
@@ -9408,7 +9449,7 @@ try {
     );
     // Reset always targets the backend-owned paths even when the form contains
     // a user-selected CA, and uses the default paths for the fresh certificate.
-    await page.getByLabel("CA certificate", { exact: true }).fill("custom.pem");
+    await page.getByLabel("Public CA certificate", { exact: true }).fill("custom.pem");
     await page.getByLabel("CA private key", { exact: true }).fill("custom.key");
     await page.evaluate(() => {
       globalThis.__workspaceFixture.deferCaReset = true;
@@ -9419,7 +9460,6 @@ try {
     });
     await resetCertificate.click();
     await page.waitForFunction(() => globalThis.__workspaceFixture.caResetPending);
-    assert.equal(await setupCertificate.isDisabled(), true);
     assert.equal(await resetCertificate.isDisabled(), true);
     await page.evaluate(async () => {
       const settings = document

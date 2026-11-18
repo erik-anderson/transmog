@@ -81,8 +81,14 @@ On Windows, `record` asks to install its public interception root, configures
 the current user's system proxy, and restores routing before draining active
 requests on Ctrl+C. A second Ctrl+C terminates unfinished work and saves
 available evidence. Other platforms require manual client proxy configuration.
-`--no-system-proxy` makes Windows routing manual too. `--no-install-root` leaves
-certificate setup to you; unattended runs must choose it or `--install-root`.
+`--no-system-proxy` leaves Windows routing alone through startup, recording and
+exit, including when a prior run left a recovery journal. Both `record` and
+`serve` print the bound socket as `LISTEN_ADDR`. For an app, use the
+client address printed alongside it. Use `--listen 127.0.0.1:0` to select an available port.
+Decrypted HTTPS requires the app to trust the public root. Use `--no-install-root`
+to get the public PEM for the app's trust setup or `--install-root` to explicitly
+request OS trust installation with either routing mode. Unattended decrypting
+runs specify one of those certificate options.
 OS consent still applies to installation and removal. `--no-decrypt-https`
 skips certificate setup entirely.
 
@@ -101,6 +107,16 @@ The [support guide](cli-support-capture.md) explains passwords, buffer sizing,
 persistence, and cleanup in detail.
 
 ## Run a manually configured proxy
+
+In the desktop, use **Routing for next start** beside **Start proxy** and
+choose **Manual proxy**. Select **Start proxy** and
+copy the bound address into the target application's HTTP and HTTPS proxy
+settings. Transmog remembers the routing choice. A running listener retains
+its original mode until it finishes. For HTTPS decryption, use **Trust for my
+Windows account…** for apps that use Windows trust or **Copy public certificate
+path** for apps with a separate trust store. Choose **Start with HTTPS
+tunnels** to run without a CA. **Recover host settings** in Connection settings
+explicitly restores a journal left by an earlier system-proxy run.
 
 ### Select callers and HTTPS inspection
 
@@ -127,8 +143,8 @@ for matching and platform details.
 `--no-decrypt-https` forwards HTTPS through opaque CONNECT tunnels and retains
 connection summaries for every caller. Plain HTTP remains inspectable for selected callers.
 This mode does not create, load, install, or remove an interception CA for the
-run, and `serve` needs no `--ca-cert` or `--ca-key`. `record` still restores
-interrupted Windows proxy routing before starting. `--no-install-root` alone leaves HTTPS
+run, and `serve` needs no `--ca-cert` or `--ca-key`. Windows `record` restores
+interrupted proxy routing before starting in system mode. `--no-install-root` alone leaves HTTPS
 decryption enabled and requires you to arrange certificate trust yourself.
 Combining `--no-decrypt-https` with `record --install-root` or `--persistent-root`,
 or with `serve --ca-cert` or `--ca-key`, is rejected before setup.
@@ -168,7 +184,8 @@ To record with `serve`, add `--capture .\session.tmcap`; add
 are redacted, and request retention is capped at 25,000,000 bytes per request.
 `--capture-bodies` requires `--capture`. Use `record` when you need encryption,
 circular retention, or configurable recording privacy. Ctrl+C stops `serve`
-and seals a successful capture.
+and seals a successful capture. `serve` opens the capture file after binding the
+listener and prints `LISTEN_ADDR` once the writer and Ctrl+C handler are ready.
 Recording waits for capacity in its bounded event queue. Slow storage slows
 requests instead of dropping capture evidence after a time deadline. Actual
 writer failures remain errors; use `capture inspect` to check the available

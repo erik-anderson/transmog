@@ -136,16 +136,16 @@ pub fn tool_catalog() -> Vec<ToolSpec> {
         ),
         spec(
             "transmog_recording_start",
-            "Start a new native recording in Transmog's agent-export directory. Requires all-traffic scope, collection and unredacted access because the recording preserves full evidence. Never overwrites a file.",
+            "Start a native recording on main or your owned private listener. Requires all-traffic scope, the corresponding collection permission (collect or collect-private), and unredacted access.",
             false,
-            json!({"name":{"type":"string","maxLength":80}}),
+            json!({"name":{"type":"string","maxLength":80},"sessionId":id(),"instanceId":instance()}),
             &[],
         ),
         spec(
             "transmog_recording_stop",
-            "Seal a recording started by this access key. Returns artifact metadata; does not share file contents.",
+            "Seal a recording started by this access key on main or your private listener. Returns artifact metadata.",
             false,
-            json!({}),
+            json!({"sessionId":id(),"instanceId":instance()}),
             &[],
         ),
         spec(

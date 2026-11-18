@@ -124,9 +124,9 @@ Usage: transmog-cli record [OPTIONS]
   --route auto|h1|h2|h3       Upstream protocol (default: auto)
   --upstream-ca-cert FILE    Add a PEM CA bundle to the operating system's upstream trust
   --install-root             Authorize root installation without a console question; OS consent still applies
-  --no-install-root          Use manual HTTPS certificate setup
+  --no-install-root          Print the public root for the app's HTTPS trust setup
   --persistent-root          Keep and reuse an OS-user-protected CLI root (default: fresh root, key in memory)
-  --no-system-proxy          Leave proxy settings unchanged
+  --no-system-proxy          Leave Windows proxy routing unchanged
   --redact                   Redact Authorization, Proxy-Authorization, Cookie and Set-Cookie values
   --retain-sensitive         Retain complete headers, including credentials and cookies (initial default)
   --request-body-limit BYTES Positive per-request retained byte limit (initial default: 25000000)
@@ -141,8 +141,9 @@ Redaction and request-body limits persist across CLI recordings. Other options a
 Process inspection defaults to All. --process and --exclude-process cannot be combined.
 ", "Names match executable basenames. Process names are case insensitive;
 extensionless names accept an omitted .exe suffix. Other extensions remain distinct.
-Proxy settings are configured and restored automatically unless --no-system-proxy is used.
-Remote listeners require --no-system-proxy.
+Windows configures and restores proxy routing by default. With --no-system-proxy,
+configure the app using the printed address. You can still install the root explicitly.
+Remote listeners require --no-system-proxy and --allow-remote.
 ", "Process names are case sensitive and match exact executable basenames.
 Configure clients' HTTP/HTTPS proxy settings manually.
 Remove those proxy settings after recording.

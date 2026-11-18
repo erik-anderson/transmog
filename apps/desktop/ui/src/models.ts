@@ -1,10 +1,12 @@
 import type { ExceptionDiagnostic, LogRun } from "./script-diagnostics/models.js";
 
 export type Lifecycle = "stopped" | "running" | "draining" | "stopping" | "failed";
+export type ProxyRoutingMode = "system" | "manual";
 
 export interface AppStatus {
   lifecycle: Lifecycle;
   listener: string | null;
+  routingMode: ProxyRoutingMode | null;
   summary: string;
   hostRestorePending: boolean;
   processInspection: ProcessInspectionPolicy;
@@ -1025,6 +1027,7 @@ export interface TrafficRuleRequest {
 export type ViewName =
   "traffic" | "breakpoints" | "automation" | "composer" | "captures" | "settings";
 export type NoticeAction =
+  | "certificate-settings"
   | "setup-ca"
   | "reset-ca"
   | "start-proxy"

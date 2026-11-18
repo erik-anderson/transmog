@@ -11,6 +11,14 @@ when changing the experience.
 - Keep collecting, filtering, selecting and inspecting traffic direct. Use a few
   clearly named workspaces, compact collections and one selected-item properties
   pane. Multiselection should reveal useful batch actions.
+- Keep **Start proxy** direct. Show the active routing mode beside the listener
+  and let users choose and remember routing for the next new listener there.
+  Manual routing gives the user a copyable address and keeps recovery from a
+  prior Windows system-proxy run available as a separate action.
+- Explain interception trust alongside manual routing. Distinguish a usable
+  public CA, Windows account trust and the target app's trust configuration.
+  Offer explicit Windows installation and the public certificate path in the
+  same setup surface. Keep HTTPS tunnels available without an interception CA.
 - Keep ordinary traffic import and save ahead of case sharing. Cases are an
   occasional sharing workflow, grouped secondarily; opening a case leads toward
   inspecting its traffic. Recognize supported file kinds through normal opening

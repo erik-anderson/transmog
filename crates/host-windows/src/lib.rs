@@ -240,7 +240,7 @@ impl WindowsProxyIntegration {
         self
     }
 
-    /// Returns whether a prior process left a recovery journal.
+    /// Reports a recovery journal or an unavailable recovery state.
     pub fn recovery_pending(&self) -> bool {
         self.journal_pending()
             || self
@@ -309,6 +309,19 @@ impl WindowsProxyIntegration {
                 result => result.map(|_| ()),
             }
         }
+    }
+
+    /// Restores only the live run owned by this adapter during process exit.
+    ///
+    /// # Errors
+    /// Returns a retryable error if the active transaction cannot be restored.
+    pub fn restore_active_for_exit(&self) -> Result<(), WindowsHostError> {
+        let active = self
+            .active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .upgrade();
+        active.map_or(Ok(()), |state| self.restore_state(&state))
     }
 
     fn restore_state(&self, state: &RestoreState) -> Result<(), WindowsHostError> {
@@ -432,7 +445,7 @@ impl HostIntegration for WindowsProxyIntegration {
             .map_err(|error| to_host_error(&error))?;
         self.recover_previous_owner()
             .map_err(|error| to_host_error(&error))?;
-        if self.recovery_pending() {
+        if self.journal_pending() {
             return Err(host_error("a Windows proxy recovery journal is pending"));
         }
         let prior = self.backend.read().map_err(|error| to_host_error(&error))?;
@@ -1247,7 +1260,7 @@ mod tests {
         assert!(background.apply("127.0.0.1:8124".parse().unwrap()).is_err());
         assert_eq!(backend.read().unwrap().enabled, Some(1));
         assert_eq!(*task.calls.lock().unwrap(), ["register"]);
-        integration.recover_for_exit().unwrap();
+        integration.restore_active_for_exit().unwrap();
         assert_eq!(backend.read().unwrap().enabled, Some(0));
         let next = background.apply("127.0.0.1:8124".parse().unwrap()).unwrap();
         integration.restore(&token).unwrap(); // An old token cannot undo a newer run.
@@ -1303,6 +1316,9 @@ mod tests {
         // An outstanding journal of our own still requires attention, even
         // while the other profile prevents us from recovering it safely.
         fs::write(&idle.journal_path, b"pending recovery").unwrap();
+        idle.restore_active_for_exit().unwrap();
+        assert_eq!(backend.read().unwrap(), during);
+        assert_eq!(fs::read(&idle.journal_path).unwrap(), b"pending recovery");
         assert!(matches!(
             idle.recover_for_exit(),
             Err(WindowsHostError::ProxyInUse)
@@ -1334,10 +1350,13 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let (backend, mut first, _) = adapter("shared-status");
         first.shared_owner = Some(SharedProxyOwner::new(root.path().to_owned()));
-        let token = first.apply("127.0.0.1:8123".parse().unwrap()).unwrap();
         let mut second =
             WindowsProxyIntegration::new(backend.clone(), root.path().join("other.json"));
-        second.shared_owner.clone_from(&first.shared_owner);
+        second.shared_owner = Some(SharedProxyOwner::new(root.path().to_owned()));
+        assert!(!second.recovery_pending());
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+
+        let token = first.apply("127.0.0.1:8123".parse().unwrap()).unwrap();
         assert!(!second.recovery_pending());
         drop(token);
         assert!(second.recovery_pending());

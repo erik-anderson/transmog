@@ -59,10 +59,9 @@ impl SharedProxyOwner {
     }
 
     pub(crate) fn recovery_pending(&self) -> bool {
-        // Status polling must not launch PowerShell. Recovery initializes this
-        // cache before reading the owner record; retain retry visibility then.
-        let Some(root) = self.root.get() else {
-            return false;
+        // Resolve the known folder even when recovery has never run in this process.
+        let Ok(root) = self.root() else {
+            return true;
         };
         if !root
             .join("proxy-owner-v1.json")
@@ -225,7 +224,11 @@ mod tests {
     fn current_user_root_ignores_profile_and_command_search_overrides() {
         const EXPECTED: &str = "TRANSMOG_TEST_EXPECTED_PROXY_OWNER_ROOT";
         let owner = SharedProxyOwner::current_user();
-        let root = owner.root().expect("resolve the Windows known folder");
+        let _ = owner.recovery_pending();
+        let root = owner
+            .root
+            .get()
+            .expect("first recovery status check resolves the Windows known folder");
         if let Some(expected) = std::env::var_os(EXPECTED) {
             assert_eq!(root, std::path::Path::new(&expected));
             assert!(!root.starts_with(std::env::var_os("LOCALAPPDATA").unwrap()));

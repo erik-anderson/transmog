@@ -285,12 +285,24 @@ export async function checkProcessInspection(page, root) {
         path: resolve(root, `../../../target/ui-check/interception-certificate-${suffix}.png`),
       });
     }
-    page.once("dialog", (dialog) => dialog.accept());
+    const installCalls = await page.evaluate(
+      () => globalThis.__workspaceFixture.calls.install_certificate ?? 0,
+    );
+    const activeUsesSystemProxy = await settings.evaluate(
+      (element) => element.connectionUsesSystemProxy,
+    );
+    if (activeUsesSystemProxy) {
+      page.once("dialog", (dialog) => dialog.accept());
+    }
     await settings
       .locator(".interception-certificate")
-      .getByRole("button", { name: "Set up interception certificate", exact: true })
+      .getByRole("button", { name: /^(Set up|Create) interception certificate$/ })
       .click();
     await page.waitForFunction(() => !document.querySelector("app-shell").settings.proxyPending);
+    assert.equal(
+      await page.evaluate(() => globalThis.__workspaceFixture.calls.install_certificate ?? 0),
+      installCalls + Number(activeUsesSystemProxy),
+    );
     assert.equal(
       await page
         .locator(".notice")
@@ -376,7 +388,7 @@ export async function checkProcessInspection(page, root) {
       );
       for (const action of [
         page.getByRole("button", { name: "Copy proxy address", exact: true }),
-        page.getByRole("button", { name: "Proxy status and tools", exact: true }),
+        page.getByRole("button", { name: /routing and status/ }),
       ]) {
         assert.equal(
           await action.evaluate((element) => {
@@ -393,7 +405,7 @@ export async function checkProcessInspection(page, root) {
         );
       }
       if (width === 960) {
-        const tools = page.getByRole("button", { name: "Proxy status and tools", exact: true });
+        const tools = page.getByRole("button", { name: /routing and status/ });
         await tools.click();
         await page
           .locator("#proxy-status-tools")
@@ -772,10 +784,12 @@ async function checkStoppedHttpsSettings(page, settings, panel, fixture, idle) {
       .evaluate((element) => element.getRootNode().activeElement === element),
     true,
   );
-  page.once("dialog", (dialog) => dialog.accept());
+  if (await settings.evaluate((element) => element.connectionUsesSystemProxy)) {
+    page.once("dialog", (dialog) => dialog.accept());
+  }
   await settings
     .locator(".interception-certificate")
-    .getByRole("button", { name: "Set up interception certificate", exact: true })
+    .getByRole("button", { name: /^(Set up|Create) interception certificate$/ })
     .click();
   await page.waitForFunction(() => !document.querySelector("app-shell").settings.proxyPending);
   await page

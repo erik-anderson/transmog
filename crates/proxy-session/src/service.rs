@@ -10,7 +10,10 @@ use std::{
 };
 
 use thiserror::Error;
-use tokio::{sync::Mutex as AsyncMutex, task::JoinHandle};
+use tokio::{
+    sync::{Mutex as AsyncMutex, OwnedMutexGuard},
+    task::JoinHandle,
+};
 use transmog_control_model::Handshake;
 use transmog_control_transport::TransportConfig;
 use transmog_core::{
@@ -124,6 +127,7 @@ struct RunTask {
 struct Lifecycle {
     runtime_abort: Option<(tokio::task::AbortHandle, Arc<AtomicBool>)>,
     stopping_control: Option<ProxyControl>,
+    stopping_with_host: Option<bool>,
     status: ServiceStatus,
     next_generation: u64,
     task: Option<RunTask>,
@@ -137,7 +141,7 @@ struct ServiceInner {
     controller: ControlConnector,
     observer_queue_capacity: NonZeroUsize,
     lifecycle: Mutex<Lifecycle>,
-    operation: AsyncMutex<()>,
+    operation: Arc<AsyncMutex<()>>,
     finalization: AsyncMutex<()>,
     stopping: tokio::sync::Notify,
 }
@@ -192,12 +196,13 @@ impl ApplicationSessionService {
                 lifecycle: Mutex::new(Lifecycle {
                     runtime_abort: None,
                     stopping_control: None,
+                    stopping_with_host: None,
                     status: ServiceStatus::Stopped,
                     next_generation: 0,
                     task: None,
                     pending_restore: None,
                 }),
-                operation: AsyncMutex::new(()),
+                operation: Arc::new(AsyncMutex::new(())),
                 finalization: AsyncMutex::new(()),
                 stopping: tokio::sync::Notify::new(),
                 redact_sensitive: Arc::new(AtomicBool::new(true)),
@@ -289,6 +294,17 @@ impl ApplicationSessionService {
             .or_else(|| lifecycle.stopping_control.clone())
     }
 
+    /// Returns lifecycle and whether the owned run started with host integration.
+    pub fn status_with_host_integration(&self) -> (ServiceStatus, Option<bool>) {
+        let lifecycle = self.lock_lifecycle();
+        let uses_host = lifecycle
+            .task
+            .as_ref()
+            .map(|task| task.host_plan.is_some())
+            .or(lifecycle.stopping_with_host);
+        (lifecycle.status.clone(), uses_host)
+    }
+
     /// Starts a bound runtime task and begins collecting WebSocket evidence.
     ///
     /// # Errors
@@ -321,18 +337,34 @@ impl ApplicationSessionService {
         plan: HostIntegrationPlan,
     ) -> Result<SocketAddr, ServiceError> {
         let endpoint = runner.local_addr();
-        let _operation = self.inner.operation.lock().await;
+        let operation = Arc::clone(&self.inner.operation).lock_owned().await;
         self.prepare_start().await?;
-        let transaction = tokio::task::spawn_blocking(move || {
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let (transaction, _operation) = self.apply_host(operation, plan, endpoint).await?.commit();
+        Ok(self.launch_runner(runner, Some(transaction)))
+    }
+
+    async fn apply_host(
+        &self,
+        operation: OwnedMutexGuard<()>,
+        plan: HostIntegrationPlan,
+        endpoint: SocketAddr,
+    ) -> Result<PendingHostApply, ServiceError> {
+        let service = self.clone();
+        let runtime = tokio::runtime::Handle::current();
+        tokio::task::spawn_blocking(move || {
+            let transaction = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 HostTransaction::apply(plan, endpoint)
             }))
+            .map_err(|_| ServiceError::HostApply("host integration panicked".into()))?
+            .map_err(|error| ServiceError::HostApply(error.message))?;
+            Ok(PendingHostApply {
+                service,
+                runtime,
+                pending: Some((transaction, operation)),
+            })
         })
         .await
         .map_err(|_| ServiceError::HostApply("host apply task failed".into()))?
-        .map_err(|_| ServiceError::HostApply("host integration panicked".into()))?
-        .map_err(|error| ServiceError::HostApply(error.message))?;
-        Ok(self.launch_runner(runner, Some(transaction)))
     }
 
     /// Starts a create-new native capture while the service remains live.
@@ -372,14 +404,14 @@ impl ApplicationSessionService {
 
     /// Requests graceful runtime shutdown, waits for bounded drain, and seals
     /// an active capture. Concurrent callers serialize and the stopped result
-    /// is idempotent.
+    /// is idempotent. Once admitted, cleanup continues if the caller disconnects.
     ///
     /// # Errors
     ///
     /// Returns a runtime or capture failure after owned cleanup is attempted.
     pub async fn stop(&self) -> Result<(), ServiceError> {
-        let _operation = self.inner.operation.lock().await;
-        self.stop_locked().await
+        self.complete_cleanup(|service| async move { service.stop_locked().await })
+            .await
     }
 
     /// Explicitly terminates unfinished runtime work, then seals the available
@@ -389,33 +421,63 @@ impl ApplicationSessionService {
     /// # Errors
     /// Returns capture or host restoration failures after cleanup is attempted.
     pub async fn stop_now(&self) -> Result<(), ServiceError> {
-        if let Some((abort, forced)) = &self.lock_lifecycle().runtime_abort {
-            forced.store(true, Ordering::Release);
-            abort.abort();
-        }
-        self.stop().await
+        let interrupted_generation = {
+            let lifecycle = self.lock_lifecycle();
+            lifecycle.runtime_abort.as_ref().map(|(abort, forced)| {
+                forced.store(true, Ordering::Release);
+                abort.abort();
+                lifecycle.next_generation
+            })
+        };
+        // Force can release a runtime another stop is already joining.
+        // Once signalled, finish cleanup even if this waiter goes away.
+        let service = self.clone();
+        await_cleanup(tokio::spawn(async move {
+            let _operation = service.inner.operation.lock().await;
+            if interrupted_generation
+                .is_some_and(|generation| service.lock_lifecycle().next_generation != generation)
+            {
+                return Ok(());
+            }
+            service.stop_locked().await
+        }))
+        .await
+    }
+
+    async fn complete_cleanup<T, F>(
+        &self,
+        cleanup: impl FnOnce(Self) -> F + Send + 'static,
+    ) -> Result<T, ServiceError>
+    where
+        T: Send + 'static,
+        F: Future<Output = Result<T, ServiceError>> + Send + 'static,
+    {
+        // Let a queued request cancel before it owns the lifecycle. Once
+        // admitted, transfer the lock with the work so a dropped waiter
+        // cannot split cleanup from its local state update.
+        let operation = Arc::clone(&self.inner.operation).lock_owned().await;
+        let service = self.clone();
+        await_cleanup(tokio::spawn(async move {
+            let _operation = operation;
+            cleanup(service).await
+        }))
+        .await
     }
 
     async fn stop_locked(&self) -> Result<(), ServiceError> {
-        let (task, pending_restore, existing_failure) = {
+        let (task, pending_restore) = {
             let mut lifecycle = self.lock_lifecycle();
-            let existing_failure = match &lifecycle.status {
-                ServiceStatus::Failed { message, .. } => Some(message.clone()),
-                _ => None,
-            };
-            if let Some(task) = lifecycle.task.take() {
+            let task = lifecycle.task.take();
+            if let Some(task) = &task {
                 lifecycle.stopping_control.clone_from(&task.control);
+                lifecycle.stopping_with_host = Some(task.host_plan.is_some());
                 task.shutdown.cancel();
                 lifecycle.status = ServiceStatus::Stopping {
                     local_addr: task.local_addr,
                 };
                 self.inner.stopping.notify_waiters();
-                let pending = lifecycle.pending_restore.take();
-                (Some(task), pending, existing_failure)
-            } else {
-                let pending = lifecycle.pending_restore.take();
-                (None, pending, existing_failure)
             }
+            (task, lifecycle.pending_restore.take())
         };
 
         let (runtime_result, host) = if let Some(task) = task {
@@ -433,8 +495,6 @@ impl ApplicationSessionService {
                 Err(error) => Err(format!("runtime task join failed: {error}")),
             };
             (result, host.or(pending_restore))
-        } else if let Some(message) = existing_failure {
-            (Err(message), pending_restore)
         } else {
             (Ok(()), pending_restore)
         };
@@ -444,19 +504,17 @@ impl ApplicationSessionService {
             self.inner.capture.status(),
             CaptureStatus::Active { .. } | CaptureStatus::Failed(_)
         ) {
-            self.inner.capture.stop().await.map(|_| ())
+            // The capture keeps its failure details after its writer is finalized.
+            match self.inner.capture.stop().await {
+                Ok(_) | Err(CaptureServiceError::NotActive) => Ok(()),
+                Err(error) => Err(error),
+            }
         } else {
             Ok(())
         };
 
         let host_result = if let Some(transaction) = host {
-            match restore_transaction(transaction).await {
-                Ok(()) => Ok(()),
-                Err((transaction, message)) => {
-                    self.lock_lifecycle().pending_restore = transaction;
-                    Err(ServiceError::HostRestore(message))
-                }
-            }
+            self.restore_host_locked(transaction).await
         } else {
             Ok(())
         };
@@ -468,6 +526,7 @@ impl ApplicationSessionService {
         let mut lifecycle = self.lock_lifecycle();
         lifecycle.runtime_abort = None;
         lifecycle.stopping_control = None;
+        lifecycle.stopping_with_host = None;
         lifecycle.status = match &result {
             Ok(()) => ServiceStatus::Stopped,
             Err(error) => ServiceStatus::Failed {
@@ -488,7 +547,11 @@ impl ApplicationSessionService {
     /// # Errors
     /// Returns an exact host-restore failure while keeping the runtime usable.
     pub async fn begin_drain(&self) -> Result<ServiceStatus, ServiceError> {
-        let _operation = self.inner.operation.lock().await;
+        self.complete_cleanup(|service| async move { service.begin_drain_locked().await })
+            .await
+    }
+
+    async fn begin_drain_locked(&self) -> Result<ServiceStatus, ServiceError> {
         let prepared = {
             let mut lifecycle = self.lock_lifecycle();
             if matches!(lifecycle.status, ServiceStatus::Draining { .. }) {
@@ -513,11 +576,8 @@ impl ApplicationSessionService {
             self.stop_locked().await?;
             return Ok(self.status());
         };
-        if let Some(host) = host
-            && let Err((transaction, message)) = restore_transaction(host).await
-        {
-            self.lock_lifecycle().pending_restore = transaction;
-            return Err(ServiceError::HostRestore(message));
+        if let Some(host) = host {
+            self.restore_host_locked(host).await?;
         }
         let generation = control.begin_drain();
         {
@@ -559,9 +619,9 @@ impl ApplicationSessionService {
         // Start must also wake a sealed run that is only waiting for idle
         // physical peers. Register before inspecting state to cover the race
         // between waiting for this lock and the drain entering Stopping.
-        let operation = self.inner.operation.lock();
+        let operation = Arc::clone(&self.inner.operation).lock_owned();
         tokio::pin!(operation);
-        let _operation = loop {
+        let operation = loop {
             let stopping = self.inner.stopping.notified();
             tokio::pin!(stopping);
             stopping.as_mut().enable();
@@ -589,25 +649,21 @@ impl ApplicationSessionService {
         }) else {
             return Ok(false);
         };
-        let host = if let Some(plan) = plan {
-            Some(
-                tokio::task::spawn_blocking(move || HostTransaction::apply(plan, endpoint))
-                    .await
-                    .map_err(|_| ServiceError::HostApply("host apply worker failed".into()))?
-                    .map_err(|error| ServiceError::HostApply(error.message))?,
+        let (applied, _manual_operation) = if let Some(plan) = plan {
+            (
+                Some(self.apply_host(operation, plan, endpoint).await?),
+                None,
             )
         } else {
-            None
+            (None, Some(operation))
         };
         if !control.resume_drain(generation) {
-            if let Some(host) = host
-                && let Err((transaction, message)) = restore_transaction(host).await
-            {
-                self.lock_lifecycle().pending_restore = transaction;
-                return Err(ServiceError::HostRestore(message));
+            if let Some(applied) = applied {
+                applied.rollback().await?;
             }
             return Ok(false);
         }
+        let (host, _host_operation) = applied.map(PendingHostApply::commit).unzip();
         let mut lifecycle = self.lock_lifecycle();
         if let Some(task) = lifecycle.task.as_mut() {
             task.drain_generation = None;
@@ -631,20 +687,27 @@ impl ApplicationSessionService {
     /// Returns [`ServiceError::HostRestore`] while the adapter still fails, or
     /// [`ServiceError::HostRestorePending`] when no retry is pending.
     pub async fn retry_host_restore(&self) -> Result<(), ServiceError> {
-        let _operation = self.inner.operation.lock().await;
+        self.complete_cleanup(|service| async move { service.retry_host_restore_locked().await })
+            .await
+    }
+
+    async fn retry_host_restore_locked(&self) -> Result<(), ServiceError> {
         let transaction = self
             .lock_lifecycle()
             .pending_restore
             .take()
             .ok_or(ServiceError::HostRestorePending)?;
+        self.restore_host_locked(transaction).await?;
+        let mut lifecycle = self.lock_lifecycle();
+        if lifecycle.task.is_none() {
+            lifecycle.status = ServiceStatus::Stopped;
+        }
+        Ok(())
+    }
+
+    async fn restore_host_locked(&self, transaction: HostTransaction) -> Result<(), ServiceError> {
         match restore_transaction(transaction).await {
-            Ok(()) => {
-                let mut lifecycle = self.lock_lifecycle();
-                if lifecycle.task.is_none() {
-                    lifecycle.status = ServiceStatus::Stopped;
-                }
-                Ok(())
-            }
+            Ok(()) => Ok(()),
             Err((transaction, message)) => {
                 self.lock_lifecycle().pending_restore = transaction;
                 Err(ServiceError::HostRestore(message))
@@ -779,6 +842,46 @@ impl ApplicationSessionService {
 }
 
 type RunnerFuture = Pin<Box<dyn Future<Output = Result<(), String>> + Send>>;
+
+/// Uncommitted host settings and their exclusive lifecycle lock. The
+/// blocking worker keeps both through apply and hands them back together.
+struct PendingHostApply {
+    service: ApplicationSessionService,
+    runtime: tokio::runtime::Handle,
+    pending: Option<(HostTransaction, OwnedMutexGuard<()>)>,
+}
+
+impl PendingHostApply {
+    fn commit(mut self) -> (HostTransaction, OwnedMutexGuard<()>) {
+        self.pending.take().expect("pending host transaction")
+    }
+
+    fn start_rollback(&mut self) -> Option<JoinHandle<Result<(), ServiceError>>> {
+        let (transaction, operation) = self.pending.take()?;
+        let service = self.service.clone();
+        Some(self.runtime.spawn(async move {
+            let _operation = operation;
+            service.restore_host_locked(transaction).await
+        }))
+    }
+
+    async fn rollback(mut self) -> Result<(), ServiceError> {
+        await_cleanup(self.start_rollback().expect("pending host transaction")).await
+    }
+}
+
+impl Drop for PendingHostApply {
+    fn drop(&mut self) {
+        // The caller may disconnect while apply is running or after its
+        // result is ready. Roll back any successful apply it never committed.
+        drop(self.start_rollback());
+    }
+}
+
+async fn await_cleanup<T>(task: JoinHandle<Result<T, ServiceError>>) -> Result<T, ServiceError> {
+    task.await
+        .map_err(|error| ServiceError::Runtime(format!("proxy cleanup task failed: {error}")))?
+}
 
 async fn finish_run(inner: &Arc<ServiceInner>) {
     let inner = Arc::clone(inner);
@@ -1180,7 +1283,82 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn explicit_force_stop_unblocks_a_shutdown_already_waiting_for_the_runner() {
+    async fn disconnecting_stop_waiter_still_seals_and_retains_failed_restore() {
+        struct WaitingRunner(Arc<tokio::sync::Notify>);
+        impl SessionRunner for WaitingRunner {
+            fn local_addr(&self) -> SocketAddr {
+                "127.0.0.1:43211".parse().unwrap()
+            }
+            fn control(&self) -> Option<ProxyControl> {
+                None
+            }
+            fn run(self: Box<Self>, shutdown: ExchangeCancellation) -> RunnerFuture {
+                Box::pin(async move {
+                    shutdown.cancelled().await;
+                    self.0.notified().await;
+                    Ok(())
+                })
+            }
+        }
+
+        let service = ApplicationSessionService::new(ServiceConfig::default()).unwrap();
+        let host = Arc::new(TestHost::default());
+        host.restore_failures.store(1, Ordering::Relaxed);
+        let release_runner = Arc::new(tokio::sync::Notify::new());
+        let directory = tempfile::tempdir().unwrap();
+        service
+            .start_capture(CaptureStart {
+                path: directory.path().join("disconnected-stop.tmcap"),
+                encoding: transmog_capture::CaptureEncoding::default(),
+                metadata: None,
+                limits: transmog_capture::CaptureLimits::default(),
+                policy: transmog_capture::CapturePolicy::default(),
+            })
+            .await
+            .unwrap();
+        service
+            .start_runner_with_host(
+                Box::new(WaitingRunner(release_runner.clone())),
+                HostIntegrationPlan {
+                    integration: host.clone(),
+                },
+            )
+            .await
+            .unwrap();
+
+        let waiting_service = service.clone();
+        let stop_request = tokio::spawn(async move { waiting_service.stop().await });
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !matches!(service.status(), ServiceStatus::Stopping { .. }) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        stop_request.abort();
+        assert!(stop_request.await.unwrap_err().is_cancelled());
+        release_runner.notify_one();
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !matches!(service.status(), ServiceStatus::Failed { .. }) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("cleanup must finish after the stop waiter disconnects");
+        assert!(matches!(
+            service.capture().status(),
+            CaptureStatus::Sealed(_)
+        ));
+        assert!(service.has_pending_host_restore());
+        assert_eq!(*host.restored.lock().unwrap(), [42]);
+        service.retry_host_restore().await.unwrap();
+        assert_eq!(*host.restored.lock().unwrap(), [42, 42]);
+        assert_eq!(service.status(), ServiceStatus::Stopped);
+    }
+
+    #[tokio::test]
+    async fn explicit_force_stop_unblocks_shutdown_and_leaves_the_next_run_running() {
         struct StalledRunner;
         impl SessionRunner for StalledRunner {
             fn local_addr(&self) -> SocketAddr {
@@ -1212,14 +1390,25 @@ mod tests {
         while !matches!(service.status(), ServiceStatus::Stopping { .. }) {
             tokio::task::yield_now().await;
         }
-        tokio::time::timeout(Duration::from_secs(1), service.stop_now())
-            .await
-            .unwrap()
-            .unwrap();
+        let replacement = service.start_runner(runner(None));
+        tokio::pin!(replacement);
+        tokio::select! {
+            biased;
+            _ = &mut replacement => panic!("replacement must wait behind the first stop"),
+            () = tokio::task::yield_now() => {}
+        }
+        let (replacement, forced) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(replacement, service.stop_now())
+        })
+        .await
+        .unwrap();
+        let local_addr = replacement.unwrap();
+        forced.unwrap();
         stopping.await.unwrap().unwrap();
-        assert_eq!(service.status(), ServiceStatus::Stopped);
+        assert_eq!(service.status(), ServiceStatus::Running { local_addr });
         assert_eq!(host.restored.lock().unwrap().len(), 1);
         assert_request_stopped(&service, 1);
+        service.stop().await.unwrap();
     }
 
     #[tokio::test]
@@ -1267,9 +1456,71 @@ mod tests {
             service.stop().await,
             Err(ServiceError::Runtime(_))
         ));
+        assert_eq!(service.stop_now().await, Ok(()));
+        assert_eq!(service.status(), ServiceStatus::Stopped);
         service.start_runner(runner(None)).await.unwrap();
         assert!(matches!(service.status(), ServiceStatus::Running { .. }));
         service.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn shutdown_retry_preserves_failed_capture_evidence_and_completes_host_restore() {
+        use transmog_core::observe::{ObserverEvent, ObserverEventKind};
+
+        let service = ApplicationSessionService::new(ServiceConfig::default()).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("failed-capture.tmcap");
+        service
+            .start_capture(CaptureStart {
+                path: path.clone(),
+                encoding: transmog_capture::CaptureEncoding::default(),
+                metadata: None,
+                limits: transmog_capture::CaptureLimits {
+                    max_record_bytes: 16,
+                    ..transmog_capture::CaptureLimits::default()
+                },
+                policy: transmog_capture::CapturePolicy::default(),
+            })
+            .await
+            .unwrap();
+        let host = Arc::new(TestHost {
+            restore_failures: AtomicUsize::new(1),
+            ..TestHost::default()
+        });
+        service
+            .start_runner_with_host(
+                runner(None),
+                HostIntegrationPlan {
+                    integration: host.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        service
+            .capture()
+            .record(ObserverEvent {
+                exchange_id: transmog_core::intercept::ExchangeId(1),
+                sequence: 1,
+                kind: ObserverEventKind::ExchangeStarted {
+                    metadata: request_metadata(1),
+                },
+            })
+            .await;
+        assert!(matches!(
+            service.stop_now().await,
+            Err(ServiceError::Capture(CaptureServiceError::Writer(_)))
+        ));
+        assert!(service.has_pending_host_restore());
+        let failure = service.capture().status();
+        assert!(matches!(failure, CaptureStatus::Failed(_)));
+        let evidence = std::fs::read(&path).unwrap();
+
+        assert_eq!(service.stop_now().await, Ok(()));
+        assert_eq!(service.status(), ServiceStatus::Stopped);
+        assert_eq!(*host.restored.lock().unwrap(), [42, 42]);
+        assert!(!service.has_pending_host_restore());
+        assert_eq!(service.capture().status(), failure);
+        assert_eq!(std::fs::read(&path).unwrap(), evidence);
     }
 
     #[tokio::test]
@@ -1294,7 +1545,28 @@ mod tests {
         applied: StdMutex<Vec<SocketAddr>>,
         restored: StdMutex<Vec<u64>>,
         restore_failures: AtomicUsize,
+        apply_pause: Option<HostPause>,
+        restore_pause: Option<HostPause>,
         apply_failure: bool,
+    }
+
+    struct HostPause {
+        attempt: usize,
+        entered: Arc<tokio::sync::Notify>,
+        release: StdMutex<std::sync::mpsc::Receiver<()>>,
+    }
+
+    impl HostPause {
+        fn wait(&self, attempt: usize) {
+            if self.attempt == attempt {
+                self.entered.notify_one();
+                self.release
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(5))
+                    .expect("release the test host worker");
+            }
+        }
     }
 
     impl crate::HostIntegration for TestHost {
@@ -1305,7 +1577,14 @@ mod tests {
             if self.apply_failure {
                 return Err(crate::HostIntegrationError::new("apply rejected"));
             }
-            self.applied.lock().unwrap().push(endpoint);
+            let attempt = {
+                let mut applied = self.applied.lock().unwrap();
+                applied.push(endpoint);
+                applied.len()
+            };
+            if let Some(pause) = &self.apply_pause {
+                pause.wait(attempt);
+            }
             Ok(crate::HostRestoreToken::new(42_u64))
         }
 
@@ -1314,7 +1593,14 @@ mod tests {
             token: &crate::HostRestoreToken,
         ) -> Result<(), crate::HostIntegrationError> {
             let token = *token.downcast_ref::<u64>().expect("test token type");
-            self.restored.lock().unwrap().push(token);
+            let attempt = {
+                let mut restored = self.restored.lock().unwrap();
+                restored.push(token);
+                restored.len()
+            };
+            if let Some(pause) = &self.restore_pause {
+                pause.wait(attempt);
+            }
             if self
                 .restore_failures
                 .try_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
@@ -1326,6 +1612,58 @@ mod tests {
             }
             Ok(())
         }
+    }
+
+    #[tokio::test]
+    async fn cancelled_host_start_blocks_replacement_until_the_exact_restore_is_recoverable() {
+        let service = ApplicationSessionService::new(ServiceConfig::default()).unwrap();
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let (release, receiver) = std::sync::mpsc::channel();
+        let host = Arc::new(TestHost {
+            restore_failures: AtomicUsize::new(1),
+            apply_pause: Some(HostPause {
+                attempt: 1,
+                entered: entered.clone(),
+                release: StdMutex::new(receiver),
+            }),
+            ..TestHost::default()
+        });
+        let start = {
+            let service = service.clone();
+            let integration = host.clone();
+            tokio::spawn(async move {
+                service
+                    .start_runner_with_host(runner(None), HostIntegrationPlan { integration })
+                    .await
+            })
+        };
+        tokio::time::timeout(Duration::from_secs(5), entered.notified())
+            .await
+            .unwrap();
+        start.abort();
+        assert!(start.await.unwrap_err().is_cancelled());
+
+        let replacement = service.start_runner(runner(None));
+        tokio::pin!(replacement);
+        let waited = tokio::select! {
+            biased;
+            _ = &mut replacement => false,
+            () = tokio::task::yield_now() => true,
+        };
+        release.send(()).unwrap();
+        assert!(waited, "replacement overlapped the abandoned host apply");
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), replacement)
+                .await
+                .unwrap(),
+            Err(ServiceError::HostRestorePending)
+        );
+        assert_eq!(service.status(), ServiceStatus::Stopped);
+        assert_eq!(*host.restored.lock().unwrap(), [42]);
+        service.retry_host_restore().await.unwrap();
+        assert_eq!(*host.restored.lock().unwrap(), [42, 42]);
+        service.start_runner(runner(None)).await.unwrap();
+        service.stop().await.unwrap();
     }
 
     #[tokio::test]
@@ -1368,6 +1706,51 @@ mod tests {
         service.retry_host_restore().await.unwrap();
         assert!(!service.has_pending_host_restore());
         assert_eq!(*host.restored.lock().unwrap(), [42, 42]);
+        assert_eq!(service.status(), ServiceStatus::Stopped);
+    }
+
+    #[tokio::test]
+    async fn disconnecting_restore_waiter_keeps_the_exact_token_after_another_failure() {
+        let service = ApplicationSessionService::new(ServiceConfig::default()).unwrap();
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let (release, receiver) = std::sync::mpsc::channel();
+        let host = Arc::new(TestHost {
+            restore_failures: AtomicUsize::new(2),
+            restore_pause: Some(HostPause {
+                attempt: 2,
+                entered: entered.clone(),
+                release: StdMutex::new(receiver),
+            }),
+            ..TestHost::default()
+        });
+        service
+            .start_runner_with_host(
+                runner(None),
+                HostIntegrationPlan {
+                    integration: host.clone(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            service.stop().await,
+            Err(ServiceError::HostRestore(_))
+        ));
+
+        let waiting_service = service.clone();
+        let retry = tokio::spawn(async move { waiting_service.retry_host_restore().await });
+        tokio::time::timeout(Duration::from_secs(5), entered.notified())
+            .await
+            .unwrap();
+        retry.abort();
+        assert!(retry.await.unwrap_err().is_cancelled());
+        release.send(()).unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), service.retry_host_restore())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(*host.restored.lock().unwrap(), [42, 42, 42]);
         assert_eq!(service.status(), ServiceStatus::Stopped);
     }
 
@@ -1508,7 +1891,16 @@ mod tests {
             socket.write_all(b"BCD").await.unwrap();
         });
         let service = ApplicationSessionService::new(ServiceConfig::default()).unwrap();
-        let host = Arc::new(TestHost::default());
+        let apply_entered = Arc::new(tokio::sync::Notify::new());
+        let (release_apply, apply_receiver) = std::sync::mpsc::channel();
+        let host = Arc::new(TestHost {
+            apply_pause: Some(HostPause {
+                attempt: 2,
+                entered: apply_entered.clone(),
+                release: StdMutex::new(apply_receiver),
+            }),
+            ..TestHost::default()
+        });
         let server = ProxyServer::bind(
             ProxyConfig {
                 limits: transmog_runtime::RuntimeLimits {
@@ -1554,14 +1946,29 @@ mod tests {
         // Connection cleanup deadlines must not time out admitted requests.
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(matches!(service.status(), ServiceStatus::Draining { .. }));
+        host.restore_failures.store(1, Ordering::Relaxed);
+        let requesting_service = service.clone();
+        let resume = tokio::spawn(async move { requesting_service.resume_drain().await });
+        tokio::time::timeout(Duration::from_secs(5), apply_entered.notified())
+            .await
+            .unwrap();
+        resume.abort();
+        assert!(resume.await.unwrap_err().is_cancelled());
+        release_apply.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), service.retry_host_restore())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(service.status(), ServiceStatus::Draining { .. }));
+        assert_eq!(*host.restored.lock().unwrap(), [42, 42, 42]);
         assert!(service.resume_drain().await.unwrap());
-        assert_eq!(host.applied.lock().unwrap().len(), 2);
+        assert_eq!(host.applied.lock().unwrap().len(), 3);
         assert!(matches!(service.status(), ServiceStatus::Running { .. }));
         assert!(matches!(
             service.begin_drain().await.unwrap(),
             ServiceStatus::Draining { .. }
         ));
-        assert_eq!(host.restored.lock().unwrap().len(), 2);
+        assert_eq!(host.restored.lock().unwrap().len(), 4);
         finish_tx.send(()).unwrap();
         origin_task.await.unwrap();
         let response = client.await.unwrap();
@@ -1578,7 +1985,7 @@ mod tests {
         .expect("An idle connected client blocked shutdown");
         assert_eq!(
             host.restored.lock().unwrap().len(),
-            2,
+            4,
             "Old drain restored host state a second time"
         );
         let mut config = ProxyConfig::default();

@@ -102,7 +102,91 @@ knowing another key's IDs grants no access. Instance identity, current scope and
 disclosure are checked independently. Calls targeting a private session renew its
 30-minute idle lifetime; use `transmog_session_renew` while idle. Listing sessions,
 polling operations and incoming traffic do not renew it. An open human review
-window keeps it alive.
+window keeps an offline inspection session alive.
+
+### Private listeners
+
+Use `transmog_session_listen` with `instanceId`, a new `operationId` and
+optional `name`, `port`, and `decryptHttps`. The key needs `collect-private`
+and all-traffic or exact-host scope. Port `0` selects an available port. The
+result includes `sessionId` and `listener.proxyUrl`. Set that proxy URL in the
+app you are debugging. For decrypted HTTPS, configure the app's trust using
+`listener.certificate.certificatePath` and verify its `sha256`. Each decrypted
+listener has a session-local certificate with a protected signing key. Set
+`decryptHttps: false` to use opaque HTTPS tunnels. The default is the desktop's
+saved HTTPS mode.
+
+Use the returned `sessionId` with the inspection tools. `Inspect` and the key's
+traffic scope and redaction determine what the agent can read. For native
+recordings, pass the same `sessionId` to `transmog_recording_start` and
+`transmog_recording_stop`. Full recording requires all-traffic scope and
+unredacted access to credentials and bodies. The recording is saved to Transmog's
+agent export directory. Omitting `sessionId` targets `main` and requires `collect`.
+
+Use `transmog_session_listener_stop` with `sessionId`, `instanceId` and a new
+`operationId` to seal the recording and release the port. The session remains
+available for inspection. The listener summary reports `recordingState` and
+`recordingArtifact`, including the filename of a recoverable failed recording
+when available. Close the session when finished. You can renew it
+without a review window. Key revocation, permission removal, MCP shutdown and
+idle expiry stop the listener, including when a review window is open.
+If closing the session encounters a recording error, it reports the error and
+preserves the recording file for recovery. Once shutdown finishes, a session
+without unsaved human edits releases its slot.
+
+Retry identical listener arguments with the same `operationId`. Use a new ID
+for different arguments. If the caller times out, `transmog_operation_status`
+reports the admitted operation's progress and result. An expired or closed
+session's receipt omits the proxy address and certificate. After cleanup, the
+receipt preserves the final recording state and artifact name, when available.
+Successful start receipts expire an hour after the session is removed. Failed
+starts and stop receipts expire an hour after completion. Each key has room for
+32 start receipts and 32 stop receipts. A new stop can evict the key's oldest
+completed stop when that key's stop history fills.
+
+### Record one local app
+
+With Transmog running, configure `TRANSMOG_ACCESS_KEY` for a key that can start
+private listeners, inspect traffic and read unredacted evidence across all hosts.
+Use a development HTTP endpoint on `127.0.0.1:8000` for this example. The CLI calls
+use the same arguments as an MCP client.
+
+```powershell
+function Invoke-TransmogTool($tool, $arguments) {
+    $response = $arguments | ConvertTo-Json -Compress | .\transmog-cli.exe mcp call $tool
+    if ($LASTEXITCODE -ne 0) { throw "Transmog tool failed ($tool)" }
+    $response | ConvertFrom-Json
+}
+
+$instance = (Invoke-TransmogTool transmog_status @{}).instanceId
+$id = [guid]::NewGuid().ToString('N')
+$started = Invoke-TransmogTool transmog_session_listen @{
+    instanceId = $instance
+    operationId = "start-$id"
+    name = 'Development HTTP'
+    port = 0
+    decryptHttps = $false
+}
+$owned = @{ instanceId = $instance; sessionId = $started.sessionId }
+try {
+    $started.listener.proxyUrl
+    Invoke-TransmogTool transmog_recording_start ($owned + @{ name = 'development-http' })
+    curl.exe --fail --silent --show-error --proxy $started.listener.proxyUrl `
+        --noproxy 'no-match.invalid' http://127.0.0.1:8000/ | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'The development request failed' }
+    Invoke-TransmogTool transmog_traffic_list ($owned + @{ limit = 10 })
+    Invoke-TransmogTool transmog_recording_stop $owned
+    Invoke-TransmogTool transmog_session_listener_stop ($owned + @{ operationId = "stop-$id" })
+} finally {
+    Invoke-TransmogTool transmog_session_close $owned
+}
+```
+
+For HTTPS inspection, create the listener with `decryptHttps: true`. Configure
+the target app to trust the returned public PEM for the session. A client that
+uses its own trust configuration can load the PEM directly. For example, use
+`curl.exe --cacert $started.listener.certificate.certificatePath` with an HTTPS
+development endpoint that Transmog already trusts upstream.
 
 `transmog_capture_load` requires **Load capture files**, a private session,
 `path` and `operationId`. Loading and unloading require all-traffic or host scope;
@@ -345,7 +429,10 @@ Human **Keep changes…** converts a reviewed temporary rule into durable conten
 Revocation does not roll back shared saved edits.
 
 When a grant ends or MCP is disabled, its owned recordings are sealed. The shared
-proxy stays under the desktop's ordinary collection controls.
+proxy stays under the desktop's ordinary collection controls. Once a recording
+start or stop is admitted, it finishes even if the caller disconnects. Reconnect
+and check `transmog_status` for the main proxy or `transmog_session_list` for a
+private listener before retrying.
 
 Whole-workspace native recording requires all-traffic scope, collection, body and
 credential access. Editable breakpoint envelopes require body and credential

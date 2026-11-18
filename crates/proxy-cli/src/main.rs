@@ -5,6 +5,7 @@ mod circular;
 mod context;
 mod help;
 mod inspection;
+mod interrupts;
 mod mcp;
 mod mcp_logging;
 mod output;
@@ -56,6 +57,7 @@ use transmog_runtime::{
     WebSocketSessionEvidence, WebSocketSessionOutcome,
 };
 use transmog_saz::{SazExporter, SazLimits, SazMode};
+use transmog_session::{CaptureManager, CaptureStart};
 use transmog_tls::{
     CachedMitmCertificateResolver, CertificateResolverError, CompositeTrustSource,
     DownstreamCertificateResolver, EndpointIdentity, PemTrustSource, ProxyCa, SystemTrustSource,
@@ -145,6 +147,31 @@ async fn run() -> Result<(), Box<dyn Error>> {
     }
 }
 
+fn manual_proxy_address_instructions(endpoint: std::net::SocketAddr) -> String {
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+
+    let address = match endpoint.ip() {
+        IpAddr::V4(ip) if ip.is_unspecified() => {
+            SocketAddr::new(Ipv4Addr::LOCALHOST.into(), endpoint.port())
+        }
+        IpAddr::V6(ip) if ip.is_unspecified() => {
+            SocketAddr::new(Ipv6Addr::LOCALHOST.into(), endpoint.port())
+        }
+        _ => endpoint,
+    };
+    let mut instructions = format!("Set your application's HTTP and HTTPS proxy to {address}.");
+    if address != endpoint {
+        use std::fmt::Write as _;
+        write!(
+            instructions,
+            "\nFrom another device, use this computer's LAN address and port {}.",
+            endpoint.port(),
+        )
+        .expect("writing to a String succeeds");
+    }
+    instructions
+}
+
 fn validate_serve_options(arguments: &[String]) -> io::Result<()> {
     arguments::validate_repeatable(
         arguments,
@@ -221,18 +248,25 @@ async fn serve(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         },
         ..ProxyConfig::default()
     };
-    let (components, capture) = build_components(
+    let (components, prepared_capture) = build_components(
         &config,
         ca,
         interceptor,
         proof_id.is_some(),
         capture_path.as_deref(),
         capture_bodies,
-    )
-    .await?;
+    )?;
     inspection::print_policy(&config.process_inspection, decrypt_https);
+    let mut interrupts = interrupts::register()?;
     let proxy = ProxyServer::bind_with_components(config, trust, components).await?;
     let actual_addr = proxy.local_addr()?;
+    let capture = if let Some(PreparedLiveCapture { manager, request }) = prepared_capture {
+        // The observer is wired up, but no traffic is served until the writer is ready.
+        manager.start(request).await?;
+        Some(manager)
+    } else {
+        None
+    };
     let mut evidence = proxy.subscribe_evidence();
     let mut websocket_evidence = proxy.subscribe_websocket_evidence();
     tokio::spawn(async move {
@@ -254,6 +288,7 @@ async fn serve(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     });
 
     println!("LISTEN_ADDR={actual_addr}");
+    eprintln!("{}", manual_proxy_address_instructions(actual_addr));
     if let Some(thumbprint) = thumbprint {
         println!("CA_SHA256={thumbprint}");
     }
@@ -261,8 +296,8 @@ async fn serve(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     println!("Press Ctrl+C to stop the proxy and save any active capture.");
     let result = proxy
         .serve(async {
-            if let Err(error) = tokio::signal::ctrl_c().await {
-                tracing::error!(%error, "failed to install Ctrl-C handler");
+            if let Err(error) = interrupts::wait(&mut interrupts).await {
+                tracing::error!(%error, "failed to wait for Ctrl+C");
             }
         })
         .await;
@@ -291,14 +326,14 @@ fn load_upstream_trust(arguments: &[String]) -> Result<Arc<TrustSnapshot>, Box<d
     Ok(Arc::new(TrustSnapshot::load(&composite, 1)?))
 }
 
-async fn build_components(
+fn build_components(
     config: &ProxyConfig,
     ca: Option<ProxyCa>,
     interceptor: Arc<dyn InterceptorFactory>,
     enable_content_processing: bool,
     capture_path: Option<&Path>,
     capture_bodies: bool,
-) -> Result<(ProxyComponents, Option<LiveCapture>), Box<dyn Error>> {
+) -> Result<(ProxyComponents, Option<PreparedLiveCapture>), Box<dyn Error>> {
     let hooks = InterceptorChainFactory::new(
         vec![InterceptorRegistration::new(
             "application",
@@ -325,9 +360,9 @@ async fn build_components(
     let capture = if let Some(path) = capture_path {
         let mut policy = CapturePolicy::default();
         policy.retain_body_samples = capture_bodies;
-        let state = open_live_capture(path, policy, config).await?;
+        let capture = prepare_live_capture(path, policy, config)?;
         let observer = Arc::new(FileCaptureObserver {
-            state: state.clone(),
+            state: capture.manager.clone(),
         });
         components = components.with_observers(ObserverHub::new(vec![(
             observer,
@@ -353,7 +388,7 @@ async fn build_components(
                 ..ObserverConfig::default()
             },
         )]));
-        Some(state)
+        Some(capture)
     } else {
         None
     };
@@ -375,10 +410,13 @@ impl DownstreamCertificateResolver for NoInterceptionCertificates {
     }
 }
 
-type LiveCapture = transmog_session::CaptureManager;
+struct PreparedLiveCapture {
+    manager: CaptureManager,
+    request: CaptureStart,
+}
 
 struct FileCaptureObserver {
-    state: LiveCapture,
+    state: CaptureManager,
 }
 impl Observer for FileCaptureObserver {
     fn on_event(&self, event: ObserverEvent) -> BoxObserverFuture<'_> {
@@ -391,14 +429,14 @@ impl Observer for FileCaptureObserver {
         })
     }
 }
-async fn open_live_capture(
+fn prepare_live_capture(
     path: &Path,
     policy: CapturePolicy,
     config: &ProxyConfig,
-) -> Result<LiveCapture, Box<dyn Error>> {
-    let manager = transmog_session::CaptureManager::new(NonZeroUsize::new(2048).unwrap())?;
-    manager
-        .start(transmog_session::CaptureStart {
+) -> Result<PreparedLiveCapture, Box<dyn Error>> {
+    Ok(PreparedLiveCapture {
+        manager: CaptureManager::new(NonZeroUsize::new(2048).unwrap())?,
+        request: CaptureStart {
             path: path.to_owned(),
             policy,
             limits: CaptureLimits::default(),
@@ -409,11 +447,10 @@ async fn open_live_capture(
                 "httpsDecryption": config.decrypt_https,
                 "processInspection": config.process_inspection,
             })),
-        })
-        .await?;
-    Ok(manager)
+        },
+    })
 }
-async fn seal_live_capture(state: &LiveCapture) -> Result<(), Box<dyn Error>> {
+async fn seal_live_capture(state: &CaptureManager) -> Result<(), Box<dyn Error>> {
     state.stop().await?;
     state.shutdown().await;
     Ok(())
@@ -1026,6 +1063,23 @@ fn find_ascii_case_insensitive(haystack: &[u8], needle: &[u8]) -> Option<usize> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manual_client_address_preserves_the_port_and_replaces_only_wildcards() {
+        for (bound, client, wildcard) in [
+            ("0.0.0.0:49157", "127.0.0.1:49157", true),
+            ("[::]:8888", "[::1]:8888", true),
+            ("127.0.0.1:8080", "127.0.0.1:8080", false),
+            ("192.0.2.1:8080", "192.0.2.1:8080", false),
+            ("[2001:db8::1]:8080", "[2001:db8::1]:8080", false),
+        ] {
+            let instructions = manual_proxy_address_instructions(bound.parse().unwrap());
+            assert!(instructions.starts_with(&format!(
+                "Set your application's HTTP and HTTPS proxy to {client}."
+            )));
+            assert_eq!(instructions.contains("LAN address"), wildcard);
+        }
+    }
 
     #[test]
     fn standalone_serve_accepts_repeatable_names_and_requires_ca_only_when_decrypting() {

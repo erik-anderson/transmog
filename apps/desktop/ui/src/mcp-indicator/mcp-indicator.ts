@@ -31,6 +31,12 @@ interface InspectionSession {
   liveSubscribed: boolean;
   agentAccessEnded: boolean;
   needsHumanAction: boolean;
+  listener: {
+    lifecycle: "stopped" | "running" | "draining" | "stopping" | "failed";
+    endpoint: string | null;
+    recordingState: "idle" | "active" | "sealed" | "failed";
+    recordingArtifact: string | null;
+  } | null;
 }
 interface CapturePasswordRequest {
   name: string;
@@ -98,7 +104,7 @@ export class McpIndicator extends WorkspaceElement {
       ...entry,
       scopeText:
         entry.scope.kind === "all"
-          ? "All traffic in the main workspace"
+          ? "All traffic"
           : entry.scope.kind === "hosts"
             ? (entry.scope.hosts ?? []).join(", ") + " · any port"
             : `${entry.scope.ids?.length ?? 0} selected requests`,
@@ -200,6 +206,16 @@ export class McpIndicator extends WorkspaceElement {
   }
   async endSession(sessionId: string): Promise<void> {
     await this.change("mcp_end_session", { sessionId });
+  }
+  async stopListener(sessionId: string): Promise<void> {
+    await this.change("mcp_stop_listener", { sessionId });
+  }
+  async copyListener(endpoint: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(endpoint);
+    } catch (error) {
+      this.mcpSensitiveError = describeError(error);
+    }
   }
   async capturePassword(event: Event, sessionId: string, operationId: string): Promise<void> {
     const eventTarget = event?.currentTarget;

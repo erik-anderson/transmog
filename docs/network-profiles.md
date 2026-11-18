@@ -172,10 +172,13 @@ Caller isolation defaults on, falls back to source IP and also separates
 downstream H2 sessions. Embedders can supply their own isolation-key computation.
 Saving these settings preserves active work and does not restart the proxy.
 
-The ordinary desktop flow configures the current-user system proxy. An explicitly
-configured `configureSystemProxy: false` binds for manual client routing without
-changing Windows settings or requiring managed CA installation. Saving settings
-preserves that choice. Decrypted operation still validates and protects CA files;
-both modes block startup while host restoration is pending. See the
+Choose **System proxy** or **Manual proxy** using **Routing for next start**
+beside **Start proxy**.
+Manual proxy leaves Windows proxy settings alone and starts even when an abandoned
+host recovery journal is pending. Decryption still validates and protects the CA
+files. The app must trust the public root to decrypt HTTPS. Use **Trust for my
+Windows account…** for apps that use Windows trust or **Copy public certificate
+path** for an app with its own trust store. Port
+and routing choices apply to the next newly bound listener. See the
 [desktop lifecycle](product-shell.md#start-and-stop) and
 [preference persistence contract](product-state-and-support.md#persisted-state).

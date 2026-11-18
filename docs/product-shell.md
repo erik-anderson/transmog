@@ -21,8 +21,9 @@ check, release notes and manual Check for updates. About also contains the
 transmog.net website link and Credits with complete dependency license texts.
 Offline startup stays quiet; a manual check reports a useful failure.
 
-While the proxy is running, update checks and installer downloads use its active
-listener and follow the usual capture and recording settings. With HTTPS
+While a **System proxy** run is active, update checks and installer downloads use
+its listener and follow the usual capture and recording settings. **Manual proxy**
+uses normal network configuration for updates. With HTTPS
 decryption enabled, their requests, redirects and responses appear in Traffic;
 with decryption disabled, Traffic shows the HTTPS tunnels. Each operation uses
 the current proxy state, including when it changes after a check. The updater
@@ -51,13 +52,16 @@ display (or another available display) before showing it, preserving its saved
 size and maximized state. Partially visible windows and valid placements on
 displays with negative coordinates keep their saved position.
 
-On first use, **Set up now** in the HTTPS setup banner, or **Interception
-certificate…** beside **Decrypt HTTPS traffic** in Settings → Preferences,
-opens certificate setup. Setup creates the desktop's CA and asks Windows to trust
-its public certificate. Starting with HTTPS decryption on verifies its recorded
-identity and trust state before binding. Certificate installation and exact-root
-removal can require Windows consent; private-key files belong to the desktop's
-user data.
+The HTTPS setup banner offers certificate setup when a fresh start needs it.
+**Interception certificate…** beside **Decrypt HTTPS traffic** in Settings →
+Preferences opens the same controls. Setup creates the desktop's CA. In
+**System proxy** mode it also asks Windows to trust the public certificate.
+For **Manual proxy**, apps that use Windows trust can use **Trust for my
+Windows account…**. For an app with its own trust store, choose **Copy public
+certificate path** and configure the app with that PEM. Starting with HTTPS
+decryption verifies the CA identity before binding. System proxy also verifies
+Windows trust. The target app determines whether it accepts the certificates
+Transmog signs. Windows can ask for consent when adding or removing trust.
 
 **Start with HTTPS tunnels** also works before certificate setup. It saves HTTPS
 decryption as off and forwards encrypted connections without creating, loading,
@@ -69,30 +73,37 @@ opaque tunnels and upgraded WebSockets continue. **Settings → Preferences →
 Inspect traffic from** selects all processes by default, with optional include
 or exclude lists.
 
-**Start proxy** binds the listener and applies its endpoint to the current user's
-Windows proxy settings unless manual routing is configured. Traffic enters the configured body buffer; starting the
-proxy does not implicitly create a trace file. Recording is a separate action.
+Open the routing button beside **Start proxy** and choose **Routing for next
+start**. **System
+proxy** applies the listener to the current user's Windows proxy settings. **Manual
+proxy** leaves those settings alone. Copy the bound address and configure it as
+the HTTP and HTTPS proxy in the app you want to debug. From another device,
+use the computer’s reachable LAN address and the same port. Transmog remembers the
+choice for the next new run and displays the current run's mode separately.
+Traffic enters the configured body buffer. Recording is a separate action.
 
-**Stop proxy** restores the prior proxy settings first, then shows **Finishing
-requests** while admitted requests, TLS handshakes and upgraded connections
+**Stop proxy** restores any Windows proxy settings owned by the run first, then
+shows **Finishing requests** while admitted requests, TLS handshakes and upgraded connections
 finish. Idle clients do not delay shutdown. **Start proxy** during this state
-resumes the same listener without disrupting active work. Closing the app uses
-its shutdown flow; a journal restores interrupted host configuration on the next
-launch after a hard termination. Before changing proxy settings, Transmog also
-attempts to register a current-user logon recovery task. It restores the saved
-settings after an interrupted run even if Transmog is not reopened. A live proxy
-run prevents background recovery from changing its settings. Registration or task
-cleanup failures are diagnostic warnings and do not block proxy use. Successful
-restoration removes the task; failed restoration retains the journal for retry.
+resumes the same listener without disrupting active work. The shared MCP Start
+operation also resumes that listener using its existing routing and certificate.
+Closing the app uses its shutdown flow. A journal supports recovery of interrupted
+host configuration on the next launch in System proxy mode. Before changing proxy
+settings, Transmog also attempts to register a current-user logon recovery task.
+It restores the saved settings after an interrupted run even if Transmog is not
+reopened. A live proxy run prevents background recovery from changing its settings.
+Registration or task cleanup failures are diagnostic warnings and do not block
+proxy use. Successful restoration removes the task. Failed restoration retains
+the journal for retry.
 Desktop and CLI captures share current-user ownership across their journals.
-A new run first recovers an interrupted owner; recovery and normal stop preserve
+A new System proxy run first recovers an interrupted owner. Recovery and normal stop preserve
 subsequent proxy, VPN, enable and bypass changes instead of replaying obsolete
 settings over them.
 An idle desktop can close or capture with manual routing while a separate CLI
 run owns the Windows proxy; that live run is not reported as abandoned recovery.
-Setup and recovery actions are in Settings →
-Connection. Certificate paths and exact removal are under **Interception
-certificate**.
+Use **Recover host settings** in Settings → Connection for an interrupted
+desktop or CLI run. Certificate paths and exact removal are under
+**Interception certificate**.
 
 Once active work finishes, physical connections have a bounded grace period to
 close. An idle HTTP/2 client that does not acknowledge shutdown cannot leave the

@@ -114,6 +114,7 @@ pub(crate) struct ProxyStartResources<'a> {
         Option<Arc<dyn transmog_tls::client_authentication::ClientAuthenticationResolver>>,
     pub service: &'a ApplicationSessionService,
     pub runtime_ids: Arc<AtomicRuntimeIdGenerator>,
+    pub runtime_limits: Option<transmog_runtime::RuntimeLimits>,
     pub body_store: Option<&'a BodyStore>,
     pub automation: AutomationRegistry,
     pub scripts: ScriptRegistry,
@@ -122,26 +123,62 @@ pub(crate) struct ProxyStartResources<'a> {
 
 async fn load_proxy_ca(
     request: ProxyStartRequest,
+    expected_ca: Option<&str>,
 ) -> Result<(ProxyCa, ProxyStartRequest), AppError> {
     let (ca, request) = tokio::task::spawn_blocking(move || {
-        Ok::<_, AppError>((load_proxy_ca_material(&request)?, request))
+        let ca =
+            load_proxy_ca_material(&request.ca_certificate_path, &request.ca_private_key_path)?;
+        Ok::<_, AppError>((ca, request))
     })
     .await
     .map_err(|_| AppError::new(ErrorCategory::Internal, "CA loading task failed", true))??;
+    if let Some(expected) = expected_ca {
+        let actual = certificate_thumbprint(ca.certificate())?;
+        if !actual.eq_ignore_ascii_case(expected) {
+            return Err(AppError::new(
+                ErrorCategory::InvalidInput,
+                "The interception certificate does not match the expected SHA-256 fingerprint.",
+                false,
+            ));
+        }
+    }
     Ok((ca, request))
 }
 
-fn load_proxy_ca_material(request: &ProxyStartRequest) -> Result<ProxyCa, AppError> {
-    let certificate = read_bounded(&request.ca_certificate_path)?;
-    let key = transmog_key_protection::read(&request.ca_private_key_path, &SystemKeyProtection)
+fn load_proxy_ca_material(certificate_path: &Path, key_path: &Path) -> Result<ProxyCa, AppError> {
+    let certificate = read_bounded(certificate_path)?;
+    let key = transmog_key_protection::read(key_path, &SystemKeyProtection)
         .map_err(|error| key_protection_error(&error))?;
-    ProxyCa::from_pem(&certificate, &key).map_err(|_| {
-        AppError::new(
-            ErrorCategory::InvalidInput,
-            "CA certificate or private key is invalid or mismatched",
-            false,
-        )
-    })
+    let invalid = |message| AppError::new(ErrorCategory::InvalidInput, message, false);
+    let ca = ProxyCa::from_pem(&certificate, &key)
+        .map_err(|_| invalid("CA certificate or private key is invalid or mismatched"))?;
+    let certificate = ca.certificate();
+    if !transmog_tls_native::certificate_is_ca(certificate) {
+        return Err(invalid(
+            "The interception certificate must be a certificate authority.",
+        ));
+    }
+
+    let invalid_dates =
+        |_| invalid("The interception certificate validity dates could not be read.");
+    let now = boring::asn1::Asn1Time::days_from_now(0).map_err(invalid_dates)?;
+    if certificate
+        .not_before()
+        .compare(&now)
+        .map_err(invalid_dates)?
+        .is_gt()
+    {
+        return Err(invalid("The interception certificate is not yet valid."));
+    }
+    if !certificate
+        .not_after()
+        .compare(&now)
+        .map_err(invalid_dates)?
+        .is_gt()
+    {
+        return Err(invalid("The interception certificate has expired."));
+    }
+    Ok(ca)
 }
 
 pub(crate) struct PreparedHttpsInterception {
@@ -160,26 +197,10 @@ pub(crate) fn prepare_https_interception(
             false,
         )
     };
-    let ca = load_proxy_ca_material(request).map_err(|_| invalid())?;
-    let now = boring::asn1::Asn1Time::days_from_now(0).map_err(|_| invalid())?;
-    if !transmog_tls_native::certificate_is_ca(ca.certificate())
-        || ca
-            .certificate()
-            .not_before()
-            .compare(&now)
-            .map_err(|_| invalid())?
-            .is_gt()
-        || !ca
-            .certificate()
-            .not_after()
-            .compare(&now)
-            .map_err(|_| invalid())?
-            .is_gt()
-    {
-        return Err(invalid());
-    }
+    let ca = load_proxy_ca_material(&request.ca_certificate_path, &request.ca_private_key_path)
+        .map_err(|_| invalid())?;
     let certificate = ca.certificate().to_owned();
-    let thumbprint = ca.sha256_thumbprint().map_err(|_| invalid())?;
+    let thumbprint = certificate_thumbprint(&certificate).map_err(|_| invalid())?;
     let certificates =
         interception_certificates(Some(ca), &transmog_runtime::RuntimeLimits::default())
             .map_err(|_| invalid())?;
@@ -217,12 +238,14 @@ pub(crate) async fn start_proxy(
     resources: ProxyStartResources<'_>,
     request: ProxyStartRequest,
     host: Option<Arc<dyn HostIntegration>>,
+    expected_ca: Option<&str>,
 ) -> Result<Option<boring::x509::X509>, AppError> {
     let ProxyStartResources {
         upstream_trust,
         client_certificate_resolver,
         service,
         runtime_ids,
+        runtime_limits,
         body_store,
         automation,
         scripts,
@@ -236,7 +259,7 @@ pub(crate) async fn start_proxy(
         ));
     }
     let (ca, request) = if preferences.decrypt_https {
-        let (ca, request) = load_proxy_ca(request).await?;
+        let (ca, request) = load_proxy_ca(request, expected_ca).await?;
         (Some(ca), request)
     } else {
         (None, request)
@@ -253,10 +276,10 @@ pub(crate) async fn start_proxy(
             allow_remote_clients: request.allow_remote_clients,
         },
         route_policy: route_policy(request.route),
-        limits: transmog_runtime::RuntimeLimits {
+        limits: runtime_limits.unwrap_or_else(|| transmog_runtime::RuntimeLimits {
             max_request_body_bytes: usize::MAX,
             ..transmog_runtime::RuntimeLimits::default()
-        },
+        }),
         ..ProxyConfig::default()
     };
     let trust = match upstream_trust {
@@ -303,13 +326,7 @@ pub(crate) async fn start_proxy(
     let components = service.prepare_components_with_traffic(components, !request.recording_only);
     let server = ProxyServer::bind_with_components(config, trust, components)
         .await
-        .map_err(|_| {
-            AppError::new(
-                ErrorCategory::Unavailable,
-                "proxy listener could not be bound",
-                true,
-            )
-        })?;
+        .map_err(|error| proxy_bind_error(request.listen, &error))?;
     match host {
         Some(integration) => {
             service
@@ -320,6 +337,16 @@ pub(crate) async fn start_proxy(
     }
     .map(|_| public_certificate)
     .map_err(AppError::from)
+}
+
+fn proxy_bind_error(address: SocketAddr, error: &transmog_runtime::ProxyRuntimeError) -> AppError {
+    let message = if matches!(error, transmog_runtime::ProxyRuntimeError::Io(error) if error.kind() == std::io::ErrorKind::AddrInUse)
+    {
+        format!("Proxy address {address} is in use. Choose another port or use an automatic port.")
+    } else {
+        format!("Proxy listener could not be bound at {address}.")
+    };
+    AppError::new(ErrorCategory::Unavailable, message, true)
 }
 
 pub(crate) async fn create_ca(request: CaCreateRequest) -> Result<CaIdentity, AppError> {
@@ -373,30 +400,49 @@ pub(crate) async fn create_ca(request: CaCreateRequest) -> Result<CaIdentity, Ap
 /// The certificate and its trust identity remain unchanged.
 ///
 /// # Errors
-/// Returns an error for mismatched material, I/O or unavailable OS protection.
+/// Returns an error for unusable material, I/O or unavailable OS protection.
 pub fn protect_ca_private_key(certificate_path: &Path, key_path: &Path) -> Result<(), AppError> {
     validate_ca_private_key(certificate_path, key_path)?;
     transmog_key_protection::protect_existing(key_path, &SystemKeyProtection)
         .map_err(|error| key_protection_error(&error))
 }
 
-/// Checks that a private key can be opened and matches its public certificate.
+/// Checks that the private key can be opened and matches a currently valid CA certificate.
 /// This inspection does not modify the files or operating-system trust.
 ///
 /// # Errors
-/// Returns an error for mismatched material, I/O or inaccessible OS protection.
+/// Returns an error for unusable material, I/O or inaccessible OS protection.
 pub fn validate_ca_private_key(certificate_path: &Path, key_path: &Path) -> Result<(), AppError> {
-    let certificate = read_bounded(certificate_path)?;
-    let key = transmog_key_protection::read(key_path, &SystemKeyProtection)
-        .map_err(|error| key_protection_error(&error))?;
-    ProxyCa::from_pem(&certificate, &key).map_err(|_| {
-        AppError::new(
-            ErrorCategory::InvalidInput,
-            "CA certificate or private key is invalid or mismatched",
-            false,
-        )
-    })?;
-    Ok(())
+    load_proxy_ca_material(certificate_path, key_path).map(|_| ())
+}
+
+/// Reads the canonical SHA-256 fingerprint of the public PEM certificate.
+///
+/// # Errors
+/// Returns an error if the certificate cannot be read, parsed, or fingerprinted.
+pub fn interception_certificate_thumbprint(certificate_path: &Path) -> Result<String, AppError> {
+    let certificate =
+        boring::x509::X509::from_pem(&read_bounded(certificate_path)?).map_err(|_| {
+            AppError::new(
+                ErrorCategory::InvalidInput,
+                "The public interception certificate is invalid.",
+                false,
+            )
+        })?;
+    certificate_thumbprint(&certificate)
+}
+
+fn certificate_thumbprint(certificate: &boring::x509::X509Ref) -> Result<String, AppError> {
+    certificate
+        .digest(boring::hash::MessageDigest::sha256())
+        .map(hex::encode_upper)
+        .map_err(|_| {
+            AppError::new(
+                ErrorCategory::InvalidInput,
+                "The interception certificate fingerprint could not be read.",
+                false,
+            )
+        })
 }
 
 fn key_protection_error(error: &std::io::Error) -> AppError {
@@ -1215,12 +1261,14 @@ mod tests {
                 client_certificate_resolver: None,
                 service: &service,
                 runtime_ids: Arc::new(AtomicRuntimeIdGenerator::new()),
+                runtime_limits: None,
                 body_store: None,
                 automation: AutomationRegistry::load(None, Arc::new(assets.clone())).unwrap(),
                 scripts: ScriptRegistry::load(None, None, Arc::new(assets)).unwrap(),
                 preferences: crate::ProductPreferences::default(),
             },
             request,
+            None,
             None,
         )
         .await
@@ -1262,6 +1310,45 @@ mod tests {
         application.shutdown().await.unwrap();
         assert_eq!(application.status().lifecycle, crate::AppLifecycle::Stopped);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn startup_checks_the_loaded_ca_fingerprint_before_binding() {
+        let directory = tempfile::tempdir().unwrap();
+        let application = crate::Application::new(crate::AppConfig::default()).unwrap();
+        let fixture = CaCreateRequest {
+            certificate_path: directory.path().join("ca.pem"),
+            private_key_path: directory.path().join("ca.key"),
+            common_name: "Certificate identity fixture".into(),
+            validity_days: 1,
+        };
+        create_fixture_ca(fixture.clone()).await;
+        let expected = interception_certificate_thumbprint(&fixture.certificate_path).unwrap();
+        let reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let request = ProxyStartRequest {
+            listen: reservation.local_addr().unwrap(),
+            ca_certificate_path: fixture.certificate_path,
+            ca_private_key_path: fixture.private_key_path,
+            ..ProxyStartRequest::default()
+        };
+        let error = application
+            .start_proxy_with_expected_ca(request.clone(), None, &"00".repeat(32))
+            .await
+            .unwrap_err();
+        assert_eq!(error.category, ErrorCategory::InvalidInput);
+        assert!(error.message.contains("expected SHA-256 fingerprint"));
+        assert_eq!(application.status().lifecycle, crate::AppLifecycle::Stopped);
+
+        let request = ProxyStartRequest {
+            listen: "127.0.0.1:0".parse().unwrap(),
+            ..request
+        };
+        let status = application
+            .start_proxy_with_expected_ca(request, None, &expected)
+            .await
+            .unwrap();
+        assert_eq!(status.https_decryption, Some(true));
+        application.shutdown().await.unwrap();
     }
 
     #[tokio::test]
@@ -1734,8 +1821,8 @@ mod tests {
         app.shutdown().await.unwrap();
     }
 
-    #[test]
-    fn live_https_preparation_rejects_a_leaf_certificate_and_expired_ca() {
+    #[tokio::test]
+    async fn invalid_interception_ca_blocks_start_and_live_enable_but_allows_tunnels() {
         use boring::{
             asn1::Asn1Time,
             hash::MessageDigest,
@@ -1758,17 +1845,6 @@ mod tests {
                 1,
             )
             .unwrap();
-        std::fs::write(
-            &request.ca_certificate_path,
-            leaf.certificate.to_pem().unwrap(),
-        )
-        .unwrap();
-        std::fs::write(
-            &request.ca_private_key_path,
-            leaf.private_key.private_key_to_pem_pkcs8().unwrap(),
-        )
-        .unwrap();
-        assert!(prepare_https_interception(&request).is_err());
         let key_pem = ca.private_key_pem_pkcs8().unwrap();
         let key = PKey::private_key_from_pem(&key_pem).unwrap();
         let mut expired = X509::builder().unwrap();
@@ -1803,12 +1879,41 @@ mod tests {
             .append_extension(KeyUsage::new().key_cert_sign().build().unwrap().as_ref())
             .unwrap();
         expired.sign(&key, MessageDigest::sha256()).unwrap();
-        std::fs::write(
-            &request.ca_certificate_path,
-            expired.build().to_pem().unwrap(),
-        )
-        .unwrap();
-        std::fs::write(&request.ca_private_key_path, key_pem).unwrap();
-        assert!(prepare_https_interception(&request).is_err());
+
+        let application = crate::Application::new(crate::AppConfig::default()).unwrap();
+        for (certificate, key, reason) in [
+            (leaf.certificate, leaf.private_key, "certificate authority"),
+            (expired.build(), key, "expired"),
+        ] {
+            std::fs::write(&request.ca_certificate_path, certificate.to_pem().unwrap()).unwrap();
+            std::fs::write(
+                &request.ca_private_key_path,
+                key.private_key_to_pem_pkcs8().unwrap(),
+            )
+            .unwrap();
+            let error = application
+                .start_proxy(request.clone(), None)
+                .await
+                .expect_err(reason);
+            assert_eq!(error.category, ErrorCategory::InvalidInput);
+            assert!(error.message.contains(reason));
+            assert_eq!(application.status().lifecycle, crate::AppLifecycle::Stopped);
+            assert!(application.status().listener.is_none());
+            assert!(application.product_state().preferences.decrypt_https);
+            assert!(
+                validate_ca_private_key(&request.ca_certificate_path, &request.ca_private_key_path)
+                    .is_err()
+            );
+            assert!(prepare_https_interception(&request).is_err());
+        }
+
+        let status = application
+            .start_https_tunnels(request, None)
+            .await
+            .unwrap();
+        assert_eq!(status.lifecycle, crate::AppLifecycle::Running);
+        assert_eq!(status.https_decryption, Some(false));
+        assert!(!application.product_state().preferences.decrypt_https);
+        application.shutdown().await.unwrap();
     }
 }

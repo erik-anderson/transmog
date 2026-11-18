@@ -131,6 +131,42 @@ fn invalid_inspection_options_leave_output_and_preferences_untouched() {
 }
 
 #[test]
+fn serve_capture_bind_failure_leaves_the_destination_available() {
+    let directory = tempfile::tempdir().unwrap();
+    let reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = reservation.local_addr().unwrap().to_string();
+    let output = invoke(
+        directory.path(),
+        &[
+            "serve",
+            "--capture",
+            "capture.tmcap",
+            "--no-decrypt-https",
+            "--listen",
+            &address,
+        ],
+    );
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("LISTEN_ADDR="));
+    assert!(!directory.path().join("capture.tmcap").exists());
+}
+
+#[test]
+fn serve_capture_writer_failure_does_not_advertise_the_listener() {
+    let directory = tempfile::tempdir().unwrap();
+    let capture = directory.path().join("capture.tmcap");
+    fs::write(&capture, b"existing evidence").unwrap();
+    let output = invoke(
+        directory.path(),
+        &["serve", "--capture", "capture.tmcap", "--no-decrypt-https"],
+    );
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("capture destination already exists"));
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("LISTEN_ADDR="));
+    assert_eq!(fs::read(&capture).unwrap(), b"existing evidence");
+}
+
+#[test]
 fn encrypted_certificate_free_recording_accepts_option_like_password_file_content() {
     let directory = tempfile::tempdir().unwrap();
     fs::write(directory.path().join("password.txt"), "--install-root").unwrap();

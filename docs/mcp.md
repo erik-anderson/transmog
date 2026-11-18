@@ -70,6 +70,7 @@ See [matching details](mcp-reference.md#evidence-and-disclosure).
 | View request details | Search scoped traffic and inspect headers, timings, changes and stream metadata |
 | Load capture files | Load and unload local captures in private inspection sessions |
 | Control collection | Start/stop the shared proxy and the agent's recordings |
+| Start private listeners | Start and stop app-specific loopback listeners owned by this key. Saving recordings also requires all-traffic scope and unredacted access. |
 | Prepare changes | Create, edit and test the agent's disabled header/text rule drafts |
 | Edit shared rules | Edit saved header/text rules and publish private drafts |
 | Change live traffic | Activate temporary rules or targeted breakpoints; with Edit shared rules, enable saved rules or change/disable active ones |
@@ -90,6 +91,20 @@ edits remain after revoking a key.
 
 ## Private inspection sessions
 
+Enable **Start private listeners** for a key whose agent should capture traffic
+from one app. The agent can start its own listener without opening a review
+window. Configure only the intended app to use the returned loopback address.
+The listener has its own traffic and leaves the Windows proxy settings alone.
+For HTTPS decryption, configure the app to trust the listener’s public root.
+The agent can use a client-specific CA bundle. See the
+[local app example](mcp-reference.md#record-one-local-app).
+Use **MCP → Inspection sessions** to copy the address, stop the listener, or
+review its evidence. **Stop listener** releases the port, finalizes an active
+recording and keeps traffic available for inspection. **End session** also ends
+agent access and releases ordinary session evidence. Saved recordings remain on
+disk. The panel reports saved and failed recording outcomes with filenames
+when available.
+
 Agents can load TMCap, SAZ, HAR and Chromium NetLog files into private sessions
 without changing your workspace. Enable **Load capture files** for that key.
 Encrypted captures wait for a password in the top **MCP** panel; the agent never
@@ -101,11 +116,17 @@ separate capture window. Files opened there join the same session.
 preserve your drafts; **Publish selected rule** creates a disabled shared rule.
 Review and enable it in **Automation → Rules** in the main window.
 
-Closing the review window keeps the session. **End session** ends agent access;
-an already-open review window keeps its evidence until you close it. Resolve
-unsaved edits before ending a session. Source files and live capture are unaffected.
+Closing a review window leaves the session available under its normal idle
+deadline. Resolve unsaved edits before ending an offline inspection session.
+If a private listener ends with unsaved human edits, its review remains
+available for that work.
 
-Idle sessions expire after 30 minutes; an open review window keeps them available.
+The idle deadline is 30 minutes. An open review window keeps an offline
+inspection session available. Private listeners keep their existing deadline
+when a review window opens or closes.
+Incoming traffic, session listing and operation polling do not renew the
+deadline. Use `transmog_session_renew` and check the returned `expiresAt`
+for long captures.
 Key revocation or expiry, disabling MCP and app restarts also end private sessions.
 When access ends while the app is running, unsaved human review work remains available.
 

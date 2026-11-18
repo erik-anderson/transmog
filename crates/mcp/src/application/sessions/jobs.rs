@@ -106,6 +106,16 @@ impl AgentApplication {
         )
         .to_vec();
         let mut registry = self.sessions.lock();
+        registry.prune_listener_operations(&self.access);
+        if registry
+            .listener_operations
+            .contains_key(&(grant.id.clone(), id.clone()))
+        {
+            return Err(Error::new(
+                "conflict",
+                "That operationId already names a listener operation.",
+            ));
+        }
         if let Some(job) = registry.jobs.get(&(grant.id.clone(), id.clone())) {
             if job.fingerprint != fingerprint {
                 return Err(Error::new(
@@ -370,12 +380,7 @@ impl AgentApplication {
             .jobs
             .get(&(grant.id.clone(), string(input, "operationId")?.into()))
             .cloned()
-            .ok_or_else(|| {
-                Error::new(
-                    "not_found",
-                    "This key has no capture operation with that ID.",
-                )
-            })?;
+            .ok_or_else(|| Error::new("not_found", "This key has no operation with that ID."))?;
         if name == "transmog_operation_cancel" {
             job.cancel();
         }

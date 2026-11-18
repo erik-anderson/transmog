@@ -18,10 +18,11 @@ import type {
   AppStatus,
   CaIdentity,
   DesktopBootstrap,
+  Notice,
   ProductState,
   WorkspacePreferences,
 } from "../models.js";
-import { describeError } from "../utilities.js";
+import { describeError, listensOnAllInterfaces, proxyClientAddress } from "../utilities.js";
 
 export class SettingsWorkspace extends WorkspaceElement {
   extensionsEditor!: ExtensionSettings;
@@ -164,12 +165,12 @@ export class SettingsWorkspace extends WorkspaceElement {
       this.certificateReturnVisible = false;
     }
   }
-  async openInterceptionCertificate(event?: Event): Promise<void> {
+  async openInterceptionCertificate(event?: Event, returnToPreferences = true): Promise<void> {
     const focus = captureFocus(this);
     const eventTarget = event?.currentTarget;
     this.certificateReturnFocus =
       eventTarget instanceof HTMLElement ? eventTarget : this.certificateSettingsButton;
-    this.certificateReturnVisible = true;
+    this.certificateReturnVisible = returnToPreferences;
     this.certificateDetailsOpen = true;
     this.settingsSection = "connection";
     const current = captureRenderScope(this, () => [
@@ -235,17 +236,93 @@ export class SettingsWorkspace extends WorkspaceElement {
     }
   }
   private certificateBootstrap: DesktopBootstrap | undefined;
+  private certificateRevision = 0;
   private savedDecryptHttps = initialState.decryptHttps;
-  private updateCertificateState(bootstrap: DesktopBootstrap): void {
+  @observable routingSavePending = initialState.routingSavePending;
+  private routingRevision = 0;
+  @observable configureSystemProxy = initialState.configureSystemProxy;
+  private activeRoutingMode: AppStatus["routingMode"] = initialState.activeRoutingMode;
+  private activeHttpsDecryption: AppStatus["httpsDecryption"] = null;
+  @observable connectionUsesSystemProxy = initialState.connectionUsesSystemProxy;
+  @observable publicCertificateAvailable = initialState.publicCertificateAvailable;
+  @observable windowsCertificateTrusted = initialState.windowsCertificateTrusted;
+  @observable interceptionCertificateStatus = initialState.interceptionCertificateStatus;
+  @observable listenerOnAllInterfaces = initialState.listenerOnAllInterfaces;
+  async saveProxyRouting(configureSystemProxy: boolean): Promise<void> {
+    this.routingSavePending = true;
+    try {
+      await invoke<void>("save_proxy_routing", { configureSystemProxy });
+      this.routingRevision++;
+      this.applyProxyRouting(configureSystemProxy);
+    } finally {
+      this.routingSavePending = false;
+    }
+  }
+  private applyProxyRouting(configureSystemProxy: boolean): void {
+    this.configureSystemProxy = configureSystemProxy;
+    this.$emit("routing-changed", configureSystemProxy);
+    this.presentCertificateState();
+  }
+  private updateCertificateState(bootstrap: DesktopBootstrap, updateRecovery = true): void {
+    this.certificateRevision++;
     this.certificateBootstrap = bootstrap;
-    this.interceptionCertificateUnavailable =
-      !bootstrap.caFilesPresent || !bootstrap.ownedCaTrusted || this.caRecoveryRequired(bootstrap);
-    this.$emit("certificate-state", { unavailable: this.interceptionCertificateUnavailable });
-    this.certificateRecovery = this.decryptHttps && this.caRecoveryRequired(bootstrap);
-    this.certificateReady =
-      !this.decryptHttps ||
-      (bootstrap.caFilesPresent && bootstrap.ownedCaTrusted && !this.certificateRecovery);
-    this.hostRecoveryPending = bootstrap.hostRestorePending;
+    if (updateRecovery) {
+      this.hostRecoveryPending = bootstrap.hostRestorePending;
+    }
+    this.presentCertificateState();
+  }
+  private presentCertificateState(showStartBlock = false): void {
+    const system = this.activeRoutingMode
+      ? this.activeRoutingMode === "system"
+      : this.configureSystemProxy;
+    this.connectionUsesSystemProxy = system;
+    const bootstrap = this.certificateBootstrap;
+    if (!bootstrap) {
+      return;
+    }
+    const decrypting = this.activeHttpsDecryption ?? this.decryptHttps;
+    const recovery = this.caRecoveryRequired(bootstrap);
+    const available = bootstrap.caFilesPresent && bootstrap.ownedCaSha256 !== null && !recovery;
+    const trusted = available && bootstrap.ownedCaTrusted;
+    this.publicCertificateAvailable = available;
+    this.windowsCertificateTrusted = trusted;
+    this.interceptionCertificateUnavailable = decrypting && (!available || (system && !trusted));
+    this.certificateRecovery = decrypting && recovery;
+    this.certificateReady = !this.interceptionCertificateUnavailable;
+    this.interceptionCertificateStatus = !decrypting
+      ? "HTTP remains inspectable. HTTPS tunnels keep message contents encrypted."
+      : recovery
+        ? this.caRecoveryNotice(bootstrap).message
+        : !available
+          ? "Create a local interception certificate to decrypt HTTPS."
+          : trusted
+            ? "Apps with their own trust store may also need the public certificate."
+            : "To decrypt HTTPS, the app must trust this public certificate. Use Windows trust or the app’s own trust store.";
+    let notice: Notice | null = null;
+    if (
+      (!this.activeRoutingMode && this.interceptionCertificateUnavailable) ||
+      (showStartBlock && recovery)
+    ) {
+      notice = recovery
+        ? this.caRecoveryNotice(bootstrap)
+        : {
+            title: "HTTPS interception needs setup",
+            message: system
+              ? "Create or trust Transmog’s interception certificate for your Windows account to decrypt HTTPS."
+              : "Create an interception certificate, then trust it through Windows or in the app you want to inspect.",
+            actionLabel: system ? "Set up HTTPS interception" : "Create interception certificate",
+            action: "setup-ca",
+          };
+    }
+    this.$emit("certificate-state", {
+      unavailable: this.interceptionCertificateUnavailable,
+      notice,
+      showStartBlock,
+    });
+    if (showStartBlock || this.proxyOutputFromCertificateBlock) {
+      this.setProxyOutput(notice?.message ?? "", notice ? "error" : "success");
+      this.proxyOutputFromCertificateBlock = notice !== null;
+    }
   }
   private async runSupport(operation: () => Promise<void>): Promise<void> {
     if (this.supportBusy) {
@@ -262,6 +339,7 @@ export class SettingsWorkspace extends WorkspaceElement {
   @observable proxyReady = initialState.proxyReady;
   @observable proxyText = initialState.proxyText;
   @observable proxyKind = initialState.proxyKind;
+  private proxyOutputFromCertificateBlock = false;
   @observable supportText = initialState.supportText;
   @observable diagnosticsPathText = initialState.diagnosticsPathText;
   @observable certificatePath = initialState.certificatePath;
@@ -283,7 +361,11 @@ export class SettingsWorkspace extends WorkspaceElement {
     this.statusRevision++;
     this.hostRecoveryPending = status.hostRestorePending;
     this.proxyLifecycle = status.lifecycle;
+    this.listenerOnAllInterfaces = listensOnAllInterfaces(status.listener);
+    this.activeRoutingMode = status.routingMode ?? null;
+    this.activeHttpsDecryption = this.activeRoutingMode ? (status.httpsDecryption ?? null) : null;
     this.$emit("status-changed", status);
+    this.presentCertificateState();
     window.clearTimeout(this.drainTimer);
     if (status.lifecycle === "draining" || status.lifecycle === "stopping") {
       this.drainTimer = window.setTimeout(() => {
@@ -307,6 +389,7 @@ export class SettingsWorkspace extends WorkspaceElement {
     this.$emit("dismiss-notice");
   }
   private async initializeShell(): Promise<void> {
+    const routingRevision = this.routingRevision;
     this.setProxyOutput("Loading durable proxy state…", "progress");
     try {
       const [bootstrap, productState, status] = await Promise.all([
@@ -318,40 +401,20 @@ export class SettingsWorkspace extends WorkspaceElement {
       this.privateKeyPath = bootstrap.caPrivateKeyPath;
       this.caSha256 = bootstrap.ownedCaSha256 ?? "";
       this.diagnosticsPathText = bootstrap.diagnosticsPath;
-      this.populateSettings(productState);
+      this.populateSettings(productState, routingRevision);
       void this.refreshBufferStatus();
       this.applyTheme(productState.preferences.theme, productState.workspace);
       this.acceptAppStatus(status);
-      this.updateCertificateState(bootstrap);
-      const recovery = this.decryptHttps && this.caRecoveryRequired(bootstrap);
-      const certificate = !this.decryptHttps
-        ? "HTTPS decryption is off. CONNECT tunnels forward bytes without inspecting their contents."
-        : recovery
-          ? "The saved interception certificate needs to be reset. Reset certificate and set up again to create and trust a new one."
-          : bootstrap.ownedCaSha256 === null
-            ? "No app-owned trusted CA is recorded. Create and trust one before intercepting HTTPS."
-            : bootstrap.ownedCaTrusted
-              ? "HTTPS interception certificate is ready."
-              : "The interception certificate needs current-user trust.";
-      const ready = this.certificateReady;
-      this.setProxyOutput(certificate, ready ? "success" : recovery ? "error" : "progress");
-      if (bootstrap.hostRestorePending) {
+      this.setProxyOutput("", "success");
+      if (status.hostRestorePending) {
         this.showNotice(
           "Windows proxy recovery required",
-          "Transmog could not restore the settings journaled by a previous run. Restore them before starting again.",
+          "Restore the Windows proxy settings saved by a previous run. Manual proxy is available while recovery is pending.",
           "Restore settings",
           "recover-proxy",
         );
-      } else if (recovery) {
-        this.showCaRecovery(bootstrap);
-      } else if (!ready) {
-        this.showNotice(
-          "HTTPS interception needs setup",
-          "To decrypt HTTPS, create and trust Transmog’s local interception certificate. You can also start with HTTPS tunnels. Windows will ask you to approve adding it to your current-user trusted roots.",
-          "Set up now",
-          "setup-ca",
-        );
       }
+      this.updateCertificateState(bootstrap);
     } catch (error: unknown) {
       const message = `Desktop initialization failed: ${describeError(error)}`;
       this.setProxyOutput(message, "error");
@@ -393,9 +456,13 @@ export class SettingsWorkspace extends WorkspaceElement {
         // Keep unrelated preference drafts, including the process lists, intact.
         (this.settingsForm.elements.namedItem("decryptHttps") as HTMLInputElement).checked = false;
         this.acceptAppStatus(status);
-        this.dismissNotice();
+        if (!status.hostRestorePending) {
+          this.dismissNotice();
+        }
         this.setProxyOutput(
-          "Proxy started with HTTPS tunnels. HTTP is inspected; HTTPS contents are not decrypted. This choice is saved.",
+          status.routingMode === "manual"
+            ? `Proxy listening at ${proxyClientAddress(status.listener ?? "")}. Configure your application’s HTTP and HTTPS proxy to use this address. HTTPS uses tunnels.`
+            : "Proxy started with HTTPS tunnels. HTTP is inspected; HTTPS contents are not decrypted. This choice is saved.",
           "success",
         );
       } catch (error: unknown) {
@@ -424,7 +491,7 @@ export class SettingsWorkspace extends WorkspaceElement {
     await this.runProxyChange("stopping", () => this.stopProxyNow());
   }
   private async runProxyChange(kind: string, operation: () => Promise<void>): Promise<void> {
-    if (this.proxyPending) {
+    if (this.proxyPending || this.routingSavePending) {
       return;
     }
     this.statusRevision++;
@@ -468,39 +535,21 @@ export class SettingsWorkspace extends WorkspaceElement {
         decryptInput.checked = this.decryptHttps;
       }
       this.updateCertificateState(bootstrap);
-      if (bootstrap.hostRestorePending) {
-        this.showNotice(
-          "Windows proxy recovery required",
-          "Restore the exact settings journaled by the previous run before starting the proxy again.",
-          "Restore settings",
-          "recover-proxy",
-        );
-        this.setProxyOutput("Start blocked: Windows proxy recovery is pending.", "error");
-        return;
-      }
+      const system = productState.preferences.configureSystemProxy;
       if (
         productState.preferences.decryptHttps &&
         (this.caRecoveryRequired(bootstrap) ||
           !bootstrap.caFilesPresent ||
           bootstrap.ownedCaSha256 === null ||
-          !bootstrap.ownedCaTrusted)
+          (system && !bootstrap.ownedCaTrusted))
       ) {
-        if (this.caRecoveryRequired(bootstrap)) {
-          this.showCaRecovery(bootstrap);
-          this.activateView("settings");
-          return;
-        }
-        const missing =
-          !bootstrap.caFilesPresent || bootstrap.ownedCaSha256 === null
-            ? "Create and trust Transmog’s interception certificate to decrypt HTTPS, or start with HTTPS tunnels."
-            : "Transmog’s interception certificate is not trusted for the current user. Trust it before starting the proxy.";
-        this.showNotice("Proxy setup required", missing, "Set up HTTPS interception", "setup-ca");
-        this.setProxyOutput(`Start blocked: ${missing}`, "error");
+        this.presentCertificateState(true);
+        this.showSettingsSection("connection");
         this.activateView("settings");
         return;
       }
       this.setProxyOutput(
-        "Starting capture, binding the proxy, and applying current-user Windows proxy settings…",
+        system ? "Applying current-user Windows proxy settings…" : "Binding the proxy listener…",
         "progress",
       );
       const status = await invoke<AppStatus>("start_proxy", {
@@ -513,10 +562,14 @@ export class SettingsWorkspace extends WorkspaceElement {
         },
       });
       this.acceptAppStatus(status);
-      const listener = status.listener ?? "an unknown listener";
-      this.dismissNotice();
+      const listener = status.listener ? proxyClientAddress(status.listener) : "an unknown address";
+      if (!status.hostRestorePending) {
+        this.dismissNotice();
+      }
       this.setProxyOutput(
-        `Proxy listening at ${listener}. Windows proxy settings are active and traffic is being captured automatically.`,
+        status.routingMode === "manual" || !system
+          ? `Proxy listening at ${listener}. Configure your application’s HTTP and HTTPS proxy to use this address.`
+          : `Proxy listening at ${listener}. Windows proxy settings are active and traffic is being captured automatically.`,
         "success",
       );
     } catch (error: unknown) {
@@ -526,8 +579,17 @@ export class SettingsWorkspace extends WorkspaceElement {
       try {
         const bootstrap = await invoke<DesktopBootstrap>("desktop_bootstrap");
         this.updateCertificateState(bootstrap);
+        if (bootstrap.hostRestorePending && this.configureSystemProxy) {
+          this.showNotice(
+            "Windows proxy recovery required",
+            message,
+            "Restore settings",
+            "recover-proxy",
+          );
+          return;
+        }
         if (this.caRecoveryRequired(bootstrap)) {
-          this.showCaRecovery(bootstrap);
+          this.presentCertificateState(true);
           return;
         }
       } catch {
@@ -554,28 +616,32 @@ export class SettingsWorkspace extends WorkspaceElement {
     );
   }
 
-  private showCaRecovery(bootstrap: DesktopBootstrap): void {
+  private caRecoveryNotice(bootstrap: DesktopBootstrap): Notice {
     const reason =
       bootstrap.caKeyError ??
       (bootstrap.ownedCaSha256 === null
         ? "Certificate files from a previous setup remain, but their Transmog identity is not recorded."
         : "The recorded interception certificate is missing one or both of its files.");
-    const message = `${reason} Reset the certificate to remove the app-managed certificate and private key, then create and trust a new certificate.`;
-    this.setProxyOutput(message, "error");
-    this.showNotice(
-      "Interception certificate needs a reset",
-      message,
-      "Reset certificate and set up again",
-      "reset-ca",
-    );
+    const next = this.connectionUsesSystemProxy
+      ? "Reset the certificate to remove the app-managed files, then create and trust a new certificate."
+      : "Reset the certificate, then trust the replacement through Windows or in the app you want to inspect.";
+    return {
+      title: "Interception certificate needs a reset",
+      message: `${reason} ${next}`,
+      actionLabel: "Reset certificate and set up again",
+      action: "reset-ca",
+    };
   }
 
   async resetCa(): Promise<void> {
     await this.runProxyChange("certificate-setup", async () => {
       try {
         const bootstrap = await invoke<DesktopBootstrap>("desktop_bootstrap");
+        const trust = this.configureSystemProxy
+          ? "Transmog will create a new certificate and ask Windows to trust it. You must approve the Windows certificate dialog."
+          : "Transmog will create a new certificate. Trust the public certificate in the application you are debugging.";
         const proceed = window.confirm(
-          `Reset HTTPS interception? This permanently deletes Transmog’s app-managed certificate and private key:\n${bootstrap.caCertificatePath}\n${bootstrap.caPrivateKeyPath}\n\nAny exact certificate recorded by Transmog will also be removed from your current-user trusted roots. Transmog will create a new certificate and ask Windows to trust it. You must approve the Windows certificate dialog. Continue?`,
+          `Reset HTTPS interception? This permanently deletes Transmog’s app-managed certificate and private key:\n${bootstrap.caCertificatePath}\n${bootstrap.caPrivateKeyPath}\n\nAny exact certificate recorded by Transmog will also be removed from your current-user trusted roots. ${trust} Continue?`,
         );
         if (!proceed) {
           return;
@@ -607,15 +673,17 @@ export class SettingsWorkspace extends WorkspaceElement {
   }
 
   private async setupCaNow(confirmed = false): Promise<void> {
+    const systemRouting = this.connectionUsesSystemProxy;
     this.setProxyOutput("Preparing the interception certificate…", "progress");
     try {
       let bootstrap = await invoke<DesktopBootstrap>("desktop_bootstrap", { inspectCaKey: true });
       this.updateCertificateState(bootstrap);
       if (this.caRecoveryRequired(bootstrap)) {
-        this.showCaRecovery(bootstrap);
+        this.presentCertificateState(true);
         return;
       }
       if (
+        systemRouting &&
         !confirmed &&
         !window.confirm(
           "Transmog will create a durable local interception certificate if needed, then ask Windows to trust its public certificate for your account. You must manually approve the Windows certificate dialog. Continue?",
@@ -643,24 +711,33 @@ export class SettingsWorkspace extends WorkspaceElement {
           "The interception certificate identity is unavailable. Reset certificate and set up again.",
         );
       }
-      this.setProxyOutput(
-        "Approve the Windows certificate dialog to trust the Transmog interception CA.",
-        "progress",
-      );
-      await invoke<void>("install_certificate", {
-        path: String(data.get("certificate") ?? ""),
-        sha256,
-      });
+      if (systemRouting && !bootstrap.ownedCaTrusted) {
+        this.setProxyOutput(
+          "Approve the Windows certificate dialog to trust the Transmog interception CA.",
+          "progress",
+        );
+        await invoke<void>("install_certificate", {
+          path: bootstrap.caCertificatePath,
+          sha256,
+        });
+      }
       bootstrap = await invoke<DesktopBootstrap>("desktop_bootstrap", { inspectCaKey: true });
       this.updateCertificateState(bootstrap);
-      if (!bootstrap.ownedCaTrusted) {
+      if (systemRouting && !bootstrap.ownedCaTrusted) {
         throw new Error("Windows did not report the certificate as trusted.");
       }
       this.caSha256 = sha256;
-      const message =
-        "HTTPS interception is ready. Windows trusts the exact Transmog certificate for the current user.";
+      const trustClient =
+        "For HTTPS decryption, trust the public certificate through Windows or in the app you want to inspect.";
+      const message = systemRouting
+        ? "HTTPS interception is ready. Windows trusts the exact Transmog certificate for the current user."
+        : "Interception certificate ready.";
       this.setProxyOutput(message, "success");
-      if (this.proxyLifecycle !== "stopped" || !this.decryptHttps) {
+      if (
+        this.proxyLifecycle !== "stopped" ||
+        !this.decryptHttps ||
+        this.certificateReturnVisible
+      ) {
         const requested = (this.settingsForm.elements.namedItem("decryptHttps") as HTMLInputElement)
           .checked;
         const next = this.decryptHttps
@@ -670,20 +747,21 @@ export class SettingsWorkspace extends WorkspaceElement {
             : "Enable HTTPS decryption in Preferences, then save.";
         this.showNotice(
           "Interception certificate is ready",
-          next,
+          systemRouting ? next : `${trustClient} ${next}`,
           "Back to preferences",
           "https-preferences",
         );
       } else {
         this.showNotice(
-          "HTTPS interception is ready",
-          "You can start the proxy now.",
-          "Start proxy",
-          "start-proxy",
+          systemRouting ? "HTTPS interception is ready" : "Interception certificate is ready",
+          systemRouting ? "You can start the proxy now." : trustClient,
+          systemRouting ? "Start proxy" : "Certificate settings",
+          systemRouting ? "start-proxy" : "certificate-settings",
         );
       }
     } catch (error: unknown) {
       const message = `Certificate setup failed: ${describeError(error)}`;
+      await this.refreshCertificateState();
       this.setProxyOutput(message, "error");
       this.showNotice("Certificate setup needs attention", message, "Try again", "setup-ca");
     }
@@ -712,20 +790,68 @@ export class SettingsWorkspace extends WorkspaceElement {
   }
 
   async installCa(): Promise<void> {
-    const data = new FormData(this.proxyForm);
+    const certificate = this.certificateBootstrap;
+    if (
+      !certificate?.ownedCaSha256 ||
+      !this.publicCertificateAvailable ||
+      this.windowsCertificateTrusted
+    ) {
+      return;
+    }
+    const sha256 = certificate.ownedCaSha256;
+    await this.runProxyChange("certificate-setup", async () => {
+      this.setProxyOutput(
+        "Approve the Windows certificate dialog to trust the interception certificate.",
+        "progress",
+      );
+      try {
+        await invoke<void>("install_certificate", { path: certificate.caCertificatePath, sha256 });
+        if (!(await this.refreshCertificateState())?.ownedCaTrusted) {
+          throw new Error("Windows could not verify the certificate’s trust.");
+        }
+        this.setProxyOutput(
+          "Interception certificate trusted for this Windows account.",
+          "success",
+        );
+      } catch (error: unknown) {
+        await this.refreshCertificateState();
+        this.setProxyOutput(
+          `Windows certificate trust could not be set up. ${describeError(error)}`,
+          "error",
+        );
+      }
+    });
+  }
+
+  private async refreshCertificateState(): Promise<DesktopBootstrap | null> {
+    const statusRevision = this.statusRevision;
+    const certificateRevision = ++this.certificateRevision;
     try {
-      await invoke<void>("install_certificate", {
-        path: String(data.get("certificate") ?? ""),
-        sha256: String(data.get("thumbprint") ?? ""),
-      });
-      const message =
-        "The exact public CA is trusted for the current user and its SHA-256 identity will be restored after restart.";
-      this.setProxyOutput(message, "success");
-      this.diagnostic = message;
+      const bootstrap = await invoke<DesktopBootstrap>("desktop_bootstrap", { inspectCaKey: true });
+      if (this.isConnected && this.certificateRevision === certificateRevision) {
+        this.updateCertificateState(bootstrap, this.statusRevision === statusRevision);
+      }
+      return bootstrap;
     } catch (error: unknown) {
-      const message = `CA installation failed: ${describeError(error)}`;
-      this.setProxyOutput(message, "error");
-      this.diagnostic = message;
+      if (this.isConnected && this.certificateRevision === certificateRevision) {
+        this.diagnostic = `Certificate status could not be refreshed. ${describeError(error)}`;
+      }
+      return null;
+    }
+  }
+
+  async copyPublicCertificatePath(): Promise<void> {
+    if (!this.publicCertificateAvailable || !this.certificateBootstrap) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(this.certificateBootstrap.caCertificatePath);
+      this.setProxyOutput("Public certificate path copied.", "success");
+    } catch (error: unknown) {
+      this.setProxyOutput(
+        `Copy the path in Public CA certificate. ${describeError(error)}`,
+        "error",
+      );
     }
   }
 
@@ -750,14 +876,20 @@ export class SettingsWorkspace extends WorkspaceElement {
   }
 
   private async stopProxyNow(): Promise<void> {
-    this.setProxyOutput("Stopping and restoring host settings…", "progress");
+    const manual = this.activeRoutingMode === "manual";
+    this.setProxyOutput(
+      manual ? "Finishing requests…" : "Stopping and restoring host settings…",
+      "progress",
+    );
     try {
       const status = await invoke<AppStatus>("stop_application");
       this.acceptAppStatus(status);
       this.setProxyOutput(
         status.lifecycle === "draining"
-          ? "Proxy routing is off. Existing requests and active connections will finish; Start proxy resumes the same listener."
-          : "Proxy stopped and any current-user Windows proxy changes were restored.",
+          ? "Existing requests and active connections will finish. Start proxy resumes the same listener."
+          : manual
+            ? "Proxy stopped."
+            : "Proxy stopped and any current-user Windows proxy changes were restored.",
         status.lifecycle === "draining" ? "progress" : "success",
       );
     } catch (error: unknown) {
@@ -792,12 +924,13 @@ export class SettingsWorkspace extends WorkspaceElement {
       return;
     }
     const hadHttpsError = this.httpsEnableError;
+    const routingRevision = this.routingRevision;
     this.settingsBusy = true;
     this.settingsError = "";
     this.httpsEnableError = false;
     try {
       const state = await invoke<ProductState>("product_state");
-      this.populateSettings(state);
+      this.populateSettings(state, routingRevision);
       if (hadHttpsError) {
         this.setProxyOutput("HTTPS changes reverted.", "success");
       }
@@ -819,6 +952,7 @@ export class SettingsWorkspace extends WorkspaceElement {
       this.settingsForm.elements.namedItem("decryptHttps") as HTMLInputElement
     ).checked;
     const expectedDecryptHttps = this.savedDecryptHttps;
+    const routingRevision = this.routingRevision;
     const expectedProcessInspection = structuredClone(this.processInspectionEditor.baseline);
     const httpsChanged = decryptRequested !== expectedDecryptHttps;
     const enablingHttps = decryptRequested && httpsChanged;
@@ -880,8 +1014,9 @@ export class SettingsWorkspace extends WorkspaceElement {
         productState: state,
         expectedProcessInspection,
         expectedDecryptHttps,
+        preserveProxyRouting: true,
       });
-      this.populateSettings(saved);
+      this.populateSettings(saved, routingRevision);
       this.applyTheme(saved.preferences.theme, saved.workspace);
       await this.refreshBufferStatus();
       await this.refreshStatus();
@@ -896,6 +1031,9 @@ export class SettingsWorkspace extends WorkspaceElement {
       this.settingsError = "Settings save failed: " + describeError(error);
       this.httpsEnableError = enablingHttps;
       if (enablingHttps) {
+        if (!this.proxyPending) {
+          await this.refreshCertificateState();
+        }
         this.setProxyOutput(this.settingsError, "error");
       }
     } finally {
@@ -1003,7 +1141,10 @@ export class SettingsWorkspace extends WorkspaceElement {
     }
   }
 
-  private populateSettings(state: ProductState): void {
+  private populateSettings(state: ProductState, routingRevision: number): void {
+    if (routingRevision === this.routingRevision) {
+      this.applyProxyRouting(state.preferences.configureSystemProxy ?? true);
+    }
     this.settingsDirty = false;
     this.processInspectionEditor.populate(
       state.preferences.processInspection ?? { mode: "all", include: [], exclude: [] },
@@ -1019,9 +1160,7 @@ export class SettingsWorkspace extends WorkspaceElement {
       state.preferences.allowRemoteClients ?? false;
     this.decryptHttps = state.preferences.decryptHttps ?? true;
     this.savedDecryptHttps = this.decryptHttps;
-    if (this.certificateBootstrap) {
-      this.updateCertificateState(this.certificateBootstrap);
-    }
+    this.presentCertificateState();
     (elements.namedItem("decryptHttps") as HTMLInputElement).checked = this.decryptHttps;
     (elements.namedItem("isolateOutbound") as HTMLInputElement).checked =
       state.preferences.isolateOutboundConnections ?? true;
@@ -1065,6 +1204,7 @@ export class SettingsWorkspace extends WorkspaceElement {
   }
 
   private setProxyOutput(message: string, kind: "progress" | "success" | "error"): void {
+    this.proxyOutputFromCertificateBlock = false;
     this.proxyText = message;
     this.proxyKind = kind;
   }

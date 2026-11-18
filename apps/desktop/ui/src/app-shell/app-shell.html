@@ -15,14 +15,14 @@
       <if condition="!viewerMode"><div class="listener-status status" data-lifecycle="{{lifecycleKind}}" aria-live="polite">
         <span class="status-dot" aria-hidden="true"></span>
         <strong>{{lifecycleLabel}}</strong><span class="inspection-scope">{{processScopeLabel}}</span><span class="https-mode" ?hidden="{{!httpsModeLabel}}">{{httpsModeLabel}}</span>
-        <button type="button" class="listener-copy" aria-label="Copy proxy address" title="Copy proxy address" @click="{copyListener()}"><span class="listener-address">{{listener}}</span><svg class="listener-copy-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 5.5h8v8h-8zM2.5 10.5v-8h8"></path></svg></button><button type="button" class="secondary status-tools" aria-label="Proxy status and tools" title="Proxy status and tools" popovertarget="proxy-status-tools">⋯</button>
+        <button type="button" class="listener-copy" aria-label="Copy proxy address" title="Copy proxy address" @click="{copyListener()}"><span class="listener-address">{{listener}}</span><svg class="listener-copy-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 5.5h8v8h-8zM2.5 10.5v-8h8"></path></svg></button><button type="button" class="secondary status-tools" aria-label="{{routingLabel}}, routing and status" title="Proxy routing and status" popovertarget="proxy-status-tools">{{routingLabel}}</button>
       </div>
       </if><if condition="viewerMode"><strong class="viewer-mode-label">Capture viewer</strong><session-review></session-review></if>
       </div>
       <if condition="!viewerMode">
       <div class="top-actions">
         <button type="button" class="secondary update-toggle" ?hidden="{{!updateToolbarVisible}}" @click="{openAbout()}">{{updateToolbarLabel}}</button>
-        <proxy-toggle lifecycle="{{lifecycleKind}}" pending="{{proxyPending}}" ?ready="{{proxyReady}}" @toggle-proxy="{toggleProxy()}"></proxy-toggle>
+        <proxy-toggle lifecycle="{{lifecycleKind}}" pending="{{proxyPending}}" ?ready="{{proxyReady && !routingSavePending}}" @toggle-proxy="{toggleProxy()}"></proxy-toggle>
       </div>
       </if><if condition="viewerMode"><button type="button" class="secondary" @click="{openMainWindow()}">Open main window</button></if>
     </header>
@@ -32,8 +32,8 @@
         <strong>{{noticeTitleText}}</strong>
         <p>{{noticeMessageText}}</p>
       </div>
-      <button type="button" ?hidden="{{!noticeActionLabel}}" @click="{runNoticeAction()}">{{noticeActionLabel}}</button>
-      <button type="button" class="secondary tunnel-start" ?hidden="{{!noticeTunnelStart || !tunnelStartAvailable}}" ?disabled="{{proxyPending}}" @click="{startHttpsTunnels()}">Start with HTTPS tunnels</button><button type="button" class="secondary compact-button" aria-label="Dismiss notification" @click="{dismissNotice()}">Dismiss</button>
+      <button type="button" ?hidden="{{!noticeActionLabel}}" ?disabled="{{routingSavePending}}" @click="{runNoticeAction()}">{{noticeActionLabel}}</button>
+      <button type="button" class="secondary tunnel-start" ?hidden="{{!noticeTunnelStart || !tunnelStartAvailable}}" ?disabled="{{proxyPending || routingSavePending}}" @click="{startHttpsTunnels()}">Start with HTTPS tunnels</button><button type="button" class="secondary compact-button" aria-label="Dismiss notification" @click="{dismissNotice(true)}">Dismiss</button>
     </section>
 
     <div class="app-body" ?data-collapsed="{{workspace.sidebarCollapsed}}" data-debugger="{{debuggerPlacement}}" data-debugger-share="{{debuggerShare}}">
@@ -74,7 +74,7 @@
         <if condition="!viewerMode && loadedWorkspaces.automation"><automation-workspace :previewReportSetId="{{capturedPreviewState.controller.previewReportSetId}}" :previewReportAvailable="{{capturedPreviewState.controller.previewReportAvailable}}" :enabledScriptCount="{{enabledScriptCount}}" w-ref="{automation}" view="{{activeView}}" theme="{{theme}}" :selection="{{selection}}" :autoresponseState="{{autoresponseState}}" :autoresponsePending="{{autoresponsePending}}" :preferences="{{workspace}}" :preferencesReady="{{workspaceLoaded}}"></automation-workspace></if>
         <if condition="loadedWorkspaces.composer"><composer-workspace w-ref="{composer}" view="{{activeView}}" theme="{{theme}}"></composer-workspace></if>
         <if condition="!viewerMode && loadedWorkspaces.captures"><capture-workspace @traffic-files-request="{openTrafficFiles()}" view="{{activeView}}" lifecycle="{{lifecycleKind}}" @status-changed="{onCaptureStatus(e)}"></capture-workspace></if>
-        <if condition="!viewerMode"><settings-workspace w-ref="{settings}" view="{{activeView}}" @check-updates="{checkUpdates()}" @extension-debug-request="{openExtensionDebugger(e)}"></settings-workspace></if>
+        <if condition="!viewerMode"><settings-workspace w-ref="{settings}" view="{{activeView}}" @routing-changed="{onRoutingChanged(e)}" @check-updates="{checkUpdates()}" @extension-debug-request="{openExtensionDebugger(e)}"></settings-workspace></if>
         <comparison-workspace w-ref="{comparison}"></comparison-workspace>
         <if condition="!viewerMode"><response-set-intake w-ref="{responseSetIntake}"></response-set-intake></if>
         <captured-preview w-ref="{capturedPreviewSurface}" :state="{{capturedPreviewState}}"></captured-preview>
@@ -110,6 +110,9 @@
         <footer class="actions"><button type="submit">Continue</button><button type="button" class="secondary" @click="{cancelTracePassword()}">Cancel</button></footer>
       </form>
     <inspection-copy-menu></inspection-copy-menu></dialog>
-    <div id="proxy-status-tools" class="table-popover proxy-status-popover" popover="auto"><strong class="popover-title">{{lifecycleLabel}}</strong><p data-copy-text data-copy-surface tabindex="0" class="full-value">{{listener}}</p><p>{{processScopeLabel}}<span ?hidden="{{!httpsModeLabel}}"> · {{httpsModeLabel}}</span></p><p ?hidden="{{!unresolvedProcessLabel}}">{{unresolvedProcessLabel}}</p><button type="button" ?hidden="{{!tunnelStartAvailable}}" ?disabled="{{proxyPending || !proxyReady}}" @click="{startHttpsTunnels()}" popovertarget="proxy-status-tools" popovertargetaction="hide">Start with HTTPS tunnels</button><button type="button" @click="{refreshStatus()}" popovertarget="proxy-status-tools" popovertargetaction="hide">Refresh status</button><button type="button" @click="{openConnectionSettings()}" popovertarget="proxy-status-tools" popovertargetaction="hide">Connection settings</button></div>
+    <div id="proxy-status-tools" class="table-popover proxy-status-popover" popover="auto"><strong class="popover-title">{{lifecycleLabel}}</strong><p data-copy-text data-copy-surface tabindex="0" class="full-value">{{listener}}</p><p>{{processScopeLabel}}<span ?hidden="{{!httpsModeLabel}}"> · {{httpsModeLabel}}</span></p><p ?hidden="{{!unresolvedProcessLabel}}">{{unresolvedProcessLabel}}</p>
+      <label>Routing for next start <select w-ref="{routingSelect}" ?disabled="{{routingSavePending || proxyPending || !proxyReady}}" @change="{changeRouting(e)}"><option value="system" ?selected="{{configureSystemProxy}}">System proxy</option><option value="manual" ?selected="{{!configureSystemProxy}}">Manual proxy</option></select></label>
+      <if condition="activeRoutingMode == 'manual'"><p>Set the HTTP and HTTPS proxy in your app to the address above. <span ?hidden="{{!listenerOnAllInterfaces}}">From another device, use this computer’s LAN address and the same port.</span></p></if><if condition="!configureSystemProxy && activeRoutingMode != 'manual'"><p>Manual proxy leaves Windows proxy settings unchanged. Set the HTTP and HTTPS proxy in the app you want to inspect.</p></if>
+      <button type="button" ?hidden="{{!tunnelStartAvailable}}" ?disabled="{{proxyPending || routingSavePending || !proxyReady}}" @click="{startHttpsTunnels()}" popovertarget="proxy-status-tools" popovertargetaction="hide">Start with HTTPS tunnels</button><button type="button" @click="{refreshStatus()}" popovertarget="proxy-status-tools" popovertargetaction="hide">Refresh status</button><button type="button" @click="{openConnectionSettings()}" popovertarget="proxy-status-tools" popovertargetaction="hide">Connection settings</button></div>
   </div>
 </template>

@@ -133,7 +133,7 @@ with open('CONIN$', 'r') as console, open(config['log'], 'wb') as log:
                 time.sleep(.1)
             else:
                 raise AssertionError('Recorder did not start: ' + text)
-            endpoint = re.search(r'Proxy address: (127\.0\.0\.1:\d+)', text).group(1)
+            endpoint = re.search(r'^LISTEN_ADDR=(127\.0\.0\.1:\d+)$', text, re.MULTILINE).group(1)
             connection = http.client.HTTPConnection(endpoint)
             connection.request('GET', f'http://127.0.0.1:{origin.server_port}/unrelated?private=fixture',
                                headers={'Cookie': 'private-fixture-cookie'})

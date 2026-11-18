@@ -94,23 +94,21 @@ export async function checkStreams(page, root) {
   assert.equal(await page.getByLabel("Wrap cells", { exact: true }).count(), 0);
   assert.ok((await inspector.locator(".stream-row").count()) <= 100);
   assert.match(await inspector.locator(".stream-status").textContent(), /WebSocket.*open.*1,200/);
-  await page.evaluate(() => {
-    const t = document.querySelector("app-shell").traffic;
-    t.applyDetail({
-      ...t.selectedDetail,
-      stream: { ...t.selectedDetail.stream, clientBytes: null, serverBytes: 0 },
-    });
+  await page.evaluate(async () => {
+    const summary = globalThis.__workspaceFixture.streams.socket;
+    summary.clientBytes = null;
+    summary.serverBytes = 0;
+    await document.querySelector("app-shell").traffic.refreshInspection();
   });
   await inspector
     .locator(".stream-status")
     .filter({ hasText: /Sent Unavailable · Received 0 B/ })
     .waitFor();
-  await page.evaluate(() => {
-    const t = document.querySelector("app-shell").traffic;
-    t.applyDetail({
-      ...t.selectedDetail,
-      stream: { ...t.selectedDetail.stream, clientBytes: 600, serverBytes: 20000 },
-    });
+  await page.evaluate(async () => {
+    const summary = globalThis.__workspaceFixture.streams.socket;
+    summary.clientBytes = 600;
+    summary.serverBytes = 20000;
+    await document.querySelector("app-shell").traffic.refreshInspection();
   });
   assert.match(await inspector.locator(".stream-notice").first().textContent(), /5 older/);
   await inspector.locator(".stream-row").last().click();

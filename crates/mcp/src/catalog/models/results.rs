@@ -169,7 +169,7 @@ fn scope() -> Value {
 }
 fn grant() -> Value {
     object(
-        json!({"id":id(),"name":text(160),"permissions":array(choice(&["inspect","load-captures","read-bodies","read-credentials","collect","prepare-changes","edit-shared-rules","modify","send"]),9),"scope":scope(),"expiresAt":nullable(count()),"omitSensitiveValues":flag()}),
+        json!({"id":id(),"name":text(160),"permissions":array(choice(&["inspect","load-captures","read-bodies","read-credentials","collect","collect-private","prepare-changes","edit-shared-rules","modify","send"]),10),"scope":scope(),"expiresAt":nullable(count()),"omitSensitiveValues":flag()}),
         &[
             "id",
             "name",
@@ -194,7 +194,7 @@ fn disclosure() -> Value {
 }
 fn app_status() -> Value {
     object(
-        json!({"lifecycle":text(64),"listener":maybe_text(),"summary":text(4096),"hostRestorePending":flag()}),
+        json!({"lifecycle":text(64),"listener":maybe_text(),"routingMode":nullable(choice(&["system","manual"])),"summary":text(4096),"hostRestorePending":flag(),"processInspection":{"type":"object"},"httpsDecryption":nullable(flag()),"unresolvedProcessConnections":count()}),
         &["lifecycle", "listener", "summary", "hostRestorePending"],
     )
 }
@@ -300,13 +300,13 @@ pub(super) fn complete(tool: &mut ToolSpec) {
         "transmog_proxy_start" | "transmog_proxy_stop" => tool.output_schema = app_status(),
         "transmog_recording_start" => {
             tool.output_schema = object(
-                json!({"recording":flag(),"artifact":text(255)}),
+                json!({"recording":flag(),"artifact":text(255),"sessionId":id()}),
                 &["recording", "artifact"],
             );
         }
         "transmog_recording_stop" => {
             tool.output_schema = object(
-                json!({"sealed":flag(),"artifact":maybe_text()}),
+                json!({"sealed":flag(),"artifact":maybe_text(),"sessionId":id()}),
                 &["sealed", "artifact"],
             );
         }

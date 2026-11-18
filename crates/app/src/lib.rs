@@ -165,8 +165,8 @@ pub use inspector::{
     ScriptExecutionView, ScriptReportView, SessionDetail,
 };
 pub use lifecycle::{
-    CaCreateRequest, CaIdentity, ProxyRoute, ProxyStartRequest, protect_ca_private_key,
-    validate_ca_private_key,
+    CaCreateRequest, CaIdentity, ProxyRoute, ProxyStartRequest,
+    interception_certificate_thumbprint, protect_ca_private_key, validate_ca_private_key,
 };
 pub use product_state::{
     ArtifactKind, PrivacySettings, ProductPreferences, ProductState, RecentArtifact,
@@ -362,6 +362,16 @@ pub enum AppLifecycle {
     Failed,
 }
 
+/// How clients reach an owned proxy run.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ProxyRoutingMode {
+    /// Windows routes traffic through this listener.
+    System,
+    /// Clients are configured individually.
+    Manual,
+}
+
 /// Bounded status read model returned to every presentation layer.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -370,6 +380,8 @@ pub struct AppStatus {
     pub lifecycle: AppLifecycle,
     /// Bound listener endpoint, when one exists.
     pub listener: Option<String>,
+    /// Routing selected when the owned run started.
+    pub routing_mode: Option<ProxyRoutingMode>,
     /// Operator-safe status summary.
     pub summary: String,
     /// Whether exact host restoration remains pending.
@@ -477,6 +489,7 @@ pub struct Application {
     response_set_operation: Arc<std::sync::Mutex<()>>,
     service: ApplicationSessionService,
     runtime_ids: Arc<transmog_runtime::AtomicRuntimeIdGenerator>,
+    runtime_limits: Option<transmog_runtime::RuntimeLimits>,
     cursors: Arc<std::sync::Mutex<sessions::CursorRegistry>>,
     breakpoints: breakpoints::BreakpointManager,
     composer: composer::ComposerManager,
@@ -672,6 +685,7 @@ impl Application {
             response_set_operation: Arc::new(std::sync::Mutex::new(())),
             service: service.clone(),
             runtime_ids: Arc::new(transmog_runtime::AtomicRuntimeIdGenerator::new()),
+            runtime_limits: None,
             cursors: Arc::new(std::sync::Mutex::new(sessions::CursorRegistry::default())),
             breakpoints: breakpoints::BreakpointManager::new(service, build_id),
             composer: composer::ComposerManager::with_protocols(
@@ -846,6 +860,31 @@ impl Application {
     /// Later requests from a reopened owning window remain usable.
     pub fn cancel_composer_requests(&self) {
         self.composer.cancel_all();
+    }
+
+    /// Saves the routing preference for the next fresh listener.
+    ///
+    /// # Errors
+    /// Returns a persistence failure without changing the previous preference.
+    pub fn save_proxy_routing(&self, configure_system_proxy: bool) -> Result<(), AppError> {
+        let _operation = self
+            .product_settings_operation
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.product_state
+            .save_proxy_routing(configure_system_proxy)
+    }
+
+    /// Saves window geometry without republishing proxy settings or other desktop state.
+    ///
+    /// # Errors
+    /// Returns a bounded validation or persistence error.
+    pub fn save_window_state(&self, window: WindowState) -> Result<(), AppError> {
+        let _operation = self
+            .product_settings_operation
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.product_state.save_window_state(window)
     }
 
     /// Saves non-sensitive workspace presentation without overwriting other settings.
@@ -1643,7 +1682,8 @@ impl Application {
     /// Returns a bounded point-in-time lifecycle read model.
     pub fn status(&self) -> AppStatus {
         let pending = self.service.has_pending_host_restore();
-        let (lifecycle, listener, summary) = match self.service.status() {
+        let (service_status, uses_host) = self.service.status_with_host_integration();
+        let (lifecycle, listener, summary) = match service_status {
             ServiceStatus::Stopped => (AppLifecycle::Stopped, None, "Proxy stopped".to_owned()),
             ServiceStatus::Running { local_addr } => (
                 AppLifecycle::Running,
@@ -1651,12 +1691,21 @@ impl Application {
                 "Proxy listening".to_owned(),
             ),
             ServiceStatus::Draining { local_addr } => {
+                let progress = if uses_host == Some(true) {
+                    "Proxy routing off"
+                } else {
+                    "Finishing requests"
+                };
                 let summary = self.service.proxy_control().map_or_else(
-                    || "Proxy routing off".to_owned(),
+                    || progress.to_owned(),
                     |control| {
                         let activity = control.activity();
-                        format!("Proxy routing off · {} requests · {} WebSockets open · {} other connections",
-                            activity.requests, activity.websockets, activity.transports.saturating_sub(activity.websockets))
+                        format!(
+                            "{progress} · {} requests · {} WebSockets open · {} other connections",
+                            activity.requests,
+                            activity.websockets,
+                            activity.transports.saturating_sub(activity.websockets)
+                        )
                     },
                 );
                 (
@@ -1683,6 +1732,13 @@ impl Application {
         AppStatus {
             lifecycle,
             listener,
+            routing_mode: uses_host.map(|uses_host| {
+                if uses_host {
+                    ProxyRoutingMode::System
+                } else {
+                    ProxyRoutingMode::Manual
+                }
+            }),
             summary,
             host_restore_pending: pending,
             process_inspection: control.as_ref().map_or_else(
@@ -1759,7 +1815,23 @@ impl Application {
         request: ProxyStartRequest,
         host: Option<Arc<dyn HostIntegration>>,
     ) -> Result<AppStatus, AppError> {
-        self.start_proxy_with_https_mode(request, host, None).await
+        self.start_proxy_with_https_mode(request, host, None, None)
+            .await
+    }
+
+    /// Checks the expected SHA-256 fingerprint against the CA loaded by a new decrypting listener.
+    /// A draining listener resumes with its existing certificate.
+    ///
+    /// # Errors
+    /// Returns a certificate identity mismatch or any [`Self::start_proxy`] error.
+    pub async fn start_proxy_with_expected_ca(
+        &self,
+        request: ProxyStartRequest,
+        host: Option<Arc<dyn HostIntegration>>,
+        expected_ca: &str,
+    ) -> Result<AppStatus, AppError> {
+        self.start_proxy_with_https_mode(request, host, None, Some(expected_ca))
+            .await
     }
 
     /// Persists the explicit certificate-free choice and starts a new opaque HTTPS run.
@@ -1771,7 +1843,7 @@ impl Application {
         request: ProxyStartRequest,
         host: Option<Arc<dyn HostIntegration>>,
     ) -> Result<AppStatus, AppError> {
-        self.start_proxy_with_https_mode(request, host, Some(false))
+        self.start_proxy_with_https_mode(request, host, Some(false), None)
             .await
     }
 
@@ -1780,6 +1852,7 @@ impl Application {
         request: ProxyStartRequest,
         host: Option<Arc<dyn HostIntegration>>,
         https_mode: Option<bool>,
+        expected_ca: Option<&str>,
     ) -> Result<AppStatus, AppError> {
         let _profile_operation = self.network_profile_operation.lock().await;
         if https_mode.is_some()
@@ -1829,6 +1902,7 @@ impl Application {
                 }),
                 service: &self.service,
                 runtime_ids: Arc::clone(&self.runtime_ids),
+                runtime_limits: self.runtime_limits.clone(),
                 body_store: self.body_store.as_ref(),
                 automation: self.automation.clone(),
                 scripts: self.scripts.clone(),
@@ -1836,6 +1910,7 @@ impl Application {
             },
             request,
             host,
+            expected_ca,
         )
         .await;
         self.diagnostics.record(
@@ -3112,6 +3187,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn saving_window_geometry_preserves_the_latest_proxy_routing() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("preferences");
+        let make_app = || {
+            Application::new(AppConfig {
+                product_state_path: Some(path.clone()),
+                ..AppConfig::default()
+            })
+            .unwrap()
+        };
+        let app = make_app();
+        let mut closing_snapshot = app.product_state();
+        assert!(closing_snapshot.preferences.configure_system_proxy);
+        closing_snapshot.window.width = 960;
+        app.save_proxy_routing(false).unwrap();
+
+        app.save_window_state(closing_snapshot.window).unwrap();
+
+        let reopened = make_app().product_state();
+        assert_eq!(reopened.window.width, 960);
+        assert!(!reopened.preferences.configure_system_proxy);
+    }
+
+    #[test]
     fn live_entry_preference_persists_and_is_applied_after_restart() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("preferences");
@@ -3177,6 +3276,7 @@ mod tests {
                 host_restore_pending: false,
                 process_inspection: ProcessInspectionPolicy::default(),
                 https_decryption: None,
+                routing_mode: None,
                 unresolved_process_connections: 0,
             }
         );

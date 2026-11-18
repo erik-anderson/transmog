@@ -524,6 +524,28 @@ impl ProductStateManager {
         Ok((state, prepared))
     }
 
+    pub(crate) fn save_proxy_routing(&self, configure_system_proxy: bool) -> Result<(), AppError> {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.state.preferences.configure_system_proxy != configure_system_proxy {
+            let mut next = inner.state.clone();
+            next.preferences.configure_system_proxy = configure_system_proxy;
+            self.persist(&mut inner, &next)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn save_window_state(&self, window: WindowState) -> Result<(), AppError> {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.state.window != window {
+            let state = validate(ProductState {
+                window,
+                ..inner.state.clone()
+            })?;
+            self.persist(&mut inner, &state)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn save_workspace(
         &self,
         mut preferences: WorkspacePreferences,

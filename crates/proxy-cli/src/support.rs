@@ -41,7 +41,6 @@ pub(crate) async fn record(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     let encoding = transmog_capture::CaptureEncoding {
         password: crate::passwords::output(arguments)?,
     };
-    let circular_recording = circular_output.is_some();
     let ledger = RootLedger::open(state_directory()?)?;
     let trust = SystemRootTrust;
     let (redact, request_body_limit) = recording_preferences(original, &ledger, profile.as_ref())?;
@@ -66,7 +65,9 @@ pub(crate) async fn record(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         crate::option(arguments, "--duration").unwrap_or("manual stop")
     );
     #[cfg(windows)]
-    recover_proxy(&ledger)?;
+    if !crate::arguments::has_flag(arguments, "--no-system-proxy") {
+        recover_proxy(&ledger)?;
+    }
     println!("Capture file: {}", output.display());
     let decrypt_https = crate::inspection::decrypt_https(arguments);
     crate::inspection::print_policy(
@@ -83,14 +84,7 @@ pub(crate) async fn record(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     };
     if !decrypt_https {
         println!("Certificate setup: not used; HTTPS decryption is disabled for this run.");
-        let result = run_capture(arguments, &output, &ledger, None, None, options).await;
-        if result.is_err() && !circular_recording && output.is_file() {
-            eprintln!(
-                "Capture did not finish cleanly. The native evidence remains at {} for recovery.",
-                output.display()
-            );
-        }
-        result?;
+        run_capture(arguments, &output, &ledger, None, None, options).await?;
         println!("Trace saved: {}", output.display());
         println!(
             "Open it in Transmog to review it, then share this file with your support contact."
@@ -109,7 +103,7 @@ pub(crate) async fn record(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         if persistent {
             "persistent; reused on future --persistent-root runs"
         } else {
-            "ephemeral; its private key stays in memory and its trust is removed afterward"
+            "ephemeral; its private key stays in memory"
         }
     );
     let result = run_capture(arguments, &output, &ledger, Some(&root), Some(ca), options).await;
@@ -126,7 +120,7 @@ pub(crate) async fn record(arguments: &[String]) -> Result<(), Box<dyn Error>> {
         );
         Ok(())
     } else {
-        println!("Removing this capture's trusted root. Approve the OS removal prompt if shown.");
+        println!("Cleaning up this capture's certificate.");
         ledger.cleanup(&root, &trust)
     };
     if let Err(error) = &cleanup {
@@ -135,21 +129,25 @@ pub(crate) async fn record(arguments: &[String]) -> Result<(), Box<dyn Error>> {
             ledger.directory().display()
         );
     }
-    if ledger.cleanup_pending(&trust, Some(&root.sha256))? > 0 {
-        eprintln!(
+    let previous_cleanup = ledger.cleanup_pending(&trust, Some(&root.sha256)).map_err(|error| {
+        io::Error::new(error.kind(), format!(
+            "Could not check previous or rotated roots for cleanup: {error}. See the recovery files at {}.",
+            ledger.directory().display()
+        ))
+    });
+    // Report secondary failures here when an earlier error owns the exit status.
+    match &previous_cleanup {
+        Ok(pending) if *pending > 0 => eprintln!(
             "Previous or rotated roots still need cleanup. Run transmog-cli roots cleanup; public recovery records are retained."
-        );
-    }
-    if result.is_err() && !circular_recording && output.is_file() {
-        eprintln!(
-            "Capture did not finish cleanly. The native evidence remains at {} for recovery.",
-            output.display()
-        );
+        ),
+        Err(error) if result.is_err() || cleanup.is_err() => eprintln!("{error}"),
+        _ => {}
     }
     result?;
     println!("Trace saved: {}", output.display());
     println!("Open it in Transmog to review it, then share this file with your support contact.");
     cleanup?;
+    previous_cleanup?;
     println!("Certificate cleanup: completed (or explicitly retained persistent trust).");
     Ok(())
 }
@@ -369,13 +367,13 @@ async fn run_capture(
         false,
         None,
         false,
-    )
-    .await?;
+    )?;
     components =
         components.with_observer(health.clone(), crate::support_recording::health_config());
     if let Some(circular) = &circular {
         components = components.with_observer(circular.clone(), circular.config());
     }
+    let mut interrupts = crate::interrupts::register()?;
     let proxy = ProxyServer::bind_with_components(
         config,
         crate::load_upstream_trust(arguments)?,
@@ -393,38 +391,70 @@ async fn run_capture(
             })
             .await?;
     }
-    let endpoint = start_owned_proxy(arguments, ledger, &service, proxy).await?;
-    println!("Proxy address: {endpoint}");
-    #[cfg(not(windows))]
-    println!(
-        "Set your application's HTTP and HTTPS proxy to this address. Remove that setting after recording."
-    );
+    let started = start_owned_proxy(arguments, ledger, &service, proxy).await;
+    if started.is_err() && circular.is_none() {
+        match service.stop_capture().await {
+            Ok(setup) => eprintln!(
+                "The proxy did not start. A trace containing setup metadata was sealed at {}.",
+                setup.path.display()
+            ),
+            Err(error) => {
+                eprintln!("Could not seal the setup capture. {error}");
+                report_recoverable_native_capture(&service.capture().status());
+            }
+        }
+    }
+    let endpoint = started?;
+    let (_, uses_system_proxy) = service.status_with_host_integration();
+    println!("LISTEN_ADDR={endpoint}");
+    if uses_system_proxy == Some(true) {
+        println!("Proxy address: {endpoint}");
+    } else {
+        println!("{}", crate::manual_proxy_address_instructions(endpoint));
+        println!("Remove that setting from the application after recording.");
+    }
     println!("Recording. Reproduce the issue, then press Ctrl+C once to stop and save the trace.");
     println!(
         "Recording started: UTC {} ms since the Unix epoch. Health updates every 10 seconds.",
         transmog_capture::support::unix_millis()
     );
+    let running = wait_for_stop(
+        &service,
+        circular.as_deref(),
+        health.as_ref(),
+        run_id,
+        crate::option(arguments, "--duration").and_then(|v| v.parse::<u64>().ok()),
+        &mut interrupts,
+    )
+    .await;
     let result = finish_capture(
         &service,
         circular.as_deref(),
         circular_output,
         native,
-        health.as_ref(),
-        run_id,
-        crate::option(arguments, "--duration").and_then(|v| v.parse::<u64>().ok()),
+        running,
     )
     .await;
     health.print_summary(circular.as_ref().map_or(0, |c| c.evicted()));
-    let sealed = matches!(service.capture().status(), CaptureStatus::Sealed(_))
+    let capture_status = service.capture().status();
+    if result.is_err() && circular.is_none() {
+        report_recoverable_native_capture(&capture_status);
+    }
+    let sealed = matches!(capture_status, CaptureStatus::Sealed(_))
         || circular.as_ref().is_some_and(|c| c.published());
     println!("File sealed: {sealed}. Destination: {}", native.display());
+    if uses_system_proxy == Some(true) {
+        println!(
+            "Routing restoration: {}.",
+            if service.has_pending_host_restore() {
+                "pending; see recovery details"
+            } else {
+                "complete"
+            },
+        );
+    }
     println!(
-        "Routing restoration: {}. Recording stop: {}.",
-        if service.has_pending_host_restore() {
-            "pending; see recovery details"
-        } else {
-            "complete (or no owned change)"
-        },
+        "Recording stop: {}.",
         if result.is_ok() {
             "completed"
         } else {
@@ -439,11 +469,8 @@ async fn finish_capture(
     circular: Option<&crate::circular::CircularObserver>,
     circular_output: Option<crate::output::PendingOutput>,
     native: &Path,
-    health: &crate::support_recording::Health,
-    run_id: String,
-    duration: Option<u64>,
+    running: io::Result<()>,
 ) -> Result<(), Box<dyn Error>> {
-    let running = wait_for_stop(service, circular, health, run_id, duration).await;
     // Ensure failures still flush the recoverable prefix and restore owned host state.
     let stopped = service.stop().await;
     if let Some(circular) = circular {
@@ -467,23 +494,29 @@ async fn finish_capture(
     }
     running?;
     stopped?;
-    verify_sealed(service, native)
+    verify_sealed(service)
 }
 
-fn verify_sealed(service: &ApplicationSessionService, native: &Path) -> Result<(), Box<dyn Error>> {
-    match service.capture().status() {
-        CaptureStatus::Sealed(_) => {}
-        CaptureStatus::Failed(failure) => {
-            return Err(io::Error::other(format!(
-                "Capture failed: {}. A recoverable native prefix remains at {}",
-                failure.message,
-                native.display()
-            ))
-            .into());
-        }
-        _ => return Err(io::Error::other("The capture did not seal successfully").into()),
+fn report_recoverable_native_capture(status: &CaptureStatus) {
+    let path = match status {
+        CaptureStatus::Active { path, .. } => Some(path.as_path()),
+        CaptureStatus::Failed(failure) => failure.path.as_deref(),
+        _ => None,
+    };
+    if let Some(path) = path.filter(|path| path.is_file()) {
+        eprintln!(
+            "Capture did not finish cleanly. The native evidence remains at {} for recovery.",
+            path.display()
+        );
     }
-    Ok::<(), Box<dyn Error>>(())
+}
+
+fn verify_sealed(service: &ApplicationSessionService) -> Result<(), Box<dyn Error>> {
+    match service.capture().status() {
+        CaptureStatus::Sealed(_) => Ok(()),
+        CaptureStatus::Failed(failure) => Err(io::Error::other(failure.message).into()),
+        _ => Err(io::Error::other("The capture did not seal successfully").into()),
+    }
 }
 
 async fn start_owned_proxy(
@@ -497,7 +530,7 @@ async fn start_owned_proxy(
     let endpoint;
     #[cfg(windows)]
     {
-        if arguments.iter().any(|arg| arg == "--no-system-proxy") {
+        if crate::arguments::has_flag(arguments, "--no-system-proxy") {
             endpoint = service.start(proxy).await?;
         } else {
             let host = Arc::new(transmog_host_windows::WindowsProxyIntegration::system(
@@ -577,6 +610,7 @@ async fn wait_for_stop(
     health: &crate::support_recording::Health,
     run_id: String,
     duration: Option<u64>,
+    interrupts: &mut crate::interrupts::Interrupts,
 ) -> io::Result<()> {
     use transmog_capture::support::{IncidentMarker, MAX_MARKERS, MarkerOrigin};
     let mut input = crate::support_recording::MarkerInput::start();
@@ -587,6 +621,12 @@ async fn wait_for_stop(
         std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<IncidentMarker>> + '_>>,
     > = None;
     let mut last_health = std::time::Instant::now();
+    let (_, uses_system_proxy) = service.status_with_host_integration();
+    let stop_message = if uses_system_proxy == Some(true) {
+        "Restoring proxy settings, then finishing active requests and saving the recording."
+    } else {
+        "Finishing active requests and saving the recording."
+    };
     let mut tick = tokio::time::interval(Duration::from_millis(250));
     loop {
         if stopping && service.status() == ServiceStatus::Stopped && pending.is_none() {
@@ -594,13 +634,13 @@ async fn wait_for_stop(
             return Ok(());
         }
         tokio::select! {
-            signal = tokio::signal::ctrl_c() => {
+            signal = crate::interrupts::wait(interrupts) => {
                 signal?;
                 input.stop();
                 if stopping {
                     service.stop_now().await.map_err(io::Error::other)?;
                 } else {
-                    println!("Stopping capture: restoring proxy settings, then finishing active requests. Press Ctrl+C again to stop waiting (unfinished requests will be incomplete).");
+                    println!("{stop_message} Press Ctrl+C again to stop waiting (unfinished requests will be incomplete).");
                     stopping = true;
                     service.begin_drain().await.map_err(io::Error::other)?;
                 }
@@ -637,7 +677,7 @@ async fn wait_for_stop(
                         } else { eprintln!("Use m then Enter, or m followed by a short incident note."); }
                     }
                     if duration.is_some_and(|seconds| began.elapsed() >= Duration::from_secs(seconds)) {
-                        println!("Requested duration reached. Stopping capture: restoring proxy settings, then finishing active requests. Press Ctrl+C again to stop waiting.");
+                        println!("Requested duration reached. {stop_message} Press Ctrl+C to stop waiting.");
                         input.stop(); stopping = true;
                         service.begin_drain().await.map_err(io::Error::other)?;
                     }

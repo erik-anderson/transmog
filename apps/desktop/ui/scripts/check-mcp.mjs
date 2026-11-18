@@ -36,6 +36,7 @@ export async function checkMcp(page, root) {
     "View request details",
     "Load capture files",
     "Control collection",
+    "Start private listeners",
     "Prepare changes",
     "Edit shared rules",
     "Change live traffic",
@@ -51,6 +52,19 @@ export async function checkMcp(page, root) {
   );
   await editor.getByLabel("Control collection", { exact: true }).uncheck();
   assert.equal(await editor.getByLabel("Allow all", { exact: true }).isChecked(), false);
+  const scope = editor.getByLabel("Traffic scope", { exact: true });
+  const privateListeners = editor.getByLabel("Start private listeners", { exact: true });
+  await scope.selectOption("requests");
+  await editor.getByText("A new listener needs All traffic or Specific hosts.").waitFor();
+  assert.equal(await privateListeners.isDisabled(), true);
+  assert.equal(await privateListeners.isChecked(), false);
+  await editor.getByLabel("Allow all", { exact: true }).check();
+  assert.equal(await privateListeners.isChecked(), false);
+  await scope.selectOption("hosts");
+  assert.equal(await privateListeners.isEnabled(), true);
+  assert.equal(await privateListeners.isChecked(), false);
+  await privateListeners.check();
+  await editor.getByLabel("Control collection", { exact: true }).uncheck();
   assert.equal(
     await editor.locator('input[name="read-bodies"], input[name="read-credentials"]').count(),
     0,
@@ -151,9 +165,30 @@ export async function checkMcp(page, root) {
   });
   await checkConnectionIndicator(page, root);
   await checkSensitiveApprovals(page, root, panel);
+  const updatesBefore = await page.evaluate(() => {
+    const fixture = globalThis.__workspaceFixture;
+    fixture.mcp.grants[0].scope = {
+      kind: "requests",
+      ids: ["first"],
+      instanceId: fixture.mcp.instanceId,
+    };
+    fixture.emitNative("mcp-access-changed");
+    return fixture.calls.mcp_update_key ?? 0;
+  });
+  await row.getByText(/1 selected requests/).waitFor();
+  assert.equal(await row.getByText(/Start private listeners/).count(), 0);
   await row.getByRole("button", { name: "Edit permissions…", exact: true }).click();
   const edit = panel.getByRole("dialog", { name: "Edit agent permissions", exact: true });
   assert.equal(await edit.getByLabel("Edit shared rules", { exact: true }).isChecked(), true);
+  assert.equal(
+    await edit.getByLabel("Start private listeners", { exact: true }).isDisabled(),
+    true,
+  );
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.calls.mcp_update_key ?? 0),
+    updatesBefore,
+    "Opening a legacy grant must not rewrite it",
+  );
   await edit.getByLabel("Name", { exact: true }).fill("Human and agent collaboration");
   await page.evaluate(() => {
     globalThis.__workspaceFixture.mcpFailure =
@@ -252,6 +287,28 @@ async function checkInspectionSessions(page, root) {
         agentAccessEnded: false,
         needsHumanAction: false,
       },
+      {
+        sessionId: "listener-1",
+        name: "Local client debugging",
+        ownerName: "Investigation agent",
+        captureCount: 0,
+        liveSubscribed: false,
+        agentAccessEnded: false,
+        needsHumanAction: false,
+        listener: { endpoint: "127.0.0.1:49153", lifecycle: "running", recordingState: "active" },
+      },
+      ...["recoverable-prefix.tmcap", null].map((recordingArtifact, index) => ({
+        sessionId: `failed-${index}`,
+        name: `Failed capture ${index + 1}`,
+        ownerName: "Investigation agent",
+        captureCount: 0,
+        listener: {
+          endpoint: null,
+          lifecycle: "stopped",
+          recordingState: "failed",
+          recordingArtifact,
+        },
+      })),
     ];
     state.mcpCapturePasswords = [
       {
@@ -276,6 +333,18 @@ async function checkInspectionSessions(page, root) {
       path: resolve(root, `../../../target/ui-check/mcp-sessions-${width}.png`),
     });
   }
+  const listener = panel.locator("article").filter({ hasText: "Local client debugging" });
+  await listener.getByText(/Private listener.*127\.0\.0\.1:49153.*Recording/).waitFor();
+  await listener.getByRole("button", { name: "Copy proxy address", exact: true }).click();
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), "127.0.0.1:49153");
+  await listener.getByRole("button", { name: "Stop listener", exact: true }).click();
+  await listener.getByText(/Private listener.*stopped/).waitFor();
+  await listener.getByText("Recording saved · local-client.tmcap").waitFor();
+  await panel.getByText("2 imported captures").waitFor();
+  await panel.getByText(/Recoverable recording prefix recoverable-prefix\.tmcap/).waitFor();
+  await panel.getByText("Recording failed", { exact: true }).waitFor();
+  await listener.getByRole("button", { name: "End session", exact: true }).click();
+  await listener.waitFor({ state: "detached" });
   await panel
     .getByLabel("Capture password", { exact: true })
     .fill("password for the cancelled job");
@@ -306,7 +375,11 @@ async function checkInspectionSessions(page, root) {
   await panel.getByRole("button", { name: "Continue loading", exact: true }).click();
   await page.waitForFunction(() => globalThis.__workspaceFixture.capturePasswordSubmitted);
   assert.equal(await panel.locator('input[type="password"]').count(), 0);
-  await panel.getByRole("button", { name: "Review", exact: true }).click();
+  await panel
+    .locator("article")
+    .filter({ hasText: "Investigating authentication retries" })
+    .getByRole("button", { name: "Review", exact: true })
+    .click();
   assert.equal(
     await page.evaluate(() => globalThis.__workspaceFixture.reviewedSession),
     "private-1",

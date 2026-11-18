@@ -11,6 +11,7 @@ type Permission =
   | "load-captures"
   | "read-bodies"
   | "collect"
+  | "collect-private"
   | "prepare-changes"
   | "edit-shared-rules"
   | "modify"
@@ -83,6 +84,7 @@ const labels: Record<Operation, string> = {
   inspect: "View request details",
   "load-captures": "Load capture files",
   collect: "Control collection",
+  "collect-private": "Start private listeners",
   "prepare-changes": "Prepare changes",
   "edit-shared-rules": "Edit shared rules",
   modify: "Change live traffic",
@@ -215,13 +217,13 @@ export class McpSettings extends WorkspaceElement {
     this.mcpRows = status.grants.map((grant) => ({
       ...grant,
       omitSensitiveValues: this.redacted(grant),
-      permissionText: grant.permissions
-        .filter((permission): permission is Operation => permission in labels)
+      permissionText: this.eligiblePermissions(grant.scope.kind)
+        .filter((permission) => grant.permissions.includes(permission))
         .map((permission) => labels[permission])
         .join(" · "),
       scopeText:
         grant.scope.kind === "all"
-          ? "All traffic in the main workspace"
+          ? "All traffic"
           : grant.scope.kind === "hosts"
             ? grant.scope.hosts.join(", ") + " · any port"
             : `${grant.scope.ids.length} selected requests${grant.scope.instanceId === status.instanceId ? "" : " · previous app run"}`,
@@ -329,6 +331,7 @@ export class McpSettings extends WorkspaceElement {
       this.field(permission).checked = grant.permissions.includes(permission);
     }
     this.mcpScopeKind = grant.scope.kind;
+    this.syncPrivateListenerPermission();
     this.field("scope").value = grant.scope.kind;
     this.field("hosts").value = grant.scope.kind === "hosts" ? grant.scope.hosts.join("\n") : "";
     this.selectionIds = grant.scope.kind === "requests" ? [...grant.scope.ids] : [];
@@ -346,8 +349,9 @@ export class McpSettings extends WorkspaceElement {
     this.changed();
   }
   changed(): void {
-    this.updateAllowAll();
     this.mcpScopeKind = this.field("scope").value;
+    this.syncPrivateListenerPermission();
+    this.updateAllowAll();
     try {
       this.mcpDirty = !this.mcpEditingId || JSON.stringify(this.input()) !== this.original;
     } catch {
@@ -374,7 +378,7 @@ export class McpSettings extends WorkspaceElement {
       name: String(data.get("name") ?? ""),
       // Sensitive capabilities are internal; the redaction switch controls their use.
       permissions: [
-        ...(Object.keys(labels) as Operation[]).filter((permission) => data.has(permission)),
+        ...this.eligiblePermissions(kind).filter((permission) => data.has(permission)),
         "read-bodies",
         "read-credentials",
       ],
@@ -497,14 +501,24 @@ export class McpSettings extends WorkspaceElement {
       !grant.permissions.includes("read-credentials")
     );
   }
+  private eligiblePermissions(scope = this.mcpScopeKind): Operation[] {
+    return (Object.keys(labels) as Operation[]).filter(
+      (permission) => scope !== "requests" || permission !== "collect-private",
+    );
+  }
+  private syncPrivateListenerPermission(): void {
+    if (this.mcpScopeKind === "requests") {
+      this.field("collect-private").checked = false;
+    }
+  }
   private updateAllowAll(): void {
-    this.mcpAllowAll = (Object.keys(labels) as Operation[]).every(
+    this.mcpAllowAll = this.eligiblePermissions().every(
       (permission) => this.field(permission).checked,
     );
   }
   allowAll(event: Event): void {
     const checked = (event.target as HTMLInputElement).checked;
-    for (const permission of Object.keys(labels) as Operation[]) {
+    for (const permission of this.eligiblePermissions()) {
       this.field(permission).checked = checked;
     }
     this.changed();

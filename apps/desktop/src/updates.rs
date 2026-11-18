@@ -14,7 +14,7 @@ use std::{
 use serde::Serialize;
 use tauri::{AppHandle, ipc::Channel};
 use tauri_plugin_updater::{Update, UpdaterExt};
-use transmog_app::{AppLifecycle, AppStatus, Application};
+use transmog_app::{AppLifecycle, AppStatus, Application, ProxyRoutingMode};
 
 use crate::update_policy::ReminderStore;
 
@@ -54,7 +54,9 @@ fn current_message(channel: &str) -> String {
 }
 
 fn active_proxy(status: &AppStatus) -> Option<tauri::Url> {
-    if status.lifecycle != AppLifecycle::Running {
+    if status.lifecycle != AppLifecycle::Running
+        || status.routing_mode != Some(ProxyRoutingMode::System)
+    {
         return None;
     }
     let mut address: SocketAddr = status.listener.as_ref()?.parse().ok()?;

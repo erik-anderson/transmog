@@ -118,11 +118,24 @@ macOS requires access to the user's Keychain. A failed protection step retains a
 existing key for retry. CLI root cleanup deletes its external wrapping secret
 along with the key file; ephemeral CLI roots continue to keep keys only in memory.
 
+Desktop startup and live HTTPS enablement check that the certificate is a
+currently valid CA and matches its private key. Manual proxy can use this CA
+when Windows trust status is unavailable. The target app still needs to trust
+the public certificate. System proxy requires verified current-user trust.
+
+Desktop certificate setup, startup, and live HTTPS enablement use the recorded
+SHA-256 identity. System proxy checks Windows trust for that identity, and each
+new decrypting listener checks the fingerprint of the certificate it loads.
+If the managed files contain a different CA, Settings offers the existing reset
+flow.
+
 When Windows DPAPI cannot decrypt the saved key, the desktop explains that the
 key is unlikely to be recoverable and offers **Reset certificate and set up
 again**. This explicit flow removes only the recorded root from current-user
-trust, deletes its files, then creates a protected replacement and asks Windows
-to trust it. Canceling or failure to remove the old root leaves its material and
+trust, deletes its files and creates a protected replacement. System proxy
+setup then asks Windows to trust the replacement. In Manual proxy, choose
+**Trust for my Windows account…** or configure the app with the copied public
+certificate path. Canceling or failure to remove the old root leaves its material and
 ownership record intact; a failed trust prompt leaves the replacement available
 for another setup attempt.
 

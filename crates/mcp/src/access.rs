@@ -35,6 +35,8 @@ pub enum Permission {
     ReadBodies,
     /// Start and stop the shared proxy and recording.
     Collect,
+    /// Start and stop independently owned loopback listeners and recordings.
+    CollectPrivate,
     /// Prepare and test disabled modifications.
     PrepareChanges,
     /// Edit shared saved rules, preserving newer human revisions. Reading requires no separate permission.
@@ -387,6 +389,16 @@ impl AccessManager {
                 .map(|item| item.grant.clone())
                 .collect(),
         }
+    }
+
+    #[cfg(feature = "desktop")]
+    pub(crate) fn unrevoked_key_ids(&self) -> BTreeSet<String> {
+        self.lock()
+            .records
+            .iter()
+            .filter(|item| !item.grant.revoked)
+            .map(|item| item.grant.id.clone())
+            .collect()
     }
 
     /// Watches authority changes so active work can recheck or cancel.

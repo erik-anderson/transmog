@@ -7,7 +7,7 @@ use std::sync::Arc;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::Serialize;
 use thiserror::Error;
-use transmog_app::{AppLifecycle, AppStatus};
+use transmog_app::{AppLifecycle, AppStatus, ProxyRoutingMode};
 use webui_handler::plugin::webui::WebUIHydrationPlugin;
 use webui_handler::{Protocol, RenderOptions, ResponseWriter, WebUIHandler};
 
@@ -18,6 +18,10 @@ const DOCUMENT_CSP_SUFFIX: &str = "'; worker-src 'self'; style-src 'self' 'unsaf
 /// Complete bounded state used to render the application shell.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "The bootstrap view carries independent display flags."
+)]
 pub struct ShellView {
     /// Dedicated debugger surface with native scoped commands.
     pub debugger_mode: bool,
@@ -39,6 +43,12 @@ pub struct ShellView {
     pub lifecycle_kind: &'static str,
     /// Current listener or a safe inactive placeholder.
     pub listener: String,
+    /// Saved routing choice when starting a new listener.
+    pub configure_system_proxy: bool,
+    /// Routing used by the currently owned run.
+    pub active_routing_mode: Option<ProxyRoutingMode>,
+    /// Routing label shown beside the active listener.
+    pub routing_label: &'static str,
     /// Compact effective process selection beside proxy lifecycle.
     pub process_scope_label: String,
     /// Effective opaque HTTPS mode, empty when no owned tunnel run exists.
@@ -70,6 +80,13 @@ impl From<&AppStatus> for ShellView {
                 .listener
                 .clone()
                 .unwrap_or_else(|| "Not listening".to_owned()),
+            configure_system_proxy: true,
+            active_routing_mode: status.routing_mode,
+            routing_label: if status.routing_mode == Some(ProxyRoutingMode::Manual) {
+                "Manual proxy"
+            } else {
+                "System proxy"
+            },
             process_scope_label: match status.process_inspection.mode {
                 transmog_app::ProcessInspectionMode::All => "All processes".to_owned(),
                 transmog_app::ProcessInspectionMode::Only => {
@@ -206,6 +223,12 @@ impl AppRenderer {
         ))
         .map_err(|error| UiError::State(error.to_string()))?;
         state["cspNonce"] = serde_json::Value::String(nonce.clone());
+        state["connectionUsesSystemProxy"] = serde_json::Value::Bool(
+            view.active_routing_mode
+                .map_or(view.configure_system_proxy, |mode| {
+                    mode == ProxyRoutingMode::System
+                }),
+        );
         state
             .as_object_mut()
             .expect("initial client state is an object")
@@ -268,6 +291,7 @@ mod tests {
         AppStatus {
             lifecycle: AppLifecycle::Stopped,
             listener: None,
+            routing_mode: None,
             summary: "Proxy stopped".to_owned(),
             host_restore_pending: false,
             process_inspection: transmog_app::ProcessInspectionPolicy::default(),

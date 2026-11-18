@@ -57,6 +57,7 @@ struct Runtime {
 /// Shared operations for one main workspace. Runtime control handles never outlive this instance.
 pub struct AgentApplication {
     session_id: String,
+    private_listener: bool,
     parent: Option<std::sync::Weak<AgentApplication>>,
     own: std::sync::OnceLock<std::sync::Weak<AgentApplication>>,
     sessions: sessions::Registry,
@@ -68,7 +69,7 @@ pub struct AgentApplication {
     root: PathBuf,
     instance_id: String,
     host: Arc<dyn ProxyHost>,
-    operations: tokio::sync::Mutex<()>,
+    operations: Arc<tokio::sync::Mutex<()>>,
     runtime: Mutex<Runtime>,
     changes: tokio::sync::watch::Sender<u64>,
     // Drop storage after the backend has closed its body workers and source readers.
@@ -92,6 +93,7 @@ impl AgentApplication {
         let result = Arc::new(Self {
             _session_directory: None,
             session_id: "main".into(),
+            private_listener: false,
             parent: None,
             own: std::sync::OnceLock::new(),
             sessions: sessions::Registry::default(),
@@ -103,7 +105,7 @@ impl AgentApplication {
             root,
             instance_id: format!("{:032x}", u128::from_le_bytes(nonce)),
             host,
-            operations: tokio::sync::Mutex::new(()),
+            operations: Arc::default(),
             runtime: Mutex::new(Runtime::default()),
             changes,
         });
@@ -147,9 +149,9 @@ impl AgentApplication {
                     }
                     continue;
                 }
-                service.maintain_sessions();
+                let sessions = service.maintain_sessions().await;
                 let _operation = service.operations.lock().await;
-                if let Err(error) = service.cleanup().await {
+                if let Err(error) = service.cleanup().await.and(sessions) {
                     service.application.record_diagnostic(
                         transmog_app::DiagnosticLevel::Error,
                         "mcp",
@@ -165,6 +167,7 @@ impl AgentApplication {
     /// # Errors
     /// Returns a rule persistence failure; unresolved effects stay visible for retry.
     pub async fn end_all(&self) -> Result<(), Error> {
+        let sessions = self.close_all_sessions().await;
         let _operation = self.operations.lock().await;
         let ids: Vec<_> = self.lock().controls.keys().cloned().collect();
         for id in ids {
@@ -179,8 +182,7 @@ impl AgentApplication {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
-        self.close_all_sessions();
-        Ok(())
+        sessions
     }
 
     /// Safe current control/activity metadata for the trusted desktop management view.
@@ -203,9 +205,9 @@ impl AgentApplication {
     /// # Errors
     /// Returns a cleanup failure without hiding remaining temporary effects.
     pub async fn reconcile(&self) -> Result<(), Error> {
-        self.maintain_sessions();
+        let sessions = self.maintain_sessions().await;
         let _operation = self.operations.lock().await;
-        self.cleanup().await
+        self.cleanup().await.and(sessions)
     }
 
     /// Ends a control session from the trusted desktop management panel.
@@ -262,7 +264,21 @@ impl AgentApplication {
         if sessions::management_tool(operation) {
             return root.session_operation(&grant, operation, &input).await;
         }
-        let target = if sessions::inspection_tool(operation) {
+        let recording = recording_tool(operation);
+        let target = if recording {
+            if input.get("instanceId").is_some() {
+                root.check_instance(&input)?;
+            }
+            let target =
+                root.session_target(&grant, input["sessionId"].as_str().unwrap_or("main"))?;
+            if target.session_id != "main" && !target.private_listener {
+                return Err(Error::new(
+                    "unsupported_session_operation",
+                    "Recording requires the main proxy or a private listener.",
+                ));
+            }
+            target
+        } else if sessions::inspection_tool(operation) {
             root.session_target(&grant, string(&input, "sessionId")?)?
         } else {
             root.clone()
@@ -270,6 +286,15 @@ impl AgentApplication {
         if target.session_id != "main" && input["enabled"] == true {
             return Err(invalid(
                 "Private drafts are tested locally. Publish a draft before applying it to live traffic.",
+            ));
+        }
+        if target.private_listener
+            && operation == "transmog_request_send"
+            && input["mode"] == "live-rules"
+        {
+            return Err(Error::new(
+                "unsupported_session_operation",
+                "Private listeners do not run shared live rules.",
             ));
         }
         let mut result = target.handle_local(grant.clone(), operation, input).await?;
@@ -285,17 +310,13 @@ impl AgentApplication {
                 "Access changed while this operation was running. Reconnect.",
             ));
         }
-        if sessions::inspection_tool(operation) {
+        if sessions::inspection_tool(operation) || (recording && target.private_listener) {
             result["sessionId"] = json!(target.session_id);
         }
         Ok(result)
     }
-    #[allow(
-        clippy::too_many_lines,
-        reason = "One authorization dispatch makes each tool's effects auditable together."
-    )]
     async fn handle_local(
-        &self,
+        self: &Arc<Self>,
         grant: Grant,
         operation: &str,
         input: Value,
@@ -325,8 +346,59 @@ impl AgentApplication {
             self.activity(&grant, operation, result.is_ok());
             return result;
         }
+        if recording_tool(operation) {
+            // The writer command can finish after the caller disconnects. Keep it
+            // serialized with listener shutdown and commit ownership with its result.
+            let guard = self.operations.clone().lock_owned().await;
+            let target = self.clone();
+            let operation = operation.to_owned();
+            return tokio::spawn(async move {
+                let _guard = guard;
+                target.handle_locked(grant, &operation, input).await
+            })
+            .await
+            .map_err(|_| Error::new("unavailable", "The recording task ended unexpectedly."))?;
+        }
         let _operation = self.operations.lock().await;
+        self.handle_locked(grant, operation, input).await
+    }
+
+    #[allow(
+        clippy::too_many_lines,
+        reason = "One authorization dispatch makes each tool's effects auditable together."
+    )]
+    async fn handle_locked(
+        &self,
+        grant: Grant,
+        operation: &str,
+        input: Value,
+    ) -> Result<Value, Error> {
+        if self.private_listener {
+            let root = self
+                .parent
+                .as_ref()
+                .and_then(std::sync::Weak::upgrade)
+                .ok_or_else(|| invalid("This MCP instance ended."))?;
+            root.session_record_current(&grant, &self.session_id)?;
+            if self
+                .access
+                .session_authority(&grant.id)
+                .is_none_or(|current| current.revision != grant.revision)
+            {
+                return Err(denied(
+                    "Private listener access changed while this operation was running.",
+                ));
+            }
+        }
         self.cleanup().await?;
+        let grant = if recording_tool(operation) {
+            self.access
+                .session_authority(&grant.id)
+                .filter(|current| current.revision == grant.revision)
+                .ok_or_else(|| denied("Recording access changed. Reconnect."))?
+        } else {
+            grant
+        };
         let result = match operation {
             "transmog_connect" | "transmog_status" => Ok(
                 json!({"connected":true,"instanceId":self.instance_id,"grant":{"id":grant.id,"name":grant.name,"permissions":grant.permissions,"scope":grant.scope,"expiresAt":grant.expires_at,"omitSensitiveValues":grant.omit_sensitive_values},"sensitiveAccess":self.access.sensitive_access_status(&grant)?,"proxy":self.application.status(),"recordingActive":matches!(self.application.capture_status(), transmog_app::CaptureReadModel::Active{..}),"limits":{"pageSize":200,"bodyReadBytes":65536,"controlLeaseSeconds":600}}),
@@ -649,7 +721,7 @@ impl AgentApplication {
     }
 
     async fn start_recording(&self, grant: &Grant, input: &Value) -> Result<Value, Error> {
-        grant.require(Permission::Collect)?;
+        grant.require(self.recording_permission())?;
         grant.require(Permission::ReadBodies)?;
         grant.require(Permission::ReadCredentials)?;
         if grant.scope != Scope::All {
@@ -668,28 +740,56 @@ impl AgentApplication {
                 }
             })
             .collect::<String>();
-        let directory = self.root.join("agent-exports");
+        if self.private_listener
+            && self.application.status().lifecycle != transmog_app::AppLifecycle::Running
+        {
+            return Err(invalid("This private listener has stopped."));
+        }
+        let root = self.parent.as_ref().and_then(std::sync::Weak::upgrade);
+        let directory = root
+            .as_ref()
+            .map_or(&self.root, |parent| &parent.root)
+            .join("agent-exports");
         std::fs::create_dir_all(&directory)
             .map_err(|_| invalid("The agent export directory could not be created."))?;
-        let name = format!("recording-{label}-{}-{}.tmcap", now(), random(8)?);
+        let name = if self.private_listener {
+            format!(
+                "recording-{}-{label}-{}-{}.tmcap",
+                self.session_id,
+                now(),
+                random(8)?
+            )
+        } else {
+            format!("recording-{label}-{}-{}.tmcap", now(), random(8)?)
+        };
         let path = directory.join(&name);
         self.application
             .start_capture(CaptureStartRequest {
                 password: None,
                 include_network_context: false,
                 path: path.clone(),
-                max_file_bytes: u64::MAX,
+                max_file_bytes: if self.private_listener {
+                    1024 * 1024 * 1024
+                } else {
+                    u64::MAX
+                },
                 retain_body_samples: true,
                 redact_sensitive_headers: false,
             })
             .await
             .map_err(app_error)?;
         self.lock().recording = Some((grant.id.clone(), grant.revision, path));
+        if !self.access.has_sensitive_access(&grant.id, grant.revision) {
+            self.end_recording().await?;
+            return Err(denied(
+                "Unredacted access ended while the recording started.",
+            ));
+        }
         Ok(json!({"recording":true,"artifact":name}))
     }
 
     async fn stop_recording(&self, grant: &Grant) -> Result<Value, Error> {
-        grant.require(Permission::Collect)?;
+        grant.require(self.recording_permission())?;
         let recording = self
             .lock()
             .recording
@@ -703,6 +803,14 @@ impl AgentApplication {
         self.application.stop_capture().await.map_err(app_error)?;
         self.lock().recording = None;
         Ok(json!({"sealed":true,"artifact":recording.2.file_name().and_then(|name|name.to_str())}))
+    }
+
+    fn recording_permission(&self) -> Permission {
+        if self.private_listener {
+            Permission::CollectPrivate
+        } else {
+            Permission::Collect
+        }
     }
 
     async fn end_recording(&self) -> Result<(), Error> {
@@ -1159,6 +1267,13 @@ impl Handler for AgentApplication {
     fn call(&self, grant: Grant, operation: String, input: Value) -> CallFuture<'_> {
         Box::pin(async move { self.handle(grant, &operation, input).await })
     }
+}
+
+fn recording_tool(operation: &str) -> bool {
+    matches!(
+        operation,
+        "transmog_recording_start" | "transmog_recording_stop"
+    )
 }
 
 fn value(value: impl Serialize) -> Result<Value, Error> {

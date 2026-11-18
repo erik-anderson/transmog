@@ -45,7 +45,12 @@ import type { SettingsWorkspace } from "../settings-workspace/settings-workspace
 import type { AutomationWorkspace } from "../automation-workspace/automation-workspace.js";
 import type { ComposerWorkspace } from "../composer-workspace/composer-workspace.js";
 import type { AppUpdates, UpdateStatus } from "../app-updates/app-updates.js";
-import { describeError, lifecycleLabel } from "../utilities.js";
+import {
+  describeError,
+  lifecycleLabel,
+  listensOnAllInterfaces,
+  proxyClientAddress,
+} from "../utilities.js";
 
 const loaders = {
   breakpoints: () => import("../breakpoint-workspace/breakpoint-workspace.js"),
@@ -391,6 +396,12 @@ export class AppShell extends WebUIElement {
   @observable lifecycleLabel = initialState.lifecycleLabel;
   @observable lifecycleKind = initialState.lifecycleKind;
   @observable listener = initialState.listener;
+  @observable listenerOnAllInterfaces = initialState.listenerOnAllInterfaces;
+  @observable configureSystemProxy = initialState.configureSystemProxy;
+  @observable activeRoutingMode: AppStatus["routingMode"] = initialState.activeRoutingMode;
+  @observable routingLabel = initialState.routingLabel;
+  @observable routingSavePending = initialState.routingSavePending;
+  routingSelect!: HTMLSelectElement;
   @observable processScopeLabel = initialState.processScopeLabel;
   @observable httpsModeLabel = initialState.httpsModeLabel;
   @observable unresolvedProcessLabel = initialState.unresolvedProcessLabel;
@@ -504,6 +515,8 @@ export class AppShell extends WebUIElement {
     void this.updates.check(true);
   }
   private noticeAction: NoticeAction = null;
+  private certificateReadinessNotice = false;
+  private dismissedCertificateNotice = false;
   private navigationGeneration = 0;
   private workspaceTouched = false;
   @observable workspaceLoaded = false;
@@ -735,26 +748,45 @@ export class AppShell extends WebUIElement {
     }
   }
   onNotice(event: CustomEvent<Notice>): void {
-    this.noticeTitleText = event.detail.title;
-    this.noticeMessageText = event.detail.message;
-    this.noticeActionLabel = event.detail.actionLabel ?? "";
-    this.noticeAction = event.detail.action;
-    this.noticeTunnelStart =
-      event.detail.action === "setup-ca" || event.detail.action === "reset-ca";
+    this.presentNotice(event.detail);
+  }
+  private presentNotice(notice: Notice, certificateReadiness = false): void {
+    this.certificateReadinessNotice = certificateReadiness;
+    this.noticeTitleText = notice.title;
+    this.noticeMessageText = notice.message;
+    this.noticeActionLabel = notice.actionLabel ?? "";
+    this.noticeAction = notice.action;
+    this.noticeTunnelStart = notice.action === "setup-ca" || notice.action === "reset-ca";
     this.noticeVisible = true;
   }
   onStatus(event: CustomEvent<AppStatus>): void {
     this.applyStatus(event.detail);
   }
-  onCertificateState(event: CustomEvent<{ unavailable: boolean }>): void {
-    this.certificateUnavailable = event.detail.unavailable;
+  onCertificateState(
+    event: CustomEvent<{ unavailable: boolean; notice: Notice | null; showStartBlock: boolean }>,
+  ): void {
+    const { unavailable, notice, showStartBlock } = event.detail;
+    this.certificateUnavailable = unavailable;
     this.updateTunnelStart();
+    const setupSucceeded =
+      this.noticeAction === "start-proxy" || this.noticeAction === "certificate-settings";
+    if (this.noticeVisible && !this.certificateReadinessNotice && !(notice && setupSucceeded)) {
+      return;
+    }
+    if (notice && (!this.dismissedCertificateNotice || showStartBlock || setupSucceeded)) {
+      this.presentNotice(notice, true);
+    } else if (this.certificateReadinessNotice) {
+      this.dismissNotice();
+    }
   }
   private updateTunnelStart(): void {
     this.tunnelStartAvailable =
       this.certificateUnavailable && ["stopped", "failed"].includes(this.lifecycleKind);
   }
   async startHttpsTunnels(): Promise<void> {
+    if (this.routingSavePending) {
+      return;
+    }
     await this.settings.startHttpsTunnels();
   }
   onCaptureStatus(event: CustomEvent<AppStatus>): void {
@@ -765,7 +797,10 @@ export class AppShell extends WebUIElement {
     this.lifecycleLabel =
       status.lifecycle === "draining" ? status.summary : lifecycleLabel(status.lifecycle);
     this.lifecycleKind = status.lifecycle;
-    this.listener = status.listener ?? "Not listening";
+    this.listener = status.listener ? proxyClientAddress(status.listener) : "Not listening";
+    this.listenerOnAllInterfaces = listensOnAllInterfaces(status.listener);
+    this.activeRoutingMode = status.routingMode ?? null;
+    this.updateRoutingLabel();
     const policy = status.processInspection ?? { mode: "all", include: [], exclude: [] };
     const count = policy.mode === "only" ? policy.include.length : policy.exclude.length;
     this.processScopeLabel =
@@ -780,11 +815,14 @@ export class AppShell extends WebUIElement {
       : "";
     this.updateTunnelStart();
     if (status.hostRestorePending) {
-      this.diagnosticText = "Host restoration is pending and must be retried before restart.";
-    } else if (
-      this.diagnosticText === "Host restoration is pending and must be retried before restart."
-    ) {
-      this.diagnosticText = "";
+      this.diagnosticText = "Windows proxy restoration is pending.";
+    } else {
+      if (this.diagnosticText === "Windows proxy restoration is pending.") {
+        this.diagnosticText = "";
+      }
+      if (this.noticeAction === "recover-proxy") {
+        this.dismissNotice();
+      }
     }
   }
   onPreferences(
@@ -807,8 +845,35 @@ export class AppShell extends WebUIElement {
   onProxyOperation(event: CustomEvent<string>): void {
     this.proxyPending = event.detail;
   }
+  onRoutingChanged(event: CustomEvent<boolean>): void {
+    this.configureSystemProxy = event.detail;
+    this.routingSelect.value = event.detail ? "system" : "manual";
+    this.updateRoutingLabel();
+  }
+  private updateRoutingLabel(): void {
+    const routing = this.activeRoutingMode ?? (this.configureSystemProxy ? "system" : "manual");
+    this.routingLabel = routing === "system" ? "System proxy" : "Manual proxy";
+  }
+  async changeRouting(event: Event): Promise<void> {
+    const select = event.target as HTMLSelectElement;
+    if (this.routingSavePending || this.proxyPending) {
+      return;
+    }
+    this.routingSavePending = true;
+    try {
+      await this.settings.saveProxyRouting(select.value === "system");
+    } catch (error: unknown) {
+      select.value = this.configureSystemProxy ? "system" : "manual";
+      this.diagnosticText = `Proxy routing could not be saved. ${describeError(error)}`;
+    } finally {
+      this.routingSavePending = false;
+    }
+  }
   async toggleProxy(): Promise<void> {
     await this.settings.ready;
+    if (this.routingSavePending) {
+      return;
+    }
     if (this.lifecycleKind === "running") {
       await this.settings.stopProxy();
     } else {
@@ -969,17 +1034,20 @@ export class AppShell extends WebUIElement {
     }
     if (error) {
       this.diagnosticText = error;
-    } else if (
-      this.diagnosticText !== "Host restoration is pending and must be retried before restart."
-    ) {
+    } else if (this.diagnosticText !== "Windows proxy restoration is pending.") {
       this.diagnosticText = "Proxy " + this.lifecycleKind;
     }
   }
   runNoticeAction(): void {
+    if (this.routingSavePending) {
+      return;
+    }
     const action = this.noticeAction;
     this.dismissNotice();
     if (action === "settings") {
       void this.openConnectionSettings();
+    } else if (action === "certificate-settings") {
+      void this.openConnectionSettings(true);
     } else if (action === "setup-ca") {
       void this.settings.setupCa();
     } else if (action === "reset-ca") {
@@ -992,9 +1060,13 @@ export class AppShell extends WebUIElement {
       void this.settings.recoverProxy();
     }
   }
-  async openConnectionSettings(): Promise<void> {
+  async openConnectionSettings(certificate = false): Promise<void> {
     if (await this.activateView("settings")) {
-      this.settings.showSettingsSection("connection");
+      if (certificate) {
+        await this.settings.openInterceptionCertificate(undefined, false);
+      } else {
+        this.settings.showSettingsSection("connection");
+      }
     }
   }
   private async returnToHttpsPreferences(): Promise<void> {
@@ -1002,7 +1074,11 @@ export class AppShell extends WebUIElement {
       await this.settings.backToPreferences();
     }
   }
-  dismissNotice(): void {
+  dismissNotice(rememberCertificate = false): void {
+    if (rememberCertificate && this.certificateReadinessNotice) {
+      this.dismissedCertificateNotice = true;
+    }
+    this.certificateReadinessNotice = false;
     this.noticeAction = null;
     this.noticeVisible = false;
   }

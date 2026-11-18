@@ -18,6 +18,20 @@ pub(super) fn complete(tools: &mut Vec<ToolSpec>) {
             vec![],
         ),
         (
+            "transmog_session_listen",
+            "Start a private loopback listener for a local app. Requires collect-private and all-traffic or host scope. Port 0 selects an available port. Configure the app with listener.proxyUrl and, for HTTPS decryption, trust the returned public certificate in the app. Retry identical inputs with the same operationId.",
+            false,
+            json!({"operationId":id(),"name":{"type":"string","minLength":1,"maxLength":80},"port":{"type":"integer","minimum":0,"maximum":65535},"decryptHttps":{"type":"boolean"}}),
+            vec!["operationId"],
+        ),
+        (
+            "transmog_session_listener_stop",
+            "Stop your private listener, seal its recording and keep the session evidence available for inspection. Requires collect-private. Retry identical inputs with the same operationId.",
+            false,
+            json!({"sessionId":id(),"operationId":id()}),
+            vec!["sessionId", "operationId"],
+        ),
+        (
             "transmog_session_list",
             "List this key's private inspection sessions. The main workspace has sessionId main. Other keys' private sessions are inaccessible.",
             true,
@@ -26,14 +40,14 @@ pub(super) fn complete(tools: &mut Vec<ToolSpec>) {
         ),
         (
             "transmog_session_renew",
-            "Renew this key's private session for 30 minutes. Incoming traffic alone does not renew it.",
+            "Renew this key's private session for 30 minutes. A private listener's deadline still applies during desktop review. Incoming traffic, session listing and operation polling do not renew it.",
             false,
             json!({"sessionId":id()}),
             vec!["sessionId"],
         ),
         (
             "transmog_session_close",
-            "End a private session and release its evidence. Stops no proxy or live-control lease. Unsaved human work requires action in its review window.",
+            "End access and release ordinary session evidence. For a private listener, stop collection, finalize its recording and preserve unsaved review work. For an offline session, resolve unsaved edits before closing. Saved files remain on disk.",
             false,
             json!({"sessionId":id()}),
             vec!["sessionId"],
@@ -75,14 +89,14 @@ pub(super) fn complete(tools: &mut Vec<ToolSpec>) {
         ),
         (
             "transmog_operation_status",
-            "Read this key's capture operation state, progress and result. A waiting-password operation requires user action in Transmog and does not grant unredacted access.",
+            "Read this key's capture or listener operation state, progress and result. A waiting-password capture needs user action in Transmog.",
             true,
             json!({"operationId":id()}),
             vec!["operationId"],
         ),
         (
             "transmog_operation_cancel",
-            "Cancel this key's pending capture operation. If publication already won, its authoritative state remains completed.",
+            "Cancel this key's pending capture operation. A listener operation finishes once admitted; use its status to find the outcome and stop the listener explicitly.",
             false,
             json!({"operationId":id()}),
             vec!["operationId"],
@@ -102,12 +116,17 @@ pub(super) fn complete(tools: &mut Vec<ToolSpec>) {
         let mut tool = spec(name, description, read, properties, &required);
         tool.destructive = matches!(
             name,
-            "transmog_session_close" | "transmog_capture_unload" | "transmog_operation_cancel"
+            "transmog_session_close"
+                | "transmog_session_listener_stop"
+                | "transmog_capture_unload"
+                | "transmog_operation_cancel"
         );
         tool.idempotent = read
             || matches!(
                 name,
                 "transmog_capture_load"
+                    | "transmog_session_listen"
+                    | "transmog_session_listener_stop"
                     | "transmog_capture_unload"
                     | "transmog_session_live_unsubscribe"
                     | "transmog_operation_cancel"
@@ -148,7 +167,7 @@ pub(super) fn complete(tools: &mut Vec<ToolSpec>) {
 fn result_schema(name: &str) -> Value {
     let text = json!({"type":"string"});
     let flag = json!({"type":"boolean"});
-    let session = json!({"type":"object","properties":{"sessionId":text,"name":text,"ownerId":text,"ownerName":text,"expiresAt":{"type":"integer"},"liveSubscribed":flag,"captureCount":{"type":"integer"},"reviewing":flag,"agentAccessEnded":flag,"needsHumanAction":flag,"liveError":{"type":["string","null"]}},"required":["sessionId","name","expiresAt","liveSubscribed","captureCount","reviewing","agentAccessEnded","needsHumanAction"]});
+    let session = json!({"type":"object","properties":{"sessionId":text,"name":text,"ownerId":text,"ownerName":text,"expiresAt":{"type":"integer"},"liveSubscribed":flag,"captureCount":{"type":"integer"},"reviewing":flag,"agentAccessEnded":flag,"needsHumanAction":flag,"liveError":{"type":["string","null"]},"kind":{"enum":["inspection","listener"]},"operationId":text,"listener":{"type":["object","null"],"properties":{"lifecycle":{"enum":["stopped","running","draining","stopping","failed"]},"endpoint":{"type":["string","null"]},"proxyUrl":{"type":["string","null"]},"routingMode":{"const":"manual"},"decryptHttps":{"type":["boolean","null"]},"certificate":{"type":["object","null"],"properties":{"sha256":text,"certificatePath":text}},"recording":flag,"recordingState":{"enum":["idle","active","sealed","failed"]},"recordingArtifact":{"type":["string","null"]}},"required":["lifecycle","endpoint","decryptHttps","certificate","recording","recordingState","recordingArtifact"]}},"required":["sessionId","name","expiresAt","liveSubscribed","captureCount","reviewing","agentAccessEnded","needsHumanAction","kind","listener"]});
     match name {
         "transmog_session_list" => {
             json!({"type":"object","properties":{"sessions":{"type":"array","items":session,"maxItems":8},"mainSessionId":{"const":"main"}},"required":["sessions","mainSessionId"]})
@@ -163,7 +182,7 @@ fn result_schema(name: &str) -> Value {
         | "transmog_capture_unload"
         | "transmog_operation_status"
         | "transmog_operation_cancel" => {
-            json!({"type":"object","properties":{"operationId":text,"sessionId":text,"cancelRequested":flag,"state":{"enum":["pending","waiting-password","completed","failed","cancelled"]},"completed":{"type":"integer","minimum":0},"total":{"type":"integer","minimum":0},"result":{"type":["object","null"]},"error":{"type":["object","null"]},"actionRequired":{"type":["string","null"]}},"required":["operationId","sessionId","state","completed","total","result","error","actionRequired"]})
+            json!({"type":"object","properties":{"operationId":text,"sessionId":{"type":["string","null"]},"cancelRequested":flag,"state":{"enum":["pending","waiting-password","completed","failed","cancelled"]},"completed":{"type":"integer","minimum":0},"total":{"type":"integer","minimum":0},"result":{"type":["object","null"]},"error":{"type":["object","null"]},"actionRequired":{"type":["string","null"]}},"required":["operationId","sessionId","state","completed","total","result","error","actionRequired"]})
         }
         "transmog_rule_publish" => {
             json!({"type":"object","properties":{"id":text,"revision":{"type":"integer"},"enabled":{"const":false}},"required":["id","revision","enabled"]})

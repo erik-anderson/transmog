@@ -48,6 +48,14 @@ policy remain runtime concerns. `proxy_control` exposes the runtime's existing
 generation-scoped trust-reload and observer-statistics handle while the run is
 owned. Start-twice is typed; concurrent stops serialize and become idempotent.
 An unexpected runtime failure remains visible until the failed run is stopped.
+Stop reports errors from the cleanup it performs. A later stop can complete
+after the run and recording writer have been finalized. It retries any pending
+host restoration and preserves the failed recording's status and file.
+
+Manual routing uses `start` and owns no host transaction. Each private MCP
+listener owns a separate session service, catalog, recording manager and runtime.
+Stopping it drains or finalizes its own evidence and releases its port. An offline
+inspection session can instead hold scoped references to the main catalog.
 
 After a run ends, the service closes observer admission and drains accepted
 records, including after a force stop. It then finalizes any remaining live
@@ -56,6 +64,18 @@ runtime events cannot overlap with these local terminal records. Durations stop
 growing; open application streams become interrupted without changing an already
 measured HTTP duration. Imported entries retain their original state and timing
 evidence.
+
+Once a stop or host restoration is admitted, the service owns it through the
+final state update. A disconnected caller does not interrupt sealing or discard
+a failed restoration's retry token. The resulting status remains available to
+another caller. A force stop can unblock a shutdown already waiting on the
+runtime. Its follow-up cleanup stays scoped to that run.
+
+Startup and resume hold the lifecycle lock through host apply. If the caller
+disconnects before the proxy commits that change, the service restores the
+previous host settings before admitting another run. A failed rollback keeps
+its exact token for recovery. A cancelled resume leaves the previous drain in
+effect so admitted requests can finish.
 
 Dropping the last service owner cancels its task, closes the bounded capture
 worker, and invokes an armed host restore guard. Explicit `stop` remains the

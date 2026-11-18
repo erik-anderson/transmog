@@ -18,6 +18,10 @@ See [network profiles and connection settings](network-profiles.md) for choices,
 defaults and activation. Profile definitions and the active recipe snapshot have
 independent revisions; saving a definition does not activate it.
 
+`configureSystemProxy` remembers the desktop's routing choice for its next new
+run. It defaults to `true` when absent. The routing selector saves it separately
+from ordinary Preferences. A running listener reports its own effective mode.
+
 Live traffic, captured headers and bodies, credentials, breakpoint envelopes,
 controller capabilities, replay drafts and CA private keys are not settings.
 Recent artifact references are retained only when the user opts in.

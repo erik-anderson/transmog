@@ -1,12 +1,13 @@
-//! Key-owned inspection lifetimes. Live controls and the proxy remain on the root adapter.
+//! Key-owned inspection and listener lifetimes.
 use super::*;
 use std::{
     collections::BTreeMap,
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     time::Instant,
 };
-use transmog_app::{PreparedTraceImport, TraceImportRequest};
+use transmog_app::{AppLifecycle, CaptureReadModel, PreparedTraceImport, TraceImportRequest};
 mod jobs;
+mod listener;
 
 const IDLE_SECONDS: u64 = 30 * 60;
 const MAX_SESSIONS: usize = 8;
@@ -19,6 +20,9 @@ pub(super) struct Registry(Mutex<State>);
 struct State {
     records: BTreeMap<String, Arc<Record>>,
     jobs: HashMap<(String, String), Arc<jobs::Job>>,
+    listener_operations: HashMap<(String, String), Arc<listener::Operation>>,
+    closing: bool,
+    generation: u64,
 }
 impl Registry {
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
@@ -29,11 +33,13 @@ impl Registry {
 }
 struct Record {
     adapter: Arc<AgentApplication>,
+    listener_receipt: Option<listener::Receipt>,
     owner: String,
     owner_name: String,
     name: String,
     viewers: AtomicUsize,
     closed: AtomicBool,
+    ready: AtomicBool,
     state: Mutex<SessionState>,
 }
 struct SessionState {
@@ -43,6 +49,7 @@ struct SessionState {
     captures: BTreeMap<String, Value>,
     dirty: bool,
     live_error: Option<String>,
+    certificate: Option<transmog_app::CaIdentity>,
 }
 #[derive(Clone)]
 struct Live {
@@ -51,6 +58,15 @@ struct Live {
     method: Option<String>,
 }
 impl Record {
+    fn available_to(&self, grant: &Grant) -> bool {
+        self.owner == grant.id
+            && !self.closed.load(Ordering::Acquire)
+            && self.ready.load(Ordering::Acquire)
+            && (!self.adapter.private_listener || listener::authorized(grant))
+            && ((!self.adapter.private_listener && self.viewers.load(Ordering::Acquire) > 0)
+                || self.lock().deadline > Instant::now())
+    }
+
     fn captures(&self) -> Result<Vec<Value>, Error> {
         let known = self.lock().captures.clone();
         let mut ids = self.adapter.application.loaded_capture_ids();
@@ -72,7 +88,41 @@ impl Record {
     }
     fn summary(&self) -> Value {
         let state = self.lock();
-        json!({"sessionId":self.adapter.session_id,"name":self.name,"ownerId":self.owner,"ownerName":self.owner_name,"expiresAt":state.expires_at,"liveSubscribed":state.live.is_some(),"captureCount":self.adapter.application.loaded_capture_ids().len(),"reviewing":self.viewers.load(Ordering::Acquire)>0,"agentAccessEnded":self.closed.load(Ordering::Acquire),"needsHumanAction":state.dirty||self.adapter.application.has_unsaved_session_changes(),"liveError":state.live_error})
+        let mut summary = json!({"sessionId":self.adapter.session_id,"name":self.name,"ownerId":self.owner,"ownerName":self.owner_name,"expiresAt":state.expires_at,"liveSubscribed":state.live.is_some(),"captureCount":self.adapter.application.loaded_capture_ids().len(),"reviewing":self.viewers.load(Ordering::Acquire)>0,"agentAccessEnded":self.closed.load(Ordering::Acquire),"needsHumanAction":state.dirty||self.adapter.application.has_unsaved_session_changes(),"liveError":state.live_error,"kind":"inspection","listener":null});
+        if self.adapter.private_listener {
+            let status = self.adapter.application.status();
+            summary["kind"] = json!("listener");
+            let endpoint = match status.lifecycle {
+                AppLifecycle::Stopped | AppLifecycle::Failed => None,
+                _ => status.listener,
+            };
+            let proxy_url = endpoint
+                .as_ref()
+                .map(|endpoint| format!("http://{endpoint}"));
+            let (recording_state, recording_path) = match self.adapter.application.capture_status()
+            {
+                CaptureReadModel::Idle | CaptureReadModel::Shutdown => ("idle", None),
+                CaptureReadModel::Active { path, .. } => ("active", Some(path)),
+                CaptureReadModel::Sealed { path, .. } => ("sealed", Some(path)),
+                CaptureReadModel::Failed { path, .. } => ("failed", path),
+            };
+            let artifact = recording_path
+                .as_deref()
+                .and_then(std::path::Path::file_name)
+                .and_then(|name| name.to_str());
+            summary["listener"] = json!({
+                "lifecycle": status.lifecycle,
+                "endpoint": endpoint,
+                "proxyUrl": proxy_url,
+                "routingMode": "manual",
+                "decryptHttps": state.certificate.is_some(),
+                "certificate": state.certificate,
+                "recording": recording_state == "active",
+                "recordingState": recording_state,
+                "recordingArtifact": artifact,
+            });
+        }
+        summary
     }
 }
 
@@ -113,6 +163,12 @@ impl SessionReview {
     /// # Errors
     /// Rejects stale revisions and an unavailable shared backend.
     pub async fn publish(&self, id: &str, revision: u64) -> Result<Value, Error> {
+        if self.record.adapter.private_listener {
+            return Err(Error::new(
+                "unsupported_session_operation",
+                "Private listener review cannot publish a shared rule.",
+            ));
+        }
         let root = self
             .record
             .adapter
@@ -145,7 +201,9 @@ impl SessionReview {
 impl Drop for SessionReview {
     fn drop(&mut self) {
         self.record.viewers.fetch_sub(1, Ordering::AcqRel);
-        self.record.touch();
+        if !self.record.adapter.private_listener {
+            self.record.touch();
+        }
     }
 }
 
@@ -156,6 +214,8 @@ fn management_tool_inner(name: &str) -> bool {
     matches!(
         name,
         "transmog_session_create"
+            | "transmog_session_listen"
+            | "transmog_session_listener_stop"
             | "transmog_session_list"
             | "transmog_session_renew"
             | "transmog_session_close"
@@ -171,6 +231,51 @@ fn management_tool_inner(name: &str) -> bool {
 }
 pub(super) fn management_tool(name: &str) -> bool {
     management_tool_inner(name)
+}
+
+fn list_session_captures(
+    grant: &Grant,
+    record: &Record,
+    include_context: bool,
+) -> Result<Value, Error> {
+    grant.require(Permission::Inspect)?;
+    let mut captures = record.captures()?;
+    if include_context {
+        grant.require(Permission::ReadBodies)?;
+        grant.require(Permission::ReadCredentials)?;
+        if !matches!(grant.scope, Scope::All) {
+            return Err(denied(
+                "Complete capture-level context requires all-traffic scope.",
+            ));
+        }
+        for capture in &mut captures {
+            let id = string(capture, "captureId")?;
+            let metadata = record
+                .adapter
+                .application
+                .trace_metadata(id)
+                .map_err(app_error)?;
+            capture["context"] = record.adapter.retain_context(
+                grant,
+                context::ContextInput {
+                    bytes: serde_json::to_vec(&metadata)
+                        .map_err(|_| invalid("Capture context could not be encoded."))?,
+                    required: vec![
+                        Permission::Inspect,
+                        Permission::ReadBodies,
+                        Permission::ReadCredentials,
+                    ],
+                    source: json!({"kind":"capture","captureId":id}),
+                    metadata: json!({}),
+                    url: "http://capture.invalid/".into(),
+                    entry_id: None,
+                    representation: "json",
+                    text: true,
+                },
+            )?;
+        }
+    }
+    Ok(json!({"captures":captures}))
 }
 
 impl AgentApplication {
@@ -200,12 +305,7 @@ impl AgentApplication {
             .lock()
             .records
             .get(id)
-            .filter(|record| {
-                record.owner == grant.id
-                    && !record.closed.load(Ordering::Acquire)
-                    && (record.viewers.load(Ordering::Acquire) > 0
-                        || record.lock().deadline > Instant::now())
-            })
+            .filter(|record| record.available_to(grant))
             .cloned()
             .ok_or_else(|| {
                 Error::new(
@@ -214,8 +314,21 @@ impl AgentApplication {
                 )
             })
     }
-    fn create_session(self: &Arc<Self>, grant: &Grant, name: &str) -> Result<Value, Error> {
+    fn create_session(
+        self: &Arc<Self>,
+        grant: &Grant,
+        name: &str,
+        listener_generation: Option<u64>,
+    ) -> Result<Arc<Record>, Error> {
         let mut registry = self.sessions.lock();
+        if registry.closing || listener_generation.is_some_and(|epoch| epoch != registry.generation)
+        {
+            return Err(Error::new(
+                "unavailable",
+                "The MCP server is shutting down.",
+            ));
+        }
+        let private_listener = listener_generation.is_some();
         if registry.records.len() >= MAX_SESSIONS
             || registry
                 .records
@@ -234,14 +347,19 @@ impl AgentApplication {
             .tempdir_in(&self.root)
             .map_err(|_| invalid("Session storage could not be created."))?;
         let id = random(18)?;
-        let application = self
-            .application
-            .create_inspection_session(directory.path().to_path_buf())
-            .map_err(app_error)?;
+        let application = if private_listener {
+            self.application
+                .create_private_listener_session(directory.path())
+        } else {
+            self.application
+                .create_inspection_session(directory.path().to_path_buf())
+        }
+        .map_err(app_error)?;
         let directory = Arc::new(directory);
         let adapter = Arc::new(Self {
             _session_directory: Some(directory.clone()),
             session_id: id.clone(),
+            private_listener,
             parent: Some(Arc::downgrade(self)),
             own: std::sync::OnceLock::new(),
             sessions: Registry::default(),
@@ -253,18 +371,20 @@ impl AgentApplication {
             root: directory.path().to_path_buf(),
             instance_id: self.instance_id.clone(),
             host: self.host.clone(),
-            operations: tokio::sync::Mutex::new(()),
+            operations: Arc::default(),
             runtime: Mutex::default(),
             changes: self.changes.clone(),
         });
         let _ = adapter.own.set(Arc::downgrade(&adapter));
         let record = Arc::new(Record {
             adapter,
+            listener_receipt: private_listener.then(|| listener::Receipt::new(id.clone())),
             owner: grant.id.clone(),
             owner_name: grant.name.clone(),
             name: name.into(),
             viewers: AtomicUsize::new(0),
             closed: AtomicBool::new(false),
+            ready: AtomicBool::new(!private_listener),
             state: Mutex::new(SessionState {
                 deadline: Instant::now() + Duration::from_secs(IDLE_SECONDS),
                 expires_at: now() + IDLE_SECONDS,
@@ -272,11 +392,11 @@ impl AgentApplication {
                 captures: BTreeMap::new(),
                 dirty: false,
                 live_error: None,
+                certificate: None,
             }),
         });
-        let summary = record.summary();
-        registry.records.insert(id, record);
-        Ok(summary)
+        registry.records.insert(id, record.clone());
+        Ok(record)
     }
     pub(super) fn session_summaries(&self, owner: Option<&Grant>) -> Vec<Value> {
         self.sessions
@@ -284,21 +404,28 @@ impl AgentApplication {
             .records
             .values()
             .filter(|record| {
-                owner.is_none_or(|grant| {
-                    record.owner == grant.id && !record.closed.load(Ordering::Acquire)
-                })
+                owner.map_or_else(
+                    || record.ready.load(Ordering::Acquire),
+                    |grant| record.available_to(grant),
+                )
             })
             .map(|record| record.summary())
             .collect()
     }
-    fn remove_session(&self, record: &Arc<Record>, force: bool) -> Result<(), Error> {
-        if !force && record.dirty() {
+    async fn remove_session(&self, record: &Arc<Record>, force: bool) -> Result<(), Error> {
+        if !force && !record.adapter.private_listener && record.dirty() {
             return Err(Error::new(
                 "needs_human_action",
                 "Resolve unsaved edits in the review window before ending this session.",
             ));
         }
         let was_closed = record.closed.swap(true, Ordering::AcqRel);
+        let stop_result = if record.adapter.private_listener {
+            let _operation = record.adapter.operations.lock().await;
+            record.adapter.stop_listener().await
+        } else {
+            Ok(())
+        };
         record.lock().live = None;
         self.cancel_session_jobs(&record.adapter.session_id);
         self.context_cache
@@ -309,30 +436,45 @@ impl AgentApplication {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .retain(|snapshot| snapshot.realm != record.adapter.session_id);
-        // Dirty human work retains its backend, but all agent access has ended.
-        if !record.dirty() {
-            self.sessions
-                .lock()
-                .records
-                .remove(&record.adapter.session_id);
-        }
-        if !was_closed {
+        // A failed recording can leave a recoverable file after the port is
+        // released. Keep the session only for unfinished cleanup or human work.
+        let removed = (stop_result.is_ok() || !record.adapter.listener_needs_shutdown())
+            && !record.dirty()
+            && {
+                let mut registry = self.sessions.lock();
+                // Publish the final recording state before the live lookup stops finding it.
+                if let Some(receipt) = &record.listener_receipt {
+                    receipt.archive(record);
+                }
+                registry
+                    .records
+                    .remove(&record.adapter.session_id)
+                    .is_some()
+            };
+        if !was_closed || removed {
             self.changes
                 .send_modify(|generation| *generation = generation.wrapping_add(1));
         }
-        Ok(())
+        stop_result
     }
-    pub(super) fn close_all_sessions(&self) {
-        let records = self
-            .sessions
-            .lock()
-            .records
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
+    /// Reopens session admission when the desktop restarts the MCP endpoint.
+    pub fn open_session_registry(&self) {
+        self.sessions.lock().closing = false;
+    }
+    pub(super) async fn close_all_sessions(&self) -> Result<(), Error> {
+        let records = {
+            let mut registry = self.sessions.lock();
+            registry.closing = true;
+            registry.generation = registry.generation.wrapping_add(1);
+            registry.records.values().cloned().collect::<Vec<_>>()
+        };
+        let mut result = Ok(());
         for record in records {
-            let _ = self.remove_session(&record, true);
+            if let Err(error) = self.remove_session(&record, true).await {
+                result = Err(error);
+            }
         }
+        result
     }
     /// Opens a trusted review handle over the existing private backend.
     /// # Errors
@@ -343,16 +485,19 @@ impl AgentApplication {
             .lock()
             .records
             .get(id)
+            .filter(|record| record.ready.load(Ordering::Acquire))
             .cloned()
             .ok_or_else(|| invalid("This inspection session ended."))?;
         record.viewers.fetch_add(1, Ordering::AcqRel);
-        record.touch();
+        if !record.adapter.private_listener {
+            record.touch();
+        }
         Ok(SessionReview { record })
     }
     /// Ends an inspection session from trusted desktop UI, preserving unsaved work.
     /// # Errors
-    /// Rejects unsaved edits or an unknown session.
-    pub fn end_inspection_session(&self, id: &str) -> Result<(), Error> {
+    /// Rejects an unknown session or unsaved edits in an offline inspection session.
+    pub async fn end_inspection_session(&self, id: &str) -> Result<(), Error> {
         let record = self
             .sessions
             .lock()
@@ -360,7 +505,26 @@ impl AgentApplication {
             .get(id)
             .cloned()
             .ok_or_else(|| invalid("This inspection session ended."))?;
-        self.remove_session(&record, false)
+        self.remove_session(&record, false).await
+    }
+
+    /// Stops a private listener from the desktop and retains its traffic for review.
+    ///
+    /// # Errors
+    /// Returns an unknown-session or cleanup failure.
+    pub async fn stop_listener_from_desktop(&self, id: &str) -> Result<(), Error> {
+        let record = self
+            .sessions
+            .lock()
+            .records
+            .get(id)
+            .filter(|record| record.ready.load(Ordering::Acquire))
+            .cloned()
+            .ok_or_else(|| invalid("This inspection session ended."))?;
+        self.stop_private_record(&record, None).await?;
+        self.changes
+            .send_modify(|generation| *generation = generation.wrapping_add(1));
+        Ok(())
     }
 
     pub(super) async fn session_operation(
@@ -371,64 +535,56 @@ impl AgentApplication {
     ) -> Result<Value, Error> {
         self.check_instance(input)?;
         match name {
-            "transmog_session_create" => {
-                self.create_session(grant, input["name"].as_str().unwrap_or("Agent inspection"))
+            "transmog_session_create" => Ok(self
+                .create_session(
+                    grant,
+                    input["name"].as_str().unwrap_or("Agent inspection"),
+                    None,
+                )?
+                .summary()),
+            "transmog_session_listen" | "transmog_session_listener_stop" => {
+                self.listener_operation(grant, name, input).await
             }
             "transmog_session_list" => {
                 Ok(json!({"sessions":self.session_summaries(Some(grant)),"mainSessionId":"main"}))
             }
-            "transmog_operation_status" | "transmog_operation_cancel" => {
-                self.job_operation(grant, name, input)
-            }
+            "transmog_operation_status" | "transmog_operation_cancel" => self
+                .listener_job_status(grant, name, input)
+                .unwrap_or_else(|| self.job_operation(grant, name, input)),
             _ => {
                 let record = self.session_record(grant, string(input, "sessionId")?)?;
+                if record.adapter.private_listener
+                    && matches!(
+                        name,
+                        "transmog_session_live_subscribe"
+                            | "transmog_session_live_unsubscribe"
+                            | "transmog_rule_publish"
+                    )
+                {
+                    return Err(Error::new(
+                        "unsupported_session_operation",
+                        "Private listeners capture their own traffic and cannot attach to shared live operations.",
+                    ));
+                }
                 record.touch();
                 match name {
                     "transmog_session_renew" => Ok(record.summary()),
                     "transmog_session_close" => {
-                        self.remove_session(&record, false)?;
+                        if record.adapter.private_listener {
+                            // The connection may close while shutdown is joining the runtime.
+                            let root = self.clone();
+                            tokio::spawn(async move { root.remove_session(&record, false).await })
+                                .await
+                                .map_err(|_| {
+                                    invalid("The session cleanup task ended unexpectedly.")
+                                })??;
+                        } else {
+                            self.remove_session(&record, false).await?;
+                        }
                         Ok(json!({"closed":true}))
                     }
                     "transmog_capture_list" => {
-                        grant.require(Permission::Inspect)?;
-                        let mut captures = record.captures()?;
-                        if input["includeContext"] == true {
-                            grant.require(Permission::ReadBodies)?;
-                            grant.require(Permission::ReadCredentials)?;
-                            if !matches!(grant.scope, Scope::All) {
-                                return Err(denied(
-                                    "Complete capture-level context requires all-traffic scope.",
-                                ));
-                            }
-                            for capture in &mut captures {
-                                let id = string(capture, "captureId")?;
-                                let metadata = record
-                                    .adapter
-                                    .application
-                                    .trace_metadata(id)
-                                    .map_err(app_error)?;
-                                capture["context"] = record.adapter.retain_context(
-                                    grant,
-                                    context::ContextInput {
-                                        bytes: serde_json::to_vec(&metadata).map_err(|_| {
-                                            invalid("Capture context could not be encoded.")
-                                        })?,
-                                        required: vec![
-                                            Permission::Inspect,
-                                            Permission::ReadBodies,
-                                            Permission::ReadCredentials,
-                                        ],
-                                        source: json!({"kind":"capture","captureId":id}),
-                                        metadata: json!({}),
-                                        url: "http://capture.invalid/".into(),
-                                        entry_id: None,
-                                        representation: "json",
-                                        text: true,
-                                    },
-                                )?;
-                            }
-                        }
-                        Ok(json!({"captures":captures}))
+                        list_session_captures(grant, &record, input["includeContext"] == true)
                     }
                     "transmog_capture_load" | "transmog_capture_unload" => {
                         self.start_capture_job(grant, &record, name, input)
@@ -493,7 +649,7 @@ impl AgentApplication {
         rule.enabled = false;
         self.save_rule(rule, None)
     }
-    pub(super) fn maintain_sessions(&self) {
+    pub(super) async fn maintain_sessions(&self) -> Result<(), Error> {
         let records = self
             .sessions
             .lock()
@@ -501,15 +657,31 @@ impl AgentApplication {
             .values()
             .cloned()
             .collect::<Vec<_>>();
+        let mut result = Ok(());
         for record in records {
-            let invalid = self.access.session_authority(&record.owner).is_none();
-            let expired = record.viewers.load(Ordering::Acquire) == 0
+            let invalid = self
+                .access
+                .session_authority(&record.owner)
+                .is_none_or(|grant| {
+                    record.adapter.private_listener && !listener::authorized(&grant)
+                });
+            let expired = (record.adapter.private_listener
+                || record.viewers.load(Ordering::Acquire) == 0)
                 && record.lock().deadline <= Instant::now();
             if invalid || expired || record.closed.load(Ordering::Acquire) {
-                let _ = self.remove_session(&record, true);
+                if let Err(error) = self.remove_session(&record, true).await {
+                    result = Err(error);
+                }
+            } else if record.adapter.private_listener
+                && record.ready.load(Ordering::Acquire)
+                && let Ok(_operation) = record.adapter.operations.try_lock()
+                && let Err(error) = record.adapter.cleanup().await
+            {
+                result = Err(error);
             }
         }
         self.maintain_jobs();
+        result
     }
     pub(super) fn fanout_live(&self, changed: Option<&str>) {
         let records = self
@@ -517,7 +689,9 @@ impl AgentApplication {
             .lock()
             .records
             .values()
-            .filter(|record| !record.closed.load(Ordering::Acquire))
+            .filter(|record| {
+                !record.adapter.private_listener && !record.closed.load(Ordering::Acquire)
+            })
             .cloned()
             .collect::<Vec<_>>();
         if records.is_empty() {

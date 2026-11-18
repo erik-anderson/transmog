@@ -1,6 +1,10 @@
 //! Private inspection state with references to the application's single live engine.
 use crate::{AppConfig, AppError, Application, BodyStoreConfig, ErrorCategory};
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    num::NonZeroUsize,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use transmog_core::intercept::ExchangeId;
 
 impl Application {
@@ -82,6 +86,48 @@ impl Application {
                 Some(store.with_live_source(source, session.service.catalog().clone()));
         }
         session.live_parent = Some(Arc::new(self.clone()));
+        Ok(session)
+    }
+
+    /// Builds an independent backend for a loopback listener with bounded traffic retention.
+    ///
+    /// # Errors
+    /// Returns storage initialization or invalid saved-settings failures.
+    pub fn create_private_listener_session(&self, root: &Path) -> Result<Self, AppError> {
+        let saved = self.product_state();
+        let mut config = BodyStoreConfig::product_default(root.join("bodies"));
+        config.use_product_preferences = false;
+        config.max_bytes = self
+            .body_store
+            .as_ref()
+            .and_then(|store| store.buffer_status().max_bytes)
+            .unwrap_or(config.max_bytes)
+            .min(32 * 1024 * 1024);
+        config.max_body_bytes = config.max_bytes;
+        let mut service = crate::ServiceConfig::default();
+        service.sessions.max_sessions =
+            NonZeroUsize::new(saved.privacy.max_live_entries.unwrap_or(2500).min(2500));
+        let mut session = Self::new(AppConfig {
+            upstream_trust: self.upstream_trust.clone(),
+            body_store: Some(config),
+            service,
+            ..AppConfig::default()
+        })?;
+        session.runtime_limits = Some(transmog_runtime::RuntimeLimits {
+            max_connections: 64,
+            max_h2_streams: 16,
+            ..transmog_runtime::RuntimeLimits::default()
+        });
+        let mut preferences = saved.preferences;
+        preferences.configure_system_proxy = false;
+        preferences.allow_remote_clients = false;
+        preferences.proxy_port = None;
+        preferences.process_inspection = crate::ProcessInspectionPolicy::default();
+        session.save_product_state(crate::ProductState {
+            preferences,
+            privacy: saved.privacy,
+            ..crate::ProductState::default()
+        })?;
         Ok(session)
     }
     /// Adds memberships to canonical live exchanges without replay or duplicated body storage.

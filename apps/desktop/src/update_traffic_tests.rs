@@ -9,6 +9,24 @@ use transmog_core::{HeaderBlock, HeaderField};
 const FEED: &str = "https://updates.example.invalid/check";
 const ARTIFACT: &[u8] = include_bytes!("../tests/fixtures/updater-artifact.txt");
 
+struct TestSystemIntegration;
+
+impl transmog_session::HostIntegration for TestSystemIntegration {
+    fn apply(
+        &self,
+        _: SocketAddr,
+    ) -> Result<transmog_session::HostRestoreToken, transmog_session::HostIntegrationError> {
+        Ok(transmog_session::HostRestoreToken::new(()))
+    }
+
+    fn restore(
+        &self,
+        _: &transmog_session::HostRestoreToken,
+    ) -> Result<(), transmog_session::HostIntegrationError> {
+        Ok(())
+    }
+}
+
 fn mock_app() -> tauri::App<tauri::test::MockRuntime> {
     let mut context = tauri::test::mock_context(tauri::test::noop_assets());
     context.config_mut().plugins.0.insert(
@@ -130,12 +148,15 @@ fn only_running_listeners_are_selected_and_wildcard_listeners_use_loopback() {
     let mut status = AppStatus {
         lifecycle: AppLifecycle::Running,
         listener: Some("0.0.0.0:8123".into()),
+        routing_mode: Some(ProxyRoutingMode::Manual),
         summary: String::new(),
         host_restore_pending: false,
         process_inspection: transmog_app::ProcessInspectionPolicy::default(),
         https_decryption: None,
         unresolved_process_connections: 0,
     };
+    assert!(active_proxy(&status).is_none());
+    status.routing_mode = Some(ProxyRoutingMode::System);
     assert_eq!(
         active_proxy(&status).unwrap().as_str(),
         "http://127.0.0.1:8123/"
@@ -172,7 +193,7 @@ async fn https_update_checks_redirects_and_downloads_are_inspectable_after_proxy
     )
     .unwrap();
     application
-        .start_proxy(request.clone(), None)
+        .start_proxy(request.clone(), Some(Arc::new(TestSystemIntegration)))
         .await
         .unwrap();
     let update = tokio::time::timeout(Duration::from_secs(10), updater.check())
@@ -208,7 +229,10 @@ async fn https_update_checks_redirects_and_downloads_are_inspectable_after_proxy
     assert_eq!(body.display.as_bytes(), manifest);
     // A new port and root prove the Update does not retain either from its check.
     let next = proxy_request(&application, &root.path().join("next")).await;
-    application.start_proxy(next.clone(), None).await.unwrap();
+    application
+        .start_proxy(next.clone(), Some(Arc::new(TestSystemIntegration)))
+        .await
+        .unwrap();
     // The desktop uses a stable managed certificate path across root resets.
     std::fs::copy(&next.ca_certificate_path, &request.ca_certificate_path).unwrap();
     let bytes = tokio::time::timeout(Duration::from_secs(10), update.download(|_, _| {}, || {}))
@@ -241,7 +265,7 @@ async fn a_failed_update_check_keeps_the_http_response_in_traffic() {
         b"Try again later",
     );
     application
-        .start_proxy(request.clone(), None)
+        .start_proxy(request.clone(), Some(Arc::new(TestSystemIntegration)))
         .await
         .unwrap();
     let app = mock_app();
@@ -273,7 +297,10 @@ async fn intercepted_updates_still_require_a_trusted_certificate() {
     let application = application(root.path());
     let request = proxy_request(&application, root.path()).await;
     release_fixture(&application);
-    application.start_proxy(request, None).await.unwrap();
+    application
+        .start_proxy(request, Some(Arc::new(TestSystemIntegration)))
+        .await
+        .unwrap();
     let app = mock_app();
     let updater = update_checker(
         app.handle(),

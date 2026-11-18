@@ -2,6 +2,7 @@ use super::{DesktopState, start_proxy_locked};
 use serde_json::{Value, json};
 use std::{
     path::PathBuf,
+    sync::atomic::{AtomicBool, Ordering},
     sync::{Arc, Mutex},
 };
 use tauri::{Emitter as _, Manager as _, State};
@@ -38,6 +39,7 @@ pub(super) struct AgentState {
     access: Result<AccessManager, Error>,
     adapter: Result<Arc<AgentApplication>, Error>,
     listener: tokio::sync::Mutex<Option<LocalServer>>,
+    closing: Arc<AtomicBool>,
     maintenance: Mutex<Option<tokio::task::JoinHandle<()>>>,
     notifications: Mutex<Option<tokio::task::JoinHandle<()>>>,
     failure: Mutex<Option<String>>,
@@ -45,6 +47,7 @@ pub(super) struct AgentState {
 
 impl AgentState {
     pub fn new(state: DesktopState, root: PathBuf) -> Self {
+        let closing = Arc::clone(&state.closing);
         let access = AccessManager::open(Some(root.join("mcp-access.json")));
         let adapter = access.clone().and_then(|access| {
             AgentApplication::new(
@@ -59,6 +62,7 @@ impl AgentState {
             access,
             adapter,
             listener: tokio::sync::Mutex::new(None),
+            closing,
             maintenance: Mutex::new(None),
             notifications: Mutex::new(None),
             failure: Mutex::new(None),
@@ -128,6 +132,12 @@ impl AgentState {
     }
     async fn set_enabled(&self, enabled: bool) -> Result<(), Error> {
         let mut listener = self.listener.lock().await;
+        if enabled && self.closing.load(Ordering::Acquire) {
+            return Err(Error {
+                code: "unavailable",
+                message: "Transmog is closing.".into(),
+            });
+        }
         let access = self.access()?;
         let adapter = self.adapter()?;
         access.set_enabled(enabled)?;
@@ -135,6 +145,7 @@ impl AgentState {
             listener.take();
             adapter.end_all().await?;
         } else if listener.is_none() {
+            adapter.open_session_registry();
             *listener = Some(
                 LocalServer::start_for_instance(
                     self.root.clone(),
@@ -191,9 +202,13 @@ impl AgentState {
         Ok(())
     }
     pub async fn shutdown(&self) -> Result<(), Error> {
-        self.listener.lock().await.take();
+        let mut listener = self.listener.lock().await;
+        listener.take();
         if let Ok(access) = self.access() {
             access.clear_sensitive_access();
+        }
+        if let Ok(adapter) = self.adapter() {
+            adapter.end_all().await?;
         }
         if let Some(notifications) = self
             .notifications
@@ -210,9 +225,6 @@ impl AgentState {
             .take()
         {
             maintenance.abort();
-        }
-        if let Ok(adapter) = self.adapter() {
-            adapter.end_all().await?;
         }
         if let Ok(access) = self.access() {
             access.flush()?;
@@ -260,11 +272,22 @@ pub(super) async fn mcp_review_session(
     })
 }
 #[tauri::command]
-pub(super) fn mcp_end_session(
+pub(super) async fn mcp_end_session(
     session_id: String,
     state: State<'_, AgentState>,
 ) -> Result<Value, Error> {
-    state.adapter()?.end_inspection_session(&session_id)?;
+    state.adapter()?.end_inspection_session(&session_id).await?;
+    Ok(mcp_summary(state))
+}
+#[tauri::command]
+pub(super) async fn mcp_stop_listener(
+    session_id: String,
+    state: State<'_, AgentState>,
+) -> Result<Value, Error> {
+    state
+        .adapter()?
+        .stop_listener_from_desktop(&session_id)
+        .await?;
     Ok(mcp_summary(state))
 }
 #[tauri::command]

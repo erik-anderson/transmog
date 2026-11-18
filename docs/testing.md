@@ -155,6 +155,20 @@ or partial input, plus trace logging with an undrained stderr pipe. Both checks 
 clean up their subprocesses. See [MCP setup](mcp.md) and
 [connector contracts](mcp-reference.md#connector-lifetime).
 
+The `transmog-mcp` session tests exercise three simultaneous listeners, repeat
+starts, fixed-port collisions, revocation, idle expiry and sealing a private
+recording. The Windows CLI test runs manual recording against a disposable
+abandoned journal and compares system proxy settings before and after. Run the
+focused desktop browser routes after building the UI.
+
+```powershell
+python scripts/dev-env.py --run cargo test --locked -p transmog-mcp --features desktop private_listen
+python scripts/dev-env.py --run cargo test --locked -p transmog --test manual_proxy
+cd apps/desktop/ui
+node scripts/check-workspaces.mjs --proxy-recovery-only
+node scripts/check-workspaces.mjs --mcp-only
+```
+
 ## Desktop and capture workflows
 
 The native loopback inventory smoke observes the Windows enumeration command's
@@ -232,8 +246,9 @@ python ./scripts/test-cli-support.py --executable ./target/debug/transmog-cli.ex
 ```
 
 It uses controlled loopback traffic, isolated profiles and owned hidden consoles.
-It checks Ctrl+C, ephemeral/persistent roots, encrypted streaming, memory/disk
-circular capture, crash recovery, command help, proof-ID validation, and
+It checks Ctrl+C at listener readiness and during capture, ephemeral/persistent
+roots, encrypted streaming, memory/disk circular capture, crash recovery,
+command help, proof-ID validation, and
 destination safety. It exercises circular save recovery, labeled SAZ placeholders and rejection of
 unsafe export fields without leaving partial output, without installing roots or
 changing the host proxy. User-facing workflows use the standalone binary; see

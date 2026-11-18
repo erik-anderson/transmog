@@ -69,7 +69,7 @@ def main():
         assert result.returncode != 0, result.stdout
         return result.stderr
 
-    def ctrl_c(process):
+    def ctrl_c(process, wait_timeout=30):
         kernel = ctypes.WinDLL('kernel32', use_last_error=True)
         kernel.FreeConsole()
         if not kernel.AttachConsole(process.pid):
@@ -81,10 +81,83 @@ def main():
                 raise ctypes.WinError(ctypes.get_last_error())
             if not kernel.GenerateConsoleCtrlEvent(0, 0):
                 raise ctypes.WinError(ctypes.get_last_error())
-            process.wait(timeout=30)
+            process.wait(timeout=wait_timeout)
         finally:
-            kernel.SetConsoleCtrlHandler(None, False)
             kernel.FreeConsole()
+            kernel.SetConsoleCtrlHandler(None, False)
+
+    def interrupt_at_readiness():
+        from ctypes import wintypes
+        import msvcrt
+
+        output = fixture / 'serve-interrupted-at-readiness.tmcap'
+        log_path = fixture / 'serve-interrupted-at-readiness.log'
+        reader, writer = os.pipe()
+        padding = b'x' * 65536
+
+        def prefill():
+            try:
+                os.write(writer, padding)
+            except BrokenPipeError:
+                pass
+
+        # Force an actual window between LISTEN_ADDR on stdout and serving.
+        # The following stderr write waits behind the undrained pipe.
+        filler = threading.Thread(target=prefill, daemon=True)
+        filler.start()
+        process = None
+        try:
+            kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+            kernel.PeekNamedPipe.argtypes = [
+                wintypes.HANDLE, wintypes.LPVOID, wintypes.DWORD, wintypes.LPVOID,
+                ctypes.POINTER(wintypes.DWORD), wintypes.LPVOID]
+            available = wintypes.DWORD()
+            deadline = time.monotonic() + 5
+            while not available.value and time.monotonic() < deadline:
+                if not kernel.PeekNamedPipe(msvcrt.get_osfhandle(reader), None, 0, None,
+                                            ctypes.byref(available), None):
+                    raise ctypes.WinError(ctypes.get_last_error())
+                time.sleep(.01)
+            assert available.value and filler.is_alive(), 'Could not block startup stderr'
+            startup = subprocess.STARTUPINFO()
+            startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startup.wShowWindow = subprocess.SW_HIDE
+            with log_path.open('wb') as log:
+                process = subprocess.Popen(
+                    [executable, 'serve', '--capture', output, '--no-decrypt-https'],
+                    env=dict(environment, RUST_LOG='off'), stdin=subprocess.DEVNULL,
+                    stdout=log, stderr=writer,
+                    startupinfo=startup, creationflags=subprocess.CREATE_NEW_CONSOLE)
+                deadline = time.monotonic() + 30
+                while time.monotonic() < deadline:
+                    text = log_path.read_text(encoding='utf-8', errors='replace')
+                    if re.search(r'^LISTEN_ADDR=', text, re.MULTILINE):
+                        break
+                    assert process.poll() is None, text
+                    time.sleep(.05)
+                else:
+                    raise AssertionError('Listener readiness was not published')
+                try:
+                    ctrl_c(process, wait_timeout=1)
+                except subprocess.TimeoutExpired:
+                    pass
+                assert process.poll() is None, 'Ctrl+C exited before startup output drained'
+                remaining = len(padding)
+                while remaining:
+                    data = os.read(reader, min(remaining, 4096))
+                    assert data
+                    remaining -= len(data)
+                process.wait(timeout=10)
+            summary = command('capture', 'inspect', '--input', output)
+            assert process.returncode == 0 and 'SEALED=true' in summary, (
+                process.returncode, summary)
+        finally:
+            if process is not None and process.poll() is None:
+                process.kill()
+                process.wait(timeout=10)
+            os.close(reader)
+            filler.join(timeout=5)
+            os.close(writer)
 
     def capture(name, persistent=False, crash=False, circular=None, encrypted=False, conflict=False):
         output = fixture / (name + '.tmcap')
@@ -129,7 +202,7 @@ def main():
             assert bool(list(ledger.glob('*.key'))) == persistent
             assert record['lifecycle']['keyStorage'] == ('protected-file' if persistent else 'memory-only')
             assert not any('PRIVATE KEY' in path.read_text() for path in ledger.glob('*.json'))
-            endpoint = re.search(r'Proxy address: ([^\r\n]+)', text).group(1)
+            endpoint = re.search(r'^LISTEN_ADDR=([^\r\n]+)', text, re.MULTILINE).group(1)
             host, port = endpoint.rsplit(':', 1)
             connection = http.client.HTTPConnection(host, int(port), timeout=10)
             connection.request('POST', f'http://127.0.0.1:{origin.server_port}/support', expected,
@@ -160,7 +233,8 @@ def main():
                     output.write_bytes(b'existing user file')
                 ctrl_c(process)
                 text = log_path.read_text(encoding='utf-8')
-                assert 'Stopping capture: restoring proxy settings' in text
+                assert 'Finishing active requests and saving the recording.' in text
+                assert 'Routing restoration:' not in text
                 if conflict:
                     assert process.returncode != 0, text
                     assert output.read_bytes() == b'existing user file'
@@ -278,6 +352,7 @@ def main():
         assert '--proof-id' in error and 'panicked' not in error, error
         _, ordinary = capture('ephemeral')
         export_rejections(ordinary)
+        interrupt_at_readiness()
         assert not list(ledger.glob('root-*.json')) and not list(ledger.glob('*.key'))
         capture('circular-memory', circular='auto', encrypted=True)
         capture('circular-disk', circular='unlimited', encrypted=True)
@@ -300,7 +375,8 @@ def main():
         assert int(re.search(r'RETAINED_BODY_BYTES=(\d+)', recovered_summary).group(1)) > 0
         assert not list(ledger.glob('root-*.json')) and not list(ledger.glob('*.key'))
         print(json.dumps({'ephemeralMemoryOnly': True, 'persistentReuse': True,
-                          'consoleCtrlC': True, 'crashRecovery': True, 'encryptedStreaming': True,
+                          'consoleCtrlC': True, 'ctrlCAtReadiness': True,
+                          'crashRecovery': True, 'encryptedStreaming': True,
                           'circularMemory': True, 'circularDisk': True, 'circularSaveRecovery': True,
                           'commandHelp': True, 'sazPlaceholders': True,
                           'atomicExports': True, 'proofValidation': True, 'artifacts': str(fixture)}))

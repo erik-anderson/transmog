@@ -57,6 +57,16 @@ export function callerLabel(caller: ClientIdentity): string {
   return `${caller.processName ?? "Local process"}${pid}`;
 }
 
+export function proxyClientAddress(bindAddress: string): string {
+  return bindAddress.replace(/^(?:0\.0\.0\.0:|\[::\]:)/, (prefix) =>
+    prefix === "0.0.0.0:" ? "127.0.0.1:" : "[::1]:",
+  );
+}
+
+export function listensOnAllInterfaces(bindAddress: string | null): boolean {
+  return !!bindAddress && proxyClientAddress(bindAddress) !== bindAddress;
+}
+
 export function describeError(error: unknown): string {
   if (error instanceof Error) {
     return error.message;

@@ -104,7 +104,7 @@ def main():
         threading.Thread(target=server.serve_forever, daemon=True).start()
 
     @contextlib.contextmanager
-    def running(name, options, ready_pattern=r"LISTEN_ADDR=([^\r\n]+)"):
+    def running(name, options):
         log_path = root / (name + ".log")
         startup = {}
         if os.name == "nt":
@@ -120,7 +120,7 @@ def main():
                 deadline = time.monotonic() + 45
                 while time.monotonic() < deadline:
                     text = log_path.read_text(encoding="utf-8", errors="replace")
-                    match = re.search(ready_pattern, text)
+                    match = re.search(r"^LISTEN_ADDR=([^\r\n]+)", text, re.MULTILINE)
                     if match:
                         host, port = match.group(1).rsplit(":", 1)
                         yield host, int(port)
@@ -199,8 +199,7 @@ def main():
 
         capture = root / "record-tunnels.tmcap"
         with running("record-tunnels", ["record", "--output", capture, "--no-decrypt-https",
-                     "--no-system-proxy", "--process", process_name],
-                     r"Proxy address: ([^\r\n]+)") as endpoint:
+                     "--no-system-proxy", "--process", process_name]) as endpoint:
             http_request(endpoint, None)
             tls_request(endpoint)
         check_capture(capture, 2)

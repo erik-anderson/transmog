@@ -83,7 +83,7 @@ To record connection information without installing a certificate, use
 `record --output trace.tmcap --no-decrypt-https`. All callers' HTTPS
 connections retain destinations and outcomes but no decrypted contents;
 ordinary HTTP can still be inspected. No CA is created, installed, or removed
-for this run. Proxy restoration still applies. This differs from
+for this run. Windows system-proxy mode still restores routing. This differs from
 `--no-install-root`, which keeps HTTPS decryption enabled and leaves certificate
 trust setup to you.
 
@@ -103,12 +103,13 @@ Failed removal retains recovery records for retry. Public certificate and
 ownership records live separately from the desktop in
 `%LOCALAPPDATA%\Transmog-cli`. Windows proxy recovery also has its own CLI journal.
 
-If the process is killed or you dismiss a removal prompt, the next recording
-restores interrupted Windows proxy settings. Before applying proxy settings,
-the CLI also attempts to register current-user logon recovery; a registration
-failure does not prevent capture. Successful restoration removes that task.
-Recordings with HTTPS decryption
-also retry old-root removal; `--no-decrypt-https` leaves certificate cleanup for
+A system-proxy recording restores interrupted Windows proxy settings before
+starting. Manual recordings leave prior journals available for explicit recovery
+with `roots cleanup`. Before applying proxy settings, the CLI attempts to
+register current-user logon recovery. Capture can proceed if registration fails.
+Successful restoration removes that task.
+Recordings with HTTPS decryption retry old-root removal after an interruption
+or dismissed removal prompt. `--no-decrypt-https` leaves certificate cleanup for
 a later decrypting recording or `roots cleanup`. Failed removal keeps the exact
 identities needed for later cleanup. Cleanup does not require an old ephemeral
 key: each ordinary decrypting capture generates a fresh root and keeps its new
@@ -156,6 +157,14 @@ This restores an interrupted Windows proxy journal before certificate prompts.
 Persistent roots require `--include-persistent` to remove them. If cleanup is
 canceled, public recovery metadata stays available for another attempt.
 
+If proxy startup fails after the live capture file opens, Transmog attempts to
+seal the setup metadata and reports the startup error. Any retained setup trace
+contains zero exchanges.
+
+The CLI reports certificate cleanup errors alongside the recording outcome. It
+prints the saved trace path or the recovery path for a failed save when evidence
+is available.
+
 In Transmog, use **Files → Import traffic…** to open the leftover `.tmcap`. The viewer recovers
 the valid prefix without changing the original and explains incomplete evidence
 in **Trace metadata**. Use **Save copy…** and choose a new filename such as
@@ -180,7 +189,10 @@ Run `./transmog-cli record --output support-trace.tmcap` in a terminal with a
 Linux or macOS binary in the current directory. Configure
 the affected application's HTTP and HTTPS proxy with the printed address, then
 remove that configuration after stopping. Automatic host proxy configuration
-currently applies to Windows; `--no-system-proxy` keeps Windows setup manual too.
+currently applies to Windows. `--no-system-proxy` keeps Windows setup manual,
+including when an earlier system run left a recovery journal. Use the printed
+client address to configure the app. `LISTEN_ADDR` reports the bound socket
+for scripts. `--listen 127.0.0.1:0` selects a free port.
 
 On macOS, root installation uses the current user's login keychain and its OS
 consent flow; cleanup specifies the exact SHA-256 identity. On Linux, supported
@@ -193,8 +205,10 @@ and [Apple's security tool reference](https://github.com/apple-oss-distributions
 Use `--no-install-root` for manual certificate setup; the public root path is
 printed. In a noninteractive console, specify `--install-root` to explicitly
 authorize the OS workflow or `--no-install-root`. OS consent is still required
-where applicable. A remote listener requires `--allow-remote`; on Windows also
-use `--no-system-proxy` and configure that device with the listener address.
+where applicable, including with manual routing. `--no-decrypt-https` uses
+HTTPS tunnels without an interception root. A remote listener requires
+`--allow-remote`. On Windows also use `--no-system-proxy`. From the other
+device, use the recording computer's reachable LAN address and listening port.
 
 On Linux systems without a supported system trust store, a run with
 `--no-install-root` can clean up its CLI-owned public files without invoking
