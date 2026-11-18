@@ -45,6 +45,7 @@ export interface ClientIdentity {
 
 export interface SessionSummary {
   requestNumber: string;
+  sequence: string;
   id: string;
   caller: ClientIdentity;
   method: string;

@@ -4844,12 +4844,16 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   private rebuildRows(rows: SessionSummary[]): void {
     this.sessions = rows.map((row) => {
-      const streamLabel =
-        row.streamProtocol === "web-socket"
-          ? "WebSocket"
-          : row.streamProtocol === "sse"
-            ? "SSE"
-            : "";
+      const loading = !this.rowCache.has(row.id),
+        extensionCells = this.extensionTableColumns.length
+          ? this.classifications.cells(row.id)
+          : NO_EXTENSION_CELLS,
+        streamLabel =
+          row.streamProtocol === "web-socket"
+            ? "WebSocket"
+            : row.streamProtocol === "sse"
+              ? "SSE"
+              : "";
       const streamAccessibleLabel =
         streamLabel +
         " · " +
@@ -4867,9 +4871,9 @@ export class TrafficWorkspace extends WorkspaceElement {
           : "";
       return {
         ...row,
-        extensionCells: this.extensionTableColumns.length
-          ? this.classifications.cells(row.id)
-          : NO_EXTENSION_CELLS,
+        extensionCells: loading
+          ? extensionCells.map((cell) => ({ ...cell, title: "" }))
+          : extensionCells,
         streamLabel,
         streamDisplay:
           streamLabel === "WebSocket" &&
@@ -4882,22 +4886,23 @@ export class TrafficWorkspace extends WorkspaceElement {
         index: this.virtualList.indexes.get(row.id) ?? 0,
         rowIndex: (this.virtualList.indexes.get(row.id) ?? 0) + 2,
         rowSize: this.virtualList.size(this.virtualList.indexes.get(row.id) ?? 0) + "px",
-        loading: !this.rowCache.has(row.id),
+        loading,
         tone: statusTone(row),
         selectionState: this.trafficSelection.ids.has(row.id) ? "true" : "false",
-        rowLabel: this.rowCache.has(row.id)
-          ? (streamLabel ? streamLabel + " · " + stateText(row.terminal) + ": " : "") +
+        rowLabel: loading
+          ? "Loading traffic entry"
+          : (streamLabel ? streamLabel + " · " + stateText(row.terminal) + ": " : "") +
             (row.topLevelNavigation ? "Top-level navigation: " : "") +
             row.method +
             " " +
             row.host +
-            row.path
-          : "Loading traffic entry",
+            row.path,
         cells: this.columns.map((column) => ({
           id: column.id,
           text: column.id === "status" && row.status === 304 ? "304" : cellText(row, column.id),
-          title:
-            column.id === "duration" && streamLabel
+          title: loading
+            ? ""
+            : column.id === "duration" && streamLabel
               ? lifetimeDescription(row.streamLifetime)
               : cellText(row, column.id) +
                 (column.id === "protocol" && streamLabel
@@ -4935,6 +4940,10 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.rebuildColumns();
     }
     for (const row of rows) {
+      const previous = this.rowCache.get(row.id);
+      if (previous && BigInt(row.sequence) < BigInt(previous.sequence)) {
+        continue;
+      }
       this.rowCache.delete(row.id);
       this.rowCache.set(row.id, row);
       this.staleRows.delete(row.id);

@@ -160,6 +160,8 @@ pub struct SessionSummary {
     pub script_search: Vec<String>,
     /// Exact workspace admission number, transported as decimal text.
     pub request_number: String,
+    /// Last catalog observation sequence, transported exactly as decimal text.
+    pub sequence: String,
     /// Opaque display identifier for subsequent detail queries.
     pub id: String,
     /// Best-effort caller identity captured when the connection opened.
@@ -561,6 +563,7 @@ fn summarize(snapshot: &SessionSnapshot, now: SystemTime, capturing: bool) -> Se
             .flat_map(|a| std::iter::once(a.note.clone()).chain(a.tags.clone()))
             .collect(),
         request_number: snapshot.request_number.to_string(),
+        sequence: snapshot.last_sequence.to_string(),
         top_level_navigation,
         fetch_destination,
         trace_id: None,
@@ -984,7 +987,7 @@ fn request_order_page(
             .filter_map(|id| {
                 service
                     .catalog()
-                    .get(crate::response_assets::parse_exchange_id(id).ok()?)
+                    .get_metadata(crate::response_assets::parse_exchange_id(id).ok()?)
                     .map(|snapshot| summarize_with_trace(&snapshot, now, capturing, traces))
             })
             .collect(),
@@ -1053,7 +1056,7 @@ pub(crate) fn traffic_rows(
             let exchange = crate::response_assets::parse_exchange_id(id).ok()?;
             service
                 .catalog()
-                .get(exchange)
+                .get_metadata(exchange)
                 .map(|snapshot| summarize_with_trace(&snapshot, now, capturing, traces))
         })
         .collect())
@@ -1087,7 +1090,7 @@ pub(crate) fn traffic_timeline_rows(
             let exchange = crate::response_assets::parse_exchange_id(id).ok()?;
             service
                 .catalog()
-                .get(exchange)
+                .get_metadata(exchange)
                 .map(|snapshot| timeline_row(&snapshot, now, traces))
         })
         .collect())
@@ -1411,6 +1414,90 @@ mod tests {
                 metadata: Arc::new(ExchangeMetadata::from_session(&session, target)),
             },
         }
+    }
+
+    #[test]
+    fn traffic_pages_preserve_stream_summaries_without_content_snapshots() {
+        use transmog_core::{
+            observe::{ExchangeBoundary, ObservedBodyChunk},
+            stream::{StreamMessage, StreamProtocol, StreamState, StreamStatus},
+        };
+
+        let service =
+            ApplicationSessionService::new(transmog_session::ServiceConfig::default()).unwrap();
+        let catalog = service.catalog();
+        catalog.set_stream_content_retention(true, true);
+        let mut opening = started(1);
+        if let ObserverEventKind::ExchangeStarted { metadata } = &mut opening.kind {
+            Arc::make_mut(metadata).started_at = SystemTime::UNIX_EPOCH;
+        }
+        catalog.apply(opening);
+        let event = |sequence, kind| ObserverEvent {
+            exchange_id: ExchangeId(1),
+            sequence,
+            kind,
+        };
+        catalog.apply(event(
+            2,
+            ObserverEventKind::StreamState(StreamState::now(
+                StreamProtocol::WebSocket,
+                StreamStatus::Open,
+                None,
+            )),
+        ));
+        for sequence in 3..=258 {
+            catalog.apply(event(
+                sequence,
+                ObserverEventKind::StreamMessage(StreamMessage::new(
+                    "server",
+                    "text",
+                    bytes::Bytes::from_static(b"retained message"),
+                )),
+            ));
+        }
+        catalog.apply(event(
+            259,
+            ObserverEventKind::BodyChunk(ObservedBodyChunk {
+                boundary: ExchangeBoundary::ClientResponse,
+                byte_count: 1234,
+                sample: None,
+                truncated: true,
+            }),
+        ));
+        catalog.apply(event(
+            260,
+            ObserverEventKind::StreamState(StreamState::now(
+                StreamProtocol::WebSocket,
+                StreamStatus::Closed,
+                None,
+            )),
+        ));
+        let traces = crate::traces::TraceRegistry::default();
+        let views = Mutex::new(TrafficViews::default());
+        let expected = summarize_with_trace(
+            &catalog.get(ExchangeId(1)).unwrap(),
+            SystemTime::now(),
+            false,
+            &traces,
+        );
+        assert_eq!(expected.stream_received, Some(256 * 16));
+        assert_eq!(expected.response_bytes, 1234);
+        let view = traffic_view(
+            &service,
+            &views,
+            &SessionQueryInput::default(),
+            &traces,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            view.page.sessions.as_slice(),
+            std::slice::from_ref(&expected)
+        );
+        assert_eq!(
+            traffic_rows(&service, &views, &view.id, 0, 100, &traces).unwrap(),
+            [expected]
+        );
     }
 
     #[test]

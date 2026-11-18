@@ -21,7 +21,8 @@ export async function checkTrafficStreaming(page, root) {
       const p = globalThis.__streamProbe;
       if (!p) return;
       p.blockRows = false;
-      for (const resolve of p.held.splice(0)) resolve();
+      p.holdViews = false;
+      for (const resolve of [...p.held.splice(0), ...p.heldViews.splice(0)]) resolve();
     });
   try {
     await settle();
@@ -48,6 +49,8 @@ export async function checkTrafficStreaming(page, root) {
         p = (globalThis.__streamProbe = {
           raw,
           held: [],
+          heldViews: [],
+          holdViews: false,
           blockRows: true,
           dropPages: true,
           loading: [],
@@ -55,8 +58,14 @@ export async function checkTrafficStreaming(page, root) {
           queries: [],
           active: 0,
           maximum: 0,
+          regressions: [],
         });
       p.observer = new MutationObserver(() => {
+        const current = t.trafficTable.querySelector(
+          '#session-stream-249 [data-column-id="status"]',
+        );
+        if (p.expectCompleted && current && current.textContent.trim() !== "202")
+          p.regressions.push(current.textContent.trim());
         for (const row of t.trafficTable.querySelectorAll('tr[data-session-id^="arrival-"]')) {
           p.seen.add(row.dataset.sessionId);
           if (
@@ -82,6 +91,8 @@ export async function checkTrafficStreaming(page, root) {
         try {
           const result = await raw(name, args, options);
           if (name === "query_traffic_view" && p.dropPages) result.page.sessions = [];
+          if (name === "query_traffic_view" && p.holdViews)
+            await new Promise((resolve) => p.heldViews.push(resolve));
           return result;
         } finally {
           if (name === "query_traffic_view") p.active--;
@@ -118,11 +129,61 @@ export async function checkTrafficStreaming(page, root) {
       .locator("#session-arrival-staged-3")
       .getByText("stream.exe (1234)", { exact: true })
       .waitFor();
+    assert.equal(
+      await page
+        .locator('#session-arrival-staged-3 [data-column-id="status"]')
+        .getAttribute("title"),
+      "201",
+      "Loaded rows lost their real column tooltips",
+    );
     assert.deepEqual(
       await page.evaluate(() => globalThis.__streamProbe.loading),
       [],
       "A new row flashed loading/default column values",
     );
+
+    // An older query must not roll back a fresher row read from the current view.
+    await page.evaluate(async () => {
+      const t = document.querySelector("app-shell").traffic,
+        s = globalThis.__workspaceFixture,
+        p = globalThis.__streamProbe;
+      p.dropPages = false;
+      s.sessions = s.sessions.map((row) =>
+        row.id === "stream-249"
+          ? { ...row, sequence: "18446744073709551614", status: null, terminal: "active" }
+          : row,
+      );
+      await t.refreshSessions();
+      p.holdViews = true;
+      void t.refreshSessions();
+    });
+    await page.waitForFunction(() => globalThis.__streamProbe.heldViews.length > 0);
+    await page.evaluate(async () => {
+      const t = document.querySelector("app-shell").traffic,
+        s = globalThis.__workspaceFixture;
+      s.sessions = s.sessions.map((row) =>
+        row.id === "stream-249"
+          ? { ...row, sequence: "18446744073709551615", status: 202, terminal: "completed" }
+          : row,
+      );
+      s.rowMap = new Map(s.sessions.map((row) => [row.id, row]));
+      await t.loadWindow(200, true);
+      await t.renderViewport();
+    });
+    await page.locator('#session-stream-249 [data-column-id="status"]').getByText("202").waitFor();
+    await page.evaluate(() => {
+      globalThis.__streamProbe.expectCompleted = true;
+    });
+    await release();
+    await settle();
+    assert.deepEqual(
+      await page.evaluate(() => globalThis.__streamProbe.regressions),
+      [],
+      "An older traffic query restored Pending over a completed row",
+    );
+    await page.evaluate(() => {
+      globalThis.__streamProbe.dropPages = true;
+    });
 
     // Cold historical windows reserve blank slots until their summaries arrive.
     await page.evaluate(async () => {
@@ -138,10 +199,12 @@ export async function checkTrafficStreaming(page, root) {
       await page
         .locator('tr[data-loading="true"]')
         .evaluateAll((rows) =>
-          rows.every((row) => [...row.cells].every((cell) => !cell.textContent.trim())),
+          rows.every((row) =>
+            [...row.cells].every((cell) => !cell.textContent.trim() && !cell.title),
+          ),
         ),
       true,
-      "A loading slot fabricated a Pending status or Unknown process",
+      "A loading slot fabricated column text or tooltips",
     );
     const geometry = await page
       .locator('tr[data-loading="true"]')

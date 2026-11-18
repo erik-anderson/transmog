@@ -262,6 +262,7 @@ await page.addInitScript(
     const summary = (id, index = 0) => ({
       id,
       requestNumber: String(index + 1),
+      sequence: "0",
       caller,
       method: "GET",
       host: "example.test",
@@ -520,6 +521,7 @@ await page.addInitScript(
       const number = (value) => BigInt(value ?? 0);
       let rows = structuredClone(state.sessions)
         .map((row) => {
+          row.sequence ??= "0";
           if (row.streamLifetime?.live && row.quietStartedAt != null) {
             const duration = Date.now() - row.quietStartedAt;
             row.durationMs = duration;
@@ -3078,7 +3080,8 @@ await page.addInitScript(
               .slice(args.offset, args.offset + args.limit)
               .filter((id) => !dismissed.has(id))
               .map((id) => state.rowMap.get(id))
-              .filter(Boolean);
+              .filter(Boolean)
+              .map((row) => ({ ...row, sequence: row.sequence ?? "0" }));
           }
           case "traffic_timeline_rows": {
             const view = state.trafficViews?.get(args.viewId);

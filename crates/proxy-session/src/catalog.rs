@@ -706,14 +706,30 @@ impl SessionCatalog {
 
     /// Gets one immutable snapshot by exchange ID.
     pub fn get(&self, exchange_id: ExchangeId) -> Option<SessionSnapshot> {
+        self.get_snapshot(exchange_id, true)
+    }
+
+    /// Gets visible metadata without cloning retained body samples or stream messages.
+    /// Shared entries keep this catalog's independent admission number.
+    pub fn get_metadata(&self, exchange_id: ExchangeId) -> Option<SessionSnapshot> {
+        self.get_snapshot(exchange_id, false)
+    }
+
+    fn get_snapshot(&self, exchange_id: ExchangeId, content: bool) -> Option<SessionSnapshot> {
         let state = self.lock_state();
         if state.dismissed.contains(&exchange_id) {
             return None;
         }
         if let Some(reference) = state.borrowed.get(&exchange_id) {
-            return reference.snapshot(true);
+            return reference.snapshot(content);
         }
-        state.by_id.get(&exchange_id).map(MutableSession::snapshot)
+        state.by_id.get(&exchange_id).map(|session| {
+            session.snapshot_with_content(
+                content,
+                std::time::Instant::now(),
+                transmog_core::stream::observed_millis(),
+            )
+        })
     }
 
     /// Projects only borrowed retained heads while holding the catalog lock.
@@ -3162,7 +3178,7 @@ mod tests {
     #[test]
     fn atomic_metadata_snapshot_freezes_lifecycle_and_omits_content_collections() {
         use transmog_core::stream::{StreamMessage, StreamProtocol, StreamState, StreamStatus};
-        let catalog = SessionCatalog::new(limits(3));
+        let catalog = SessionCatalog::new(limits(4));
         catalog.set_stream_content_retention(true, true);
         for id in 1..=2 {
             start(&catalog, id, "snapshot.test");
@@ -3196,12 +3212,20 @@ mod tests {
             ));
         }
         let snapshot = catalog.retained_metadata();
+        let keyed = [ExchangeId(1), ExchangeId(2)].map(|id| catalog.get_metadata(id).unwrap());
+        let shared = SessionCatalog::new(limits(3));
+        shared
+            .reference_exchanges(&catalog, &[ExchangeId(2), ExchangeId(1)], Arc::new(|_| {}))
+            .unwrap();
+        let borrowed = shared.get_metadata(ExchangeId(1)).unwrap();
+        assert_eq!(borrowed.request_number, 2);
+        assert!(catalog.get_metadata(ExchangeId(999)).is_none());
         assert_eq!(snapshot.len(), 2);
         assert_eq!(
             snapshot[0].stream_history.observed_until,
             snapshot[1].stream_history.observed_until
         );
-        assert!(snapshot.iter().all(|row| {
+        assert!(snapshot.iter().chain(&keyed).chain([&borrowed]).all(|row| {
             row.stream_history.items.is_empty()
                 && row.stream_history.observed == 1
                 && row.stream_history.server_bytes == 15
@@ -3220,6 +3244,10 @@ mod tests {
             )),
         ));
         catalog.dismiss(&[ExchangeId(2)], &[ExchangeId(2)]);
+        assert!(catalog.get_metadata(ExchangeId(2)).is_none());
+        assert!(shared.get_metadata(ExchangeId(2)).is_some());
+        shared.dismiss(&[ExchangeId(2)], &[ExchangeId(2)]);
+        assert!(shared.get_metadata(ExchangeId(2)).is_none());
         assert!(snapshot.iter().all(|row| row.state() == "active"));
         assert_eq!(catalog.retained_metadata().len(), 1);
         assert_eq!(

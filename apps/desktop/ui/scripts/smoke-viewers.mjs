@@ -142,12 +142,19 @@ async function targets() {
 }
 async function waitFor(check, message) {
   const deadline = Date.now() + 15000;
+  let contextError;
   while (Date.now() < deadline) {
-    const value = await check();
-    if (value) return value;
+    try {
+      const value = await check();
+      if (value) return value;
+    } catch (error) {
+      // A discovered WebView may still be replacing its initial document.
+      if (error.cause?.message !== "Cannot find default execution context") throw error;
+      contextError = error;
+    }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error(message);
+  throw new Error(message, { cause: contextError });
 }
 const root = 'document.querySelector("app-shell")';
 const traffic = root + '.shadowRoot.querySelector("traffic-workspace")';
