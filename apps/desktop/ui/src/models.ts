@@ -714,6 +714,8 @@ export interface TrafficFacetPage {
   nextOffset: number | null;
 }
 export interface TrafficQuery {
+  latest?: boolean;
+  offset?: number;
   incidentWindow: unknown;
   search: string;
   searchResultId: string | null;

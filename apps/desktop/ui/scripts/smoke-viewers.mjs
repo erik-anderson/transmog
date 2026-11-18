@@ -321,7 +321,9 @@ try {
       false,
       "Relaunch replaced the main window",
     );
-    await blankViewer.evaluate("window.__TAURI_INTERNALS__.invoke('close_trace_window')");
+    // Closing destroys the IPC caller before its promise can necessarily resolve.
+    // Observe the target disappearing below instead of awaiting that reply.
+    await blankViewer.evaluate("void window.__TAURI_INTERNALS__.invoke('close_trace_window')");
     await waitFor(
       async () => !(await targets()).some((target) => target.id === relaunchedTarget.id),
       "Relaunched viewer did not close",

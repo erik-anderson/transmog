@@ -9,7 +9,10 @@ export async function smokeStreams(call, evaluate, screenshotPath) {
   const sockets = new Set();
   let events;
   const origin = createServer((incoming, response) => {
-    if (incoming.url.startsWith("/native-following/")) {
+    if (
+      incoming.url.startsWith("/native-following/") ||
+      incoming.url.startsWith("/native-following-rate/")
+    ) {
       response.writeHead(200, { "Content-Type": "text/plain" });
       response.end("native following");
       return;

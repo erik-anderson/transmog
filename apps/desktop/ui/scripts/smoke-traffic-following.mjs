@@ -63,6 +63,56 @@ export async function smokeTrafficFollowing(call, evaluate, capture, screenshotP
       Array.from({ length: 60 }, (_, index) => capture("/native-following/" + index)),
     );
     await wait(`${t}.totalMatched===60 && ${bottom}`);
+    await evaluate(
+      `(async()=>{const w=${t};w.liveFilter='/native-following-rate/';w.queryRevision++;await w.resumeLatest();})()`,
+    );
+    await wait(
+      `!${t}.liveRefreshRunning && !${t}.liveRefreshDirty && ${t}.refreshTimer===undefined`,
+    );
+    await evaluate(`(()=>{
+      const w=${t},raw=w.querySessions,p=globalThis.__nativeStreaming={times:[],active:0,maximum:0,loading:[]};
+      w.querySessions=async(...args)=>{
+        p.times.push(performance.now());p.maximum=Math.max(p.maximum,++p.active);
+        try {await raw.apply(w,args);} finally {p.active--;}
+      };
+      p.observer=new MutationObserver(()=>{
+        for(const row of w.trafficTable.querySelectorAll('tr[data-loading="true"]'))
+          if(row.textContent.trim())p.loading.push(row.dataset.sessionId);
+      });
+      p.observer.observe(w.trafficTable,{subtree:true,childList:true,attributes:true,characterData:true});
+    })()`);
+    try {
+      for (let index = 0; index < 25; index++) {
+        await capture("/native-following-rate/" + index);
+        await new Promise((resolve) => setTimeout(resolve, 40));
+      }
+      await wait(
+        `${t}.totalMatched===25 && ${bottom} && !${t}.liveRefreshRunning && !${t}.liveRefreshDirty && ${t}.refreshTimer===undefined`,
+      );
+      const streaming = await evaluate(
+        `(()=>{const p=globalThis.__nativeStreaming;return {times:p.times,maximum:p.maximum,loading:p.loading};})()`,
+      );
+      assert.ok(
+        streaming.times.length >= 3,
+        "Native arrivals did not stream during sustained activity",
+      );
+      assert.equal(streaming.maximum, 1, "Native live queries overlapped");
+      assert.ok(
+        streaming.times.slice(1).every((time, index) => time - streaming.times[index] >= 245),
+        "Native updates exceeded four per second",
+      );
+      assert.deepEqual(
+        streaming.loading,
+        [],
+        "Native loading slots showed fabricated column values",
+      );
+      process.stdout.write("Native traffic streaming: " + JSON.stringify(streaming) + "\n");
+    } finally {
+      await evaluate(
+        `(async()=>{const w=${t};delete w.querySessions;globalThis.__nativeStreaming.observer.disconnect();delete globalThis.__nativeStreaming;w.liveFilter='/native-following/';w.queryRevision++;await w.resumeLatest();})()`,
+      );
+    }
+    await wait(`${t}.totalMatched===60 && ${bottom}`);
     await evaluate(`${t}.trafficTable.focus({preventScroll:true})`);
     await key("a", "KeyA", 65, 2);
     await wait(`!${t}.followLatest && ${t}.selectedTrafficCount===60`);

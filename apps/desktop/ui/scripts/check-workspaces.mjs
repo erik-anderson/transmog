@@ -7,6 +7,7 @@ import { checkRequestControls } from "./check-request-controls.mjs";
 import { checkTrafficShortcuts } from "./check-traffic-shortcuts.mjs";
 import { checkTrafficFollowing } from "./check-traffic-following.mjs";
 import { checkTrafficRefresh } from "./check-traffic-refresh.mjs";
+import { checkTrafficStreaming } from "./check-traffic-streaming.mjs";
 import {
   checkResponseSetWorkspaces,
   checkResponseSetDraftRegressions,
@@ -3046,6 +3047,8 @@ await page.addInitScript(
               const index = rows.findIndex((row) => row.id === args.query.focusId);
               if (index < 0) throw new Error("Source no longer in Traffic.");
               offset = Math.floor(index / limit) * limit;
+            } else if (args.query.latest) {
+              offset = Math.max(0, rows.length - limit);
             }
             const page = {
               sessions: rows.slice(offset, offset + limit),
@@ -5228,6 +5231,15 @@ try {
     await checkTrafficRefresh(page, root);
     assert.deepEqual(errors, []);
     process.stdout.write("Traffic refresh presentation and stale row reads verified.\n");
+    await browser.close();
+    process.exit(0);
+  }
+  if (process.argv.includes("--traffic-streaming-only")) {
+    await checkTrafficStreaming(page, root);
+    assert.deepEqual(errors, []);
+    process.stdout.write(
+      "Atomic traffic arrivals and four-per-second streaming refresh verified.\n",
+    );
     await browser.close();
     process.exit(0);
   }
@@ -11042,6 +11054,7 @@ try {
   await runBrowserCheck(checkTextEdits, page, root);
   await runBrowserCheck(checkTrafficFollowing, page, root);
   await runBrowserCheck(checkTrafficRefresh, page, root);
+  await runBrowserCheck(checkTrafficStreaming, page, root);
   await runBrowserCheck(checkHeaderEditor, page, root);
   await runBrowserCheck(checkComposerAuthoring, page, root);
   await runBrowserCheck(checkInspectorLayout, page, root);

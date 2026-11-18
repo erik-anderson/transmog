@@ -60,7 +60,7 @@ traffic-workspace { display:contents; }
 
 .traffic-spacer div {height:attr(data-size type(<length>),0px);}
 .traffic-table tr[data-current] td:first-child {box-shadow:inset 3px 0 var(--accent-strong);}
-.traffic-table tr[data-loading="true"] {color:var(--muted);}
+.traffic-table tr[data-loading="true"] {color:var(--muted);height:attr(data-size type(<length>),0px);}
 .traffic-table:focus-visible {outline:2px solid var(--focus);outline-offset:-2px;}
 @supports (width:attr(data-size type(<length>))) {
   .traffic-table { width:attr(data-width type(<length>),100%); }

@@ -178,6 +178,7 @@ type Row = SessionSummary & {
   extensionCells: Array<{ key: string; text: string; title: string }>;
   index: number;
   rowIndex: number;
+  rowSize: string;
   loading: boolean;
   tone: string;
   selectionState: string;
@@ -2087,6 +2088,9 @@ export class TrafficWorkspace extends WorkspaceElement {
   private viewportEnd = 0;
   private renderFrame: number | undefined;
   private refreshTimer: number | undefined;
+  private liveRefreshDirty = false;
+  private liveRefreshRunning = false;
+  private lastQueryStarted = -Infinity;
   private rowLayout = "";
   private scrollGeneration = 0;
   private latestScrollTop = 0;
@@ -4877,6 +4881,7 @@ export class TrafficWorkspace extends WorkspaceElement {
         activeStreamLabel,
         index: this.virtualList.indexes.get(row.id) ?? 0,
         rowIndex: (this.virtualList.indexes.get(row.id) ?? 0) + 2,
+        rowSize: this.virtualList.size(this.virtualList.indexes.get(row.id) ?? 0) + "px",
         loading: !this.rowCache.has(row.id),
         tone: statusTone(row),
         selectionState: this.trafficSelection.ids.has(row.id) ? "true" : "false",
@@ -5112,7 +5117,7 @@ export class TrafficWorkspace extends WorkspaceElement {
         this.cacheRows(rows);
         this.scheduleViewport();
         if (rows.length < Math.min(100, view.ids.length - offset)) {
-          void this.refreshSessions(undefined, true);
+          this.scheduleLiveRefresh();
         }
       })
       .catch((error: unknown) => {
@@ -5175,6 +5180,44 @@ export class TrafficWorkspace extends WorkspaceElement {
     }
     this.scrollToLatest();
     await this.renderViewport();
+  }
+  private async prepareArrivals(view: TrafficView): Promise<boolean> {
+    if (!this.sessionScroller.clientHeight || this.view !== "traffic" || this.timelineMode) {
+      return true;
+    }
+    const anchor = this.virtualList.anchor(this.sessionScroller.scrollTop),
+      visible = Math.ceil(this.sessionScroller.clientHeight / this.virtualList.size(0)) + 20,
+      index = this.followLatest
+        ? Math.max(0, view.ids.length - visible)
+        : Math.max(0, anchor ? view.ids.indexOf(anchor.id) : 0),
+      supplied = new Set(view.page.sessions.map((row) => row.id)),
+      needed = new Set<string>(),
+      offsets = new Set<number>();
+    for (let i = Math.max(0, index - 10); i < Math.min(view.ids.length, index + visible); i++) {
+      const id = view.ids[i]!;
+      if (!this.virtualList.indexes.has(id) && !this.rowCache.has(id) && !supplied.has(id)) {
+        needed.add(id);
+        offsets.add(Math.floor(i / 100) * 100);
+      }
+    }
+    if (!offsets.size) {
+      return true;
+    }
+    const rows = (
+      await Promise.all(
+        [...offsets].map((offset) =>
+          invoke<SessionSummary[]>("traffic_view_rows", { viewId: view.id, offset, limit: 100 }),
+        ),
+      )
+    ).flat();
+    for (const row of rows) {
+      needed.delete(row.id);
+    }
+    if (needed.size) {
+      return false;
+    }
+    view.page.sessions.push(...rows);
+    return true;
   }
   private scrollToLatest(): void {
     if (
@@ -6402,9 +6445,29 @@ export class TrafficWorkspace extends WorkspaceElement {
   private async querySessions(force: boolean): Promise<void> {
     const revision = this.queryRevision;
     try {
-      const view = await invoke<TrafficView>("query_traffic_view", { query: this.trafficQuery() });
+      this.lastQueryStarted = performance.now();
+      const view = await invoke<TrafficView>("query_traffic_view", {
+        query: this.trafficQuery({
+          latest: this.followLatest,
+          offset: Math.floor(this.viewportStart / 100) * 100,
+        }),
+      });
       if (!this.isConnected || revision !== this.queryRevision) {
         this.releaseView(view);
+        return;
+      }
+      let prepared: boolean;
+      try {
+        prepared = await this.prepareArrivals(view);
+      } catch (error) {
+        this.releaseView(view);
+        throw error;
+      }
+      if (!this.isConnected || revision !== this.queryRevision || !prepared) {
+        this.releaseView(view);
+        if (this.isConnected && revision === this.queryRevision && !prepared) {
+          this.scheduleLiveRefresh();
+        }
         return;
       }
       if (view.page.retainedCount > 0 || view.ids.length) {
@@ -6459,6 +6522,42 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.diagnostic = this.sessionText;
     }
   }
+  private scheduleLiveRefresh(): void {
+    this.liveRefreshDirty = true;
+    if (!this.isConnected || this.refreshTimer !== undefined || this.liveRefreshRunning) {
+      return;
+    }
+    const delay = Math.max(0, Math.ceil(this.lastQueryStarted + 250 - performance.now()));
+    this.refreshTimer = window.setTimeout(() => {
+      this.refreshTimer = undefined;
+      void this.flushLiveRefresh();
+    }, delay);
+  }
+  private async flushLiveRefresh(): Promise<void> {
+    this.liveRefreshRunning = true;
+    try {
+      if (!this.isConnected) {
+        return;
+      }
+      if (this.queryPending) {
+        await this.queryPending;
+        return;
+      }
+      if (performance.now() < this.lastQueryStarted + 250) {
+        return;
+      }
+      this.liveRefreshDirty = false;
+      if (this.selectedSessionId) {
+        void this.refreshInspection();
+      }
+      await this.refreshSessions();
+    } finally {
+      this.liveRefreshRunning = false;
+      if (this.liveRefreshDirty && this.isConnected) {
+        this.scheduleLiveRefresh();
+      }
+    }
+  }
   async watchSessions(): Promise<void> {
     if (this.watching) {
       return;
@@ -6470,15 +6569,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       if (!this.isConnected) {
         return;
       }
-      if (this.refreshTimer === undefined) {
-        this.refreshTimer = window.setTimeout(() => {
-          this.refreshTimer = undefined;
-          void this.refreshSessions();
-          if (this.selectedSessionId) {
-            void this.refreshInspection();
-          }
-        }, 200);
-      }
+      this.scheduleLiveRefresh();
     };
     this.sessionUpdates = onEvent;
     try {
@@ -8751,6 +8842,8 @@ export class TrafficWorkspace extends WorkspaceElement {
     }
     this.rowObserver?.disconnect();
     window.clearTimeout(this.refreshTimer);
+    this.refreshTimer = undefined;
+    this.liveRefreshDirty = false;
     if (this.renderFrame !== undefined) {
       cancelAnimationFrame(this.renderFrame);
     }

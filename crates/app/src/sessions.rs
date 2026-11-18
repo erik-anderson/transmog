@@ -111,6 +111,7 @@ pub struct SessionQueryInput {
     /// Opaque continuation token returned by the prior page.
     pub cursor: Option<String>,
     /// Return the newest matching bounded window without pagination.
+    /// Sorted views return the trailing window of their chosen display order.
     #[serde(default)]
     pub latest: bool,
     /// Requested page length; the session layer applies its configured cap.
@@ -885,29 +886,12 @@ fn page_from_rows(
         ));
     }
     let total_matched = rows.len();
-    let focus_offset = input
-        .focus_id
-        .as_ref()
-        .map(|id| {
-            rows.iter()
-                .position(|row| &row.id == id)
-                .map(|index| index / limit * limit)
-                .ok_or_else(|| {
-                    AppError::new(
-                        ErrorCategory::Unavailable,
-                        "source is no longer in the matching retained traffic",
-                        false,
-                    )
-                })
-        })
-        .transpose()?;
+    let (offset, focus_offset) = page_offset(input, total_matched, limit, |id| {
+        rows.iter().position(|row| row.id == id)
+    })?;
     let counters = service.catalog().counters();
     Ok(SessionPage {
-        sessions: rows
-            .into_iter()
-            .skip(focus_offset.unwrap_or_else(|| input.offset.unwrap_or(0)))
-            .take(limit)
-            .collect(),
+        sessions: rows.into_iter().skip(offset).take(limit).collect(),
         next_cursor: None,
         evicted: counters.evicted,
         sequence_gaps: counters.sequence_gaps,
@@ -918,6 +902,103 @@ fn page_from_rows(
     })
 }
 
+fn page_offset(
+    input: &SessionQueryInput,
+    total: usize,
+    limit: usize,
+    find: impl FnOnce(&str) -> Option<usize>,
+) -> Result<(usize, Option<usize>), AppError> {
+    let focus_offset = input
+        .focus_id
+        .as_ref()
+        .map(|id| {
+            find(id).map(|index| index / limit * limit).ok_or_else(|| {
+                AppError::new(
+                    ErrorCategory::Unavailable,
+                    "source is no longer in the matching retained traffic",
+                    false,
+                )
+            })
+        })
+        .transpose()?;
+    let offset = focus_offset.unwrap_or_else(|| {
+        if input.latest {
+            total.saturating_sub(limit)
+        } else {
+            input.offset.unwrap_or(0)
+        }
+    });
+    Ok((offset, focus_offset))
+}
+
+fn request_order_only(input: &SessionQueryInput) -> bool {
+    input.cursor.is_none()
+        && input.incident_window.is_none()
+        && input.search_result_id.is_none()
+        && input.terminal.is_none()
+        && input.method.is_none()
+        && input.host.is_none()
+        && input.search.as_deref().is_none_or(str::is_empty)
+        && input.filters.is_empty()
+        && input.filter_groups.is_empty()
+        && input.extension_filters.is_empty()
+        && input.fetch_destinations.is_empty()
+        && input
+            .sort
+            .as_ref()
+            .is_none_or(|sort| sort.column == TrafficColumn::RequestNumber)
+}
+
+fn request_order_page(
+    service: &ApplicationSessionService,
+    input: &SessionQueryInput,
+    traces: &crate::traces::TraceRegistry,
+) -> Result<(Vec<String>, SessionPage), AppError> {
+    let mut ids = service
+        .catalog()
+        .ordered_visible_ids()
+        .into_iter()
+        .map(|id| format!("{:032x}", id.0))
+        .collect::<Vec<_>>();
+    if input
+        .sort
+        .as_ref()
+        .is_some_and(|sort| sort.direction == SortDirection::Descending)
+    {
+        ids.reverse();
+    }
+    let (offset, focus_offset) = page_offset(input, ids.len(), 100, |id| {
+        ids.iter().position(|candidate| candidate == id)
+    })?;
+    let now = SystemTime::now();
+    let capturing = matches!(
+        service.capture().status(),
+        transmog_session::CaptureStatus::Active { .. }
+    );
+    let counters = service.catalog().counters();
+    let page = SessionPage {
+        sessions: ids
+            .iter()
+            .skip(offset)
+            .take(100)
+            .filter_map(|id| {
+                service
+                    .catalog()
+                    .get(crate::response_assets::parse_exchange_id(id).ok()?)
+                    .map(|snapshot| summarize_with_trace(&snapshot, now, capturing, traces))
+            })
+            .collect(),
+        next_cursor: None,
+        evicted: counters.evicted,
+        sequence_gaps: counters.sequence_gaps,
+        subscriber_lag: counters.subscriber_lag,
+        total_matched: ids.len(),
+        retained_count: ids.len(),
+        focus_offset,
+    };
+    Ok((ids, page))
+}
+
 pub(crate) fn traffic_view(
     service: &ApplicationSessionService,
     views: &Mutex<TrafficViews>,
@@ -925,9 +1006,14 @@ pub(crate) fn traffic_view(
     traces: &crate::traces::TraceRegistry,
     matching: Option<&std::collections::HashSet<String>>,
 ) -> Result<TrafficView, AppError> {
-    let (rows, retained) = ordered_rows(service, input, traces, matching)?;
-    let ids = rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>();
-    let page = page_from_rows(service, input, rows, retained, 100)?;
+    let (ids, page) = if matching.is_none() && request_order_only(input) {
+        request_order_page(service, input, traces)?
+    } else {
+        let (rows, retained) = ordered_rows(service, input, traces, matching)?;
+        let ids = rows.iter().map(|row| row.id.clone()).collect::<Vec<_>>();
+        let page = page_from_rows(service, input, rows, retained, 100)?;
+        (ids, page)
+    };
     let id = views
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -1325,6 +1411,90 @@ mod tests {
                 metadata: Arc::new(ExchangeMetadata::from_session(&session, target)),
             },
         }
+    }
+
+    #[test]
+    fn request_order_view_matches_metadata_queries_for_tail_focus_and_shared_entries() {
+        let service =
+            ApplicationSessionService::new(transmog_session::ServiceConfig::default()).unwrap();
+        for id in (1..=240).rev() {
+            service.catalog().apply(started(id));
+        }
+        let source =
+            ApplicationSessionService::new(transmog_session::ServiceConfig::default()).unwrap();
+        source.catalog().apply(started(1000));
+        source.catalog().apply(started(1001));
+        service
+            .catalog()
+            .reference_exchanges(
+                source.catalog(),
+                &[ExchangeId(1001), ExchangeId(1000)],
+                Arc::new(|_| {}),
+            )
+            .unwrap();
+        service.catalog().dismiss(&[ExchangeId(200)], &[]);
+        let traces = crate::traces::TraceRegistry::default();
+        let views = Mutex::new(TrafficViews::default());
+        for direction in [SortDirection::Ascending, SortDirection::Descending] {
+            for (latest, offset, focus_id) in [
+                (false, None, None),
+                (true, None, None),
+                (false, Some(125), None),
+                (true, None, Some(format!("{:032x}", 1001))),
+            ] {
+                let query = SessionQueryInput {
+                    latest,
+                    offset,
+                    focus_id,
+                    sort: Some(SessionSort {
+                        column: TrafficColumn::RequestNumber,
+                        direction,
+                    }),
+                    ..Default::default()
+                };
+                let expected = query_sorted(&service, &query, &traces, None).unwrap();
+                let view = traffic_view(&service, &views, &query, &traces, None).unwrap();
+                assert_eq!(view.ids.len(), 241);
+                assert_eq!(
+                    view.ids,
+                    matching_ids(&service, &query, &traces, None).unwrap()
+                );
+                assert_eq!(view.page.focus_offset, expected.focus_offset);
+                assert_eq!(view.page.retained_count, expected.retained_count);
+                let project = |rows: &[SessionSummary]| {
+                    rows.iter()
+                        .map(|row| (row.id.clone(), row.request_number.clone()))
+                        .collect::<Vec<_>>()
+                };
+                assert_eq!(project(&view.page.sessions), project(&expected.sessions));
+                views.lock().unwrap().release(&view.id);
+            }
+        }
+        let query = SessionQueryInput::default();
+        let matching = std::collections::HashSet::from([format!("{:032x}", 1001)]);
+        let view = traffic_view(&service, &views, &query, &traces, Some(&matching)).unwrap();
+        assert_eq!(view.ids, matching.into_iter().collect::<Vec<_>>());
+        views.lock().unwrap().release(&view.id);
+        let filtered = SessionQueryInput {
+            host: Some("absent.invalid".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            traffic_view(&service, &views, &filtered, &traces, None)
+                .unwrap()
+                .ids,
+            [] as [String; 0]
+        );
+        let invalid = SessionQueryInput {
+            cursor: Some("invalid".into()),
+            ..Default::default()
+        };
+        assert!(traffic_view(&service, &views, &invalid, &traces, None).is_err());
+        let missing = SessionQueryInput {
+            focus_id: Some("missing".into()),
+            ..Default::default()
+        };
+        assert!(traffic_view(&service, &views, &missing, &traces, None).is_err());
     }
 
     #[test]

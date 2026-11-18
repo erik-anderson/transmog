@@ -42,6 +42,10 @@ export async function checkTrafficRefresh(page, root) {
         delay = { raw, held: [] };
       globalThis.__refreshDelay = delay;
       window.__TAURI_INTERNALS__.invoke = async (name, args, options) => {
+        // Keep this regression on the off-page metadata path even when the
+        // normal live query now supplies the viewport directly.
+        if (name === "query_traffic_view")
+          args = { ...args, query: { ...args.query, latest: false, offset: 0 } };
         const result = await raw(name, args, options);
         if (name === "traffic_view_rows") {
           await new Promise((resolve) => delay.held.push(resolve));
@@ -191,10 +195,13 @@ export async function checkTrafficRefresh(page, root) {
     await page.evaluate(async () => {
       const raw = window.__TAURI_INTERNALS__.invoke;
       globalThis.__refreshDelay = { raw, held: [] };
-      window.__TAURI_INTERNALS__.invoke = (name, args, options) =>
-        name === "traffic_view_rows"
+      window.__TAURI_INTERNALS__.invoke = (name, args, options) => {
+        if (name === "query_traffic_view")
+          args = { ...args, query: { ...args.query, latest: false, offset: 0 } };
+        return name === "traffic_view_rows"
           ? Promise.reject(new Error("Fixture row refresh failure"))
           : raw(name, args, options);
+      };
       await document.querySelector("app-shell").traffic.refreshSessions();
     });
     await page.waitForFunction(() =>
@@ -270,6 +277,8 @@ export async function checkTrafficRefresh(page, root) {
       globalThis.__refreshDelay = delay;
       globalThis.__refreshRevealSettled = false;
       window.__TAURI_INTERNALS__.invoke = async (name, args, options) => {
+        if (name === "query_traffic_view")
+          args = { ...args, query: { ...args.query, latest: false, offset: 0 } };
         if (name === "query_traffic_view" && delay.queries++ > 0) {
           await new Promise((resolve) => delay.held.push(resolve));
         }

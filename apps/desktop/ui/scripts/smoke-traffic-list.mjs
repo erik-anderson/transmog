@@ -282,6 +282,8 @@ export async function smokeTrafficList(client, screenshot) {
       for(const {row,text} of rows) if(!row.isConnected || row.textContent!==text || row.getAttribute('aria-busy')!=='false') probe.flashes.push(row.dataset.sessionId);
     });
     probe.observer.observe(w.trafficTable,{subtree:true,childList:true,characterData:true,attributes:true});
+    const query=w.trafficQuery;
+    w.trafficQuery=(...args)=>({...query.apply(w,args),latest:false,offset:0});
     w.loadWindow=(...args)=>{
       const pending=(async()=>{
         await new Promise(resolve=>probe.held.push(resolve));
@@ -307,6 +309,7 @@ export async function smokeTrafficList(client, screenshot) {
     const flashes = await client.evaluate(`(async()=>{
       const w=${t},p=globalThis.__nativeTrafficRefresh;
       delete w.loadWindow;
+      delete w.trafficQuery;
       for(const resolve of p.held) resolve();
       try {
         await Promise.all(p.pending);

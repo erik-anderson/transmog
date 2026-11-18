@@ -178,6 +178,8 @@ when changing the experience.
 - Preserve selection, scroll and drafts across live updates and workspace changes.
   Keep loaded Traffic summaries visible while their replacements load. Background
   refreshes must not replace known evidence with loading or unknown placeholders.
+  Publish arrivals with their available core metadata together. Coalesce busy
+  streams with bounded refresh work and a final update after activity settles.
   Resolve unsaved work before replacing it. Allocate one editor per visible task.
   Check a requested destination before offering to discard a draft. If navigation
   aborts after Discard, still-visible typed fields remain dirty; do not overwrite

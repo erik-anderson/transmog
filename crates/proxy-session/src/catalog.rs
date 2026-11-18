@@ -1251,6 +1251,18 @@ impl SessionCatalog {
             .collect()
     }
 
+    /// Atomically copies visible identities in admission order without cloning evidence.
+    /// Includes owned imports and shared memberships; dismissed Undo entries are excluded.
+    pub fn ordered_visible_ids(&self) -> Vec<ExchangeId> {
+        let state = self.lock_state();
+        state
+            .order
+            .values()
+            .filter(|id| !state.dismissed.contains(id))
+            .copied()
+            .collect()
+    }
+
     /// Atomically copies retained metadata at one lifecycle/time boundary.
     /// Body prefixes and message collections are omitted; formatting happens after unlocking.
     pub fn retained_metadata(&self) -> Vec<SessionSnapshot> {
