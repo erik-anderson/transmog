@@ -12,7 +12,7 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tempfile.workspace = true
-transmog-session = { version = "=0.1.28", path = "../proxy-session" }
+transmog-session = { version = "=0.1.29", path = "../proxy-session" }
 
 [target.'cfg(windows)'.dependencies]
 dirs.workspace = true
