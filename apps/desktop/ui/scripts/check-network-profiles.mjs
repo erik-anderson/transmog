@@ -18,7 +18,9 @@ export async function checkNetworkProfiles(page, root) {
   const ordinaryWrites = await page.evaluate(
     () => globalThis.__workspaceFixture.calls.save_product_state ?? 0,
   );
+  await preferences.getByRole("button", { name: "Preferences", exact: true }).click();
   await preferences.getByLabel("Theme", { exact: true }).selectOption("dark");
+  await preferences.getByRole("button", { name: "Connection", exact: true }).click();
   assert.equal(
     await page.evaluate(() =>
       document
@@ -364,6 +366,7 @@ export async function checkNetworkProfiles(page, root) {
     true,
     "Profile save consumed the ordinary settings draft",
   );
+  await preferences.getByRole("button", { name: "Preferences", exact: true }).click();
   assert.equal(await preferences.getByLabel("Theme", { exact: true }).inputValue(), "dark");
   await preferences.getByRole("button", { name: "Revert changes", exact: true }).click();
   await page.waitForFunction(
@@ -371,4 +374,5 @@ export async function checkNetworkProfiles(page, root) {
       !document.querySelector("app-shell").shadowRoot.querySelector("settings-workspace")
         .settingsBusy,
   );
+  await preferences.getByRole("button", { name: "Connection", exact: true }).click();
 }

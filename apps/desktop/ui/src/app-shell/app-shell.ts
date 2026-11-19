@@ -261,7 +261,7 @@ export class AppShell extends WebUIElement {
 
   async openClientCertificateSettings(): Promise<void> {
     if (await this.activateView("settings")) {
-      this.settings.showSettingsSection("client-certificates");
+      await this.settings.openClientCertificateSettings();
     }
   }
   certificatePanelClosed(): void {
@@ -410,6 +410,7 @@ export class AppShell extends WebUIElement {
   private certificateUnavailable = true;
   @observable diagnosticText = initialState.diagnosticText;
   @observable proxyReady = initialState.proxyReady;
+  @observable settingsBusy = initialState.settingsBusy;
   @observable noticeVisible = initialState.noticeVisible;
   @observable noticeTitleText = initialState.noticeTitleText;
   @observable noticeMessageText = initialState.noticeMessageText;
@@ -472,7 +473,8 @@ export class AppShell extends WebUIElement {
     try {
       const dirty = [
         this.composer?.composerDirty ? "Composer" : "",
-        this.settings?.settingsDirty ? "Settings" : "",
+        this.settings?.settingsDirty ? "Preferences" : "",
+        this.settings?.connectionDirty ? "Connection settings" : "",
         this.settings?.clientCertificates?.certificateSettingsDirty ? "Client certificates" : "",
         this.automation?.draftDirty ? "Saved responses" : "",
         this.automation?.headerRulesEditor?.hrDirty ? "Header changes" : "",
@@ -784,7 +786,7 @@ export class AppShell extends WebUIElement {
       this.certificateUnavailable && ["stopped", "failed"].includes(this.lifecycleKind);
   }
   async startHttpsTunnels(): Promise<void> {
-    if (this.routingSavePending) {
+    if (this.routingSavePending || this.settingsBusy) {
       return;
     }
     await this.settings.startHttpsTunnels();
@@ -938,6 +940,9 @@ export class AppShell extends WebUIElement {
   onProxyReady(): void {
     this.proxyReady = true;
   }
+  onSettingsBusy(event: CustomEvent<boolean>): void {
+    this.settingsBusy = event.detail;
+  }
   onSelection(event: CustomEvent<SelectedResponse | null>): void {
     this.selection = event.detail;
   }
@@ -1039,7 +1044,7 @@ export class AppShell extends WebUIElement {
     }
   }
   runNoticeAction(): void {
-    if (this.routingSavePending) {
+    if (this.routingSavePending || this.settingsBusy) {
       return;
     }
     const action = this.noticeAction;
@@ -1054,8 +1059,8 @@ export class AppShell extends WebUIElement {
       void this.settings.resetCa();
     } else if (action === "start-proxy") {
       void this.startProxy();
-    } else if (action === "https-preferences") {
-      void this.returnToHttpsPreferences();
+    } else if (action === "https-settings") {
+      void this.openHttpsSettings();
     } else if (action === "recover-proxy") {
       void this.settings.recoverProxy();
     }
@@ -1063,15 +1068,15 @@ export class AppShell extends WebUIElement {
   async openConnectionSettings(certificate = false): Promise<void> {
     if (await this.activateView("settings")) {
       if (certificate) {
-        await this.settings.openInterceptionCertificate(undefined, false);
+        await this.settings.openInterceptionCertificate();
       } else {
         this.settings.showSettingsSection("connection");
       }
     }
   }
-  private async returnToHttpsPreferences(): Promise<void> {
+  private async openHttpsSettings(): Promise<void> {
     if (await this.activateView("settings")) {
-      await this.settings.backToPreferences();
+      await this.settings.openHttpsSettings();
     }
   }
   dismissNotice(rememberCertificate = false): void {

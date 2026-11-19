@@ -50,8 +50,8 @@ use transmog_app::{
     BreakpointStatus, CaCreateRequest, CaIdentity, CaptureReadModel, CaptureStartRequest,
     CaptureSummaryView, ComposerHistoryRequest, ComposerRequest, ComposerResult, ComposerSnapshot,
     ComposerSource, DiagnosticLevel, DiagnosticsReport, ExportFormat, ExportRequest, ExportResult,
-    ImportRequest, ImportResponseAsset, ProductState, ProxyRoute, ProxyStartRequest,
-    RequestCommand, RequestCommandFormat, ResponseAsset, ResponseAssetEdit,
+    ImportRequest, ImportResponseAsset, ProductSettingsSection, ProductState, ProxyRoute,
+    ProxyStartRequest, RequestCommand, RequestCommandFormat, ResponseAsset, ResponseAssetEdit,
     ResponseAssetInspection, ResponseFileResult, RuntimeDiagnostics, ScriptCandidate, ScriptDraft,
     ScriptInvocation, ScriptResult, ScriptStatus, SessionDetail, SessionHint, SessionPage,
     SessionQueryInput, SessionResponseAsset, SessionSummary, SupportBundleRequest,
@@ -532,6 +532,7 @@ async fn save_network_profiles(
 #[tauri::command]
 async fn save_product_state(
     mut product_state: ProductState,
+    section: Option<ProductSettingsSection>,
     expected_process_inspection: Option<transmog_app::ProcessInspectionPolicy>,
     expected_decrypt_https: Option<bool>,
     preserve_proxy_routing: Option<bool>,
@@ -539,7 +540,7 @@ async fn save_product_state(
 ) -> Result<ProductState, AppError> {
     let _certificate_operation = state.certificate_operation.lock().await;
     let application = state.application.clone();
-    if preserve_proxy_routing == Some(true) {
+    if section.is_none() && preserve_proxy_routing == Some(true) {
         product_state.preferences.configure_system_proxy = application
             .product_state()
             .preferences
@@ -552,7 +553,8 @@ async fn save_product_state(
     };
     let ownership = state.owned_certificate.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        application.save_product_settings_with_https_validation(
+        application.save_product_settings_in_section(
+            section,
             product_state,
             expected_process_inspection.as_ref(),
             expected_decrypt_https,

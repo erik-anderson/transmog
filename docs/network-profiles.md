@@ -1,9 +1,10 @@
 # Network profiles and connection settings
 
-Use **Settings → Preferences → Network** to control connections made by Transmog
-and Composer. Process inspection, **Decrypt HTTPS traffic**, and **Profile** stay
-above the advanced settings. Opaque CONNECT tunnels carry the original client's
-handshake, so their TLS and HTTP offers are not controlled by a Transmog profile.
+Use **Settings → Connection** to configure the proxy listener, select traffic for
+inspection and control the outbound connections made by Transmog and Composer.
+**Save settings** and **Revert changes** apply to drafts on this tab. Opaque
+CONNECT tunnels carry the original client's handshake, so their TLS and HTTP
+offers are not controlled by a Transmog profile.
 
 ## Choose and activate a profile
 
@@ -136,10 +137,10 @@ Turning decryption on applies to new HTTPS connections. Existing opaque tunnels
 stay opaque until the client reconnects; TLS cannot change mode inside an
 established tunnel.
 
-**Interception certificate…**, beside the decryption checkbox, opens certificate
-setup even when decryption is off. Enabling decryption validates the certificate,
-private key and required trust before saving. If setup is incomplete, the active
-capture and saved mode stay unchanged, and the settings draft remains available.
+Open **Interception certificate** under **Traffic inspection** to set up the CA
+even when decryption is off. Enabling decryption validates the certificate,
+private key and required trust before saving. If setup is incomplete, the error
+links to the certificate controls and the draft remains available for retry.
 
 With decryption off, CONNECT forwards opaque bytes without loading an
 interception CA or requiring CA trust.
@@ -153,24 +154,27 @@ destination alongside inspected messages and TLS evidence.
 
 When an interception certificate is missing, **Start with HTTPS tunnels** saves
 HTTPS decryption as off and starts without creating or installing a certificate.
-Plain HTTP from selected callers remains inspectable; encrypted contents do not.
-Excluded callers still produce no captured entries. Installing a certificate
-later does not enable decryption. Turn it on and save to inspect new HTTPS
+If startup fails before saving the mode, the HTTPS draft stays available. A
+later bind failure leaves the saved tunnel mode selected. Plain HTTP from
+selected callers remains inspectable. Installing a certificate later does not
+enable decryption. Turn it on and save to inspect new HTTPS
 connections in the same capture. Saving during a capture drain also updates the
 mode used after resuming. Already admitted requests continue to completion.
 
 ### Listener and outbound settings
 
-**Advanced network settings** contains remote-client access, an optional proxy
-port, caller-process isolation and [client-certificate authorization](client-certificates.md).
+**Advanced proxy setup** contains remote-client access, an optional proxy port,
+and the Windows AppContainer loopback manager.
 Remote access defaults off; an empty port chooses an available port at each
 start. Authored ports from 1 through 65535 are retained, and an occupied port
 produces an actionable start failure. Address and port changes apply to the next
 fresh start. Windows routes through loopback even when remote clients are allowed.
 
-Caller isolation defaults on, falls back to source IP and also separates
-downstream H2 sessions. Embedders can supply their own isolation-key computation.
-Saving these settings preserves active work and does not restart the proxy.
+**Outbound connections** contains the network profile, caller-process isolation
+and [client-certificate authorization](client-certificates.md). Caller isolation
+defaults on, falls back to source IP and also separates downstream H2 sessions.
+Embedders can supply their own isolation-key computation. Saving these settings
+preserves active work and does not restart the proxy.
 
 Choose **System proxy** or **Manual proxy** using **Routing for next start**
 beside **Start proxy**.

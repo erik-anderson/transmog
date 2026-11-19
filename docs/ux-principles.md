@@ -19,6 +19,10 @@ when changing the experience.
   public CA, Windows account trust and the target app's trust configuration.
   Offer explicit Windows installation and the public certificate path in the
   same setup surface. Keep HTTPS tunnels available without an interception CA.
+- Group listener setup, inspection policy and outbound transport under
+  Connection. Keep appearance, retention and privacy in Preferences. Save and
+  revert each tab's draft independently, with certificate setup and retry in the
+  same Connection view.
 - Keep ordinary traffic import and save ahead of case sharing. Cases are an
   occasional sharing workflow, grouped secondarily; opening a case leads toward
   inspecting its traffic. Recognize supported file kinds through normal opening

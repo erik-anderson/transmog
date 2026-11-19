@@ -7,7 +7,7 @@ Unconfigured hosts continue without a certificate.
 
 ## Desktop settings and selection
 
-Open Settings → Preferences → Advanced network settings → Client certificates.
+Open Settings → Connection → Outbound connections → Client certificates.
 The global choice is No certificate or Prompt. Exact host/HTTPS-port rules add
 No certificate, Prompt, or Automatic with an exact public identity or explicit
 subject/issuer renewal attributes. The first enabled match wins, with drag handles

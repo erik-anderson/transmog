@@ -1036,7 +1036,7 @@ export type NoticeAction =
   | "start-proxy"
   | "settings"
   | "recover-proxy"
-  | "https-preferences"
+  | "https-settings"
   | null;
 export type RequestCommandFormat = "curl" | "powershell";
 export interface RequestCommand {

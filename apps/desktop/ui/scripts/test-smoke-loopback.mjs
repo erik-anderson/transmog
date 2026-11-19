@@ -50,6 +50,7 @@ async function observe({ completeAfter = 13_000, startAfter = 0, error = "" } = 
   };
   const settings = {
     loopbackManager: manager,
+    listenerOptions: { open: false },
     settingsSection: "original",
     async $whenRendered() {},
     showSettingsSection(value) {
@@ -89,6 +90,7 @@ async function observe({ completeAfter = 13_000, startAfter = 0, error = "" } = 
   }
   assert.equal(modal, false, "The observation did not close its modal");
   assert.equal(settings.settingsSection, "original", "The observation did not restore the section");
+  assert.equal(settings.listenerOptions.open, false);
   return { result, failure, elapsed: now };
 }
 

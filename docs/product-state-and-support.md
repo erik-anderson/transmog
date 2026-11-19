@@ -12,11 +12,12 @@ enter the settings store. Connection discovery contains only a loopback endpoint
 the current run's certificate pin; control handles and send retry records expire
 with that run.
 
-Preferences contain theme, table/pane layout, window geometry, connection
-configuration, live-entry/body-retention policy and explicit recent-path choices.
-See [network profiles and connection settings](network-profiles.md) for choices,
-defaults and activation. Profile definitions and the active recipe snapshot have
-independent revisions; saving a definition does not activate it.
+Persisted product settings include theme, table/pane layout, window geometry,
+connection configuration, live-entry/body-retention policy and explicit
+recent-path choices. The Preferences and Connection tabs save and revert their
+own drafts. See [network profiles and connection settings](network-profiles.md)
+for choices, defaults and activation. Profile definitions and the active recipe
+snapshot have independent revisions; saving a definition does not activate it.
 
 `configureSystemProxy` remembers the desktop's routing choice for its next new
 run. It defaults to `true` when absent. The routing selector saves it separately

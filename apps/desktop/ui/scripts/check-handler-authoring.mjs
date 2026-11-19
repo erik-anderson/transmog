@@ -231,6 +231,7 @@ export async function checkHandlerAuthoring(page, scripts, root) {
   for (const [text, expected] of cases) {
     await scripts.evaluate((editor, text) => editor.sourceEditor.setValue(text), text);
     await trigger.click();
+    await menu.waitFor({ state: "visible" });
     assert.equal(
       await menu
         .getByRole("button", { name: "Modify request headers " + expected, exact: true })

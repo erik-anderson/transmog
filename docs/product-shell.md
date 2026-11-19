@@ -53,8 +53,8 @@ size and maximized state. Partially visible windows and valid placements on
 displays with negative coordinates keep their saved position.
 
 The HTTPS setup banner offers certificate setup when a fresh start needs it.
-**Interception certificate…** beside **Decrypt HTTPS traffic** in Settings →
-Preferences opens the same controls. Setup creates the desktop's CA. In
+**Interception certificate** under **Traffic inspection** in **Settings →
+Connection** opens the same controls. Setup creates the desktop's CA. In
 **System proxy** mode it also asks Windows to trust the public certificate.
 For **Manual proxy**, apps that use Windows trust can use **Trust for my
 Windows account…**. For an app with its own trust store, choose **Copy public
@@ -69,9 +69,9 @@ or installing a CA. Selected plain HTTP remains inspectable. Certificate setup
 later leaves that saved choice unchanged. Turn decryption on and save to inspect
 new HTTPS connections without restarting capture. Turning it off lets active
 requests finish and makes new requests reconnect without interception; existing
-opaque tunnels and upgraded WebSockets continue. **Settings → Preferences →
-Inspect traffic from** selects all processes by default, with optional include
-or exclude lists.
+opaque tunnels and upgraded WebSockets continue. **Inspect traffic from** on
+Connection selects all processes by default, with optional include or exclude
+lists.
 
 Open the routing button beside **Start proxy** and choose **Routing for next
 start**. **System

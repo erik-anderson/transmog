@@ -398,6 +398,7 @@ await page.addInitScript(
         autoResponse: row.autoResponse ?? null,
       };
     };
+    const settingsStartupFailure = new URLSearchParams(location.search).get("settings-startup");
     const state = (globalThis.__workspaceFixture = {
       calls: {},
       workspace: JSON.parse(localStorage.getItem("workspace") ?? JSON.stringify(workspace)),
@@ -407,6 +408,8 @@ await page.addInitScript(
       queryDelay: 0,
       slowDetail: false,
       slowBody: false,
+      statusError: settingsStartupFailure === "status",
+      productStateError: settingsStartupFailure === "product-state",
     });
 
     const canonicalProtocol = (value) => {
@@ -1598,6 +1601,7 @@ await page.addInitScript(
             return;
           }
           case "record_frontend_diagnostic":
+            if (settingsStartupFailure && args.code === "desktop-initialization-failed") return;
             throw new Error("Unexpected frontend diagnostic: " + args.message);
           case "take_opened_traces": {
             const paths = state.openedTraces ?? [];
@@ -2567,6 +2571,7 @@ await page.addInitScript(
               retainedBytes: 0,
             };
           case "product_state": {
+            if (state.productStateError) throw new Error("Fixture stored settings unavailable");
             const product = state.savedProduct
               ? {
                   ...structuredClone(state.savedProduct),
@@ -2577,7 +2582,11 @@ await page.addInitScript(
                   workspace: structuredClone(state.workspace),
                   preferences: {
                     processInspection: { mode: "all", include: [], exclude: [] },
-                    theme: "system",
+                    decryptHttps: true,
+                    allowRemoteClients: false,
+                    proxyPort: null,
+                    isolateOutboundConnections: true,
+                    theme: settingsStartupFailure ? "dark" : "system",
                     sessionPageSize: 100,
                     configureSystemProxy: state.configureSystemProxy ?? true,
                   },
@@ -2587,10 +2596,10 @@ await page.addInitScript(
                     bufferLimit: { mode: "automatic" },
                     retainRequestBodies: true,
                     requestBodyLimit: 25000000,
-                    redactSensitiveHeaders: false,
+                    redactSensitiveHeaders: Boolean(settingsStartupFailure),
                     retainResponseBodies: true,
                     retainBodySamples: state.recordingDefaultBodies ?? false,
-                    rememberRecentArtifacts: false,
+                    rememberRecentArtifacts: Boolean(settingsStartupFailure),
                     includePathsInSupportBundles: false,
                   },
                   window: {},
@@ -4293,12 +4302,32 @@ await page.addInitScript(
             if (state.settingsSaveError) throw new Error("Fixture settings persistence failed");
             if (state.holdSettingsSave)
               await new Promise((resolve) => (state.releaseSettingsSave = resolve));
+            const draft = args.productState;
+            const savedProduct = structuredClone(
+              args.section ? (state.savedProduct ?? draft) : draft,
+            );
+            if (args.section === "preferences") {
+              savedProduct.preferences.theme = draft.preferences.theme;
+              savedProduct.privacy = structuredClone(draft.privacy);
+            } else if (args.section === "connection") {
+              for (const key of [
+                "allowRemoteClients",
+                "decryptHttps",
+                "isolateOutboundConnections",
+                "processInspection",
+                "proxyPort",
+              ]) {
+                savedProduct.preferences[key] = structuredClone(draft.preferences[key]);
+              }
+            }
+            savedProduct.workspace = structuredClone(state.workspace);
+            if (!savedProduct.privacy.rememberRecentArtifacts) savedProduct.recentArtifacts = [];
             const current = state.savedProduct?.preferences.processInspection ?? {
               mode: "all",
               include: [],
               exclude: [],
             };
-            const desired = args.productState.preferences.processInspection ?? current;
+            const desired = savedProduct.preferences.processInspection ?? current;
             const baseline = args.expectedProcessInspection;
             if (
               baseline &&
@@ -4310,8 +4339,7 @@ await page.addInitScript(
                 "Process inspection changed in another window. Revert changes to load the saved settings; your draft is still available.",
               );
             const currentDecrypt = state.savedProduct?.preferences.decryptHttps ?? true;
-            const savedProduct = structuredClone(args.productState);
-            if (args.preserveProxyRouting) {
+            if (args.section || args.preserveProxyRouting) {
               savedProduct.preferences.configureSystemProxy =
                 state.savedProduct?.preferences.configureSystemProxy ??
                 state.configureSystemProxy ??
@@ -4319,13 +4347,14 @@ await page.addInitScript(
             }
             if (
               typeof args.expectedDecryptHttps === "boolean" &&
-              args.expectedDecryptHttps === args.productState.preferences.decryptHttps
+              args.expectedDecryptHttps === draft.preferences.decryptHttps
             )
               savedProduct.preferences.decryptHttps = currentDecrypt;
             if (!baseline || JSON.stringify(baseline) === JSON.stringify(desired))
               savedProduct.preferences.processInspection = structuredClone(current);
             const live = ["running", "draining", "stopping"].includes(state.lifecycle);
             if (
+              args.section !== "preferences" &&
               savedProduct.preferences.decryptHttps &&
               ((live && state.runtimeDecrypt === false) || !currentDecrypt) &&
               (state.caBootstrap?.caFilesPresent === false ||
@@ -4340,7 +4369,8 @@ await page.addInitScript(
               state.certificatePolicy ?? { default: "noCertificate", rules: [] },
             );
             state.savedProduct = savedProduct;
-            if (live) state.runtimeDecrypt = savedProduct.preferences.decryptHttps ?? true;
+            if (live && args.section !== "preferences")
+              state.runtimeDecrypt = savedProduct.preferences.decryptHttps ?? true;
             const reply = structuredClone(state.savedProduct);
             if (state.holdSettingsSaveReply)
               await new Promise((resolve) => (state.releaseSettingsSaveReply = resolve));
@@ -4971,6 +5001,66 @@ const view = async (name) => {
   await page.locator('app-shell a[data-view="' + name + '"]').click();
   await page.locator("#" + name).waitFor({ state: "visible" });
 };
+async function checkSettingsStartupFailures() {
+  const settings = page.locator("settings-workspace");
+  const theme = settings.getByLabel("Theme", { exact: true });
+  const redactHeaders = settings.getByRole("checkbox", { name: /^Redact Authorization/ });
+  const recentPaths = settings.getByLabel("Remember recent artifact paths locally", {
+    exact: true,
+  });
+  const awaitStartup = () =>
+    page.waitForFunction(() => document.querySelector("app-shell").proxyReady);
+
+  await page.goto("https://workspace.test/?settings-startup=status");
+  await view("settings");
+  await awaitStartup();
+  assert.equal(await theme.inputValue(), "dark", "A status failure hid the saved theme");
+  assert.equal(await redactHeaders.isChecked(), true);
+  await theme.selectOption("light");
+  await settings.getByRole("button", { name: "Save settings", exact: true }).click();
+  await settings.getByText("Settings saved.", { exact: true }).waitFor();
+  const saved = await page.evaluate(() => globalThis.__workspaceFixture.savedProduct.privacy);
+  assert.equal(saved.redactSensitiveHeaders, true);
+  assert.equal(saved.rememberRecentArtifacts, true);
+
+  await page.goto("https://workspace.test/?settings-startup=product-state");
+  await view("settings");
+  await awaitStartup();
+  await settings
+    .locator("#preferences-form")
+    .getByText(/Settings could not be loaded: Fixture stored settings unavailable/)
+    .waitFor();
+  assert.equal(await theme.isDisabled(), true);
+  assert.equal(
+    await settings.getByRole("button", { name: "Save settings", exact: true }).isDisabled(),
+    true,
+  );
+  await settings.getByRole("button", { name: "Connection", exact: true }).click();
+  const decrypt = settings.getByLabel("Decrypt HTTPS traffic", { exact: true });
+  assert.equal(await decrypt.isDisabled(), true);
+  assert.equal(
+    await settings.getByRole("button", { name: "Save settings", exact: true }).isDisabled(),
+    true,
+  );
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.productStateError = false;
+  });
+  await settings
+    .getByRole("button", { name: "Retry loading settings", exact: true })
+    .press("Enter");
+  await page.waitForFunction(() => {
+    const control = document.querySelector("app-shell").settings.decryptInput;
+    return !control.matches(":disabled") && control.matches(":focus");
+  });
+  await settings.getByRole("button", { name: "Preferences", exact: true }).click();
+  assert.equal(await theme.inputValue(), "dark");
+  assert.equal(await redactHeaders.isChecked(), true);
+  assert.equal(await recentPaths.isChecked(), true);
+  assert.equal(
+    await settings.getByRole("button", { name: "Save settings", exact: true }).isDisabled(),
+    true,
+  );
+}
 const discardIfAsked = async () => {
   const dialog = page.locator("automation-workspace .unsaved-rule-dialog");
   if (await dialog.isVisible())
@@ -5001,6 +5091,12 @@ const cancelRule = async () => {
 const runBrowserCheck = createBrowserCheckRunner();
 
 try {
+  if (process.argv.includes("--settings-startup-only")) {
+    await runBrowserCheck(checkSettingsStartupFailures);
+    assert.deepEqual(errors, []);
+    await browser.close();
+    process.exit(0);
+  }
   if (process.argv.includes("--proxy-recovery-only")) {
     await page.goto("https://workspace.test/");
     await page.waitForFunction(() => document.querySelector("app-shell")?.traffic?.queryLoaded);
@@ -8974,10 +9070,10 @@ try {
     );
   await page
     .locator(".settings-tabs")
-    .getByRole("button", { name: "Preferences", exact: true })
+    .getByRole("button", { name: "Connection", exact: true })
     .click();
   const preferences = page.locator("settings-workspace");
-  const advancedNetwork = preferences.locator(".preferences-form .connection-advanced");
+  const advancedNetwork = preferences.locator(".connection-panel .connection-advanced");
   assert.equal(
     await advancedNetwork.getAttribute("open"),
     null,
@@ -9087,7 +9183,7 @@ try {
   await caIdle();
   await page
     .locator(".settings-tabs")
-    .getByRole("button", { name: "Preferences", exact: true })
+    .getByRole("button", { name: "Connection", exact: true })
     .click();
   // The no-certificate case above is complete. Re-enabling HTTPS for the
   // following preference checks requires a valid synthetic certificate.
@@ -9111,7 +9207,7 @@ try {
         .settingsBusy,
   );
   assert.equal(
-    await page.evaluate(() => document.querySelector("app-shell").settings.settingsError),
+    await page.evaluate(() => document.querySelector("app-shell").settings.connectionError),
     "",
   );
   await advancedNetwork.scrollIntoViewIfNeeded();
@@ -9131,6 +9227,7 @@ try {
   });
   await page.setViewportSize({ width: 1280, height: 800 });
   await advancedNetwork.locator("summary").click();
+  await preferences.getByRole("button", { name: "Preferences", exact: true }).click();
   assert.equal(
     await preferences.getByLabel("Limit number of live entries", { exact: true }).isChecked(),
     false,
@@ -9398,7 +9495,7 @@ try {
     .locator(".settings-tabs")
     .getByRole("button", { name: "Connection", exact: true })
     .click();
-  await preferences.locator(".connection-panel .connection-advanced summary").click();
+  await preferences.locator(".connection-panel .interception-certificate > summary").click();
   // Legacy, partial, and missing material all offer recovery without attempting
   // to overwrite files or trust a certificate with an unknown identity.
   for (const bootstrap of [
@@ -11061,6 +11158,7 @@ try {
   await runBrowserCheck(checkHeaderEditor, page, root);
   await runBrowserCheck(checkComposerAuthoring, page, root);
   await runBrowserCheck(checkInspectorLayout, page, root);
+  await runBrowserCheck(checkSettingsStartupFailures);
   assert.deepEqual(errors, []);
   process.stdout.write(
     JSON.stringify({

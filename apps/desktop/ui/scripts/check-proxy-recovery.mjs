@@ -116,7 +116,7 @@ async function checkManualRouting(page, workspace, root) {
   assert.equal(await routing.inputValue(), "system");
   await workspace.evaluate((settings) => {
     globalThis.__workspaceFixture.holdSettingsSaveReply = true;
-    void settings.saveSettings(new Event("submit", { cancelable: true }));
+    void settings.saveSettings(new Event("submit", { cancelable: true }), "connection");
   });
   await page.waitForFunction(() => !!globalThis.__workspaceFixture.releaseSettingsSaveReply);
   await page.evaluate(() => {
@@ -248,7 +248,7 @@ export async function checkProxyRecovery(page, root) {
     await preferences.evaluate((node) => node === node.getRootNode().activeElement),
     true,
   );
-  assert.equal(await workspace.locator(".preferences-form").isVisible(), true);
+  assert.equal(await workspace.locator("#preferences-form").isVisible(), true);
   await page
     .locator("app-shell .notice")
     .getByText("Windows proxy recovery required")

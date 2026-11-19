@@ -11,13 +11,13 @@ export async function smokeProcessInspection(call, evaluate, screenshotPath) {
       if((await window.__TAURI_INTERNALS__.invoke('app_status')).lifecycle!=='stopped')throw new Error('Process probe requires a stopped proxy');
       globalThis.__processInspectionProbe={original,bootstrap,view:shell.activeView,section:settings.settingsSection};
       const manual=structuredClone(original);manual.preferences.configureSystemProxy=false;
-      await window.__TAURI_INTERNALS__.invoke('save_product_state',{productState:manual});await settings.loadSettings();
-      shell.shadowRoot.querySelector('a[data-view="settings"]').click();settings.showSettingsSection('preferences');await settings.$whenRendered();
+      await window.__TAURI_INTERNALS__.invoke('save_product_state',{productState:manual});await settings.loadSettings('connection');
+      shell.shadowRoot.querySelector('a[data-view="settings"]').click();settings.showSettingsSection('connection');await settings.$whenRendered();
       const panel=settings.processInspectionEditor,mode=panel.querySelector('select');
       if(mode.closest('details'))throw new Error('Process selection is hidden in advanced settings');
       if(panel.processMode!=='all')throw new Error('Process selection did not default to All processes');
       mode.value='only';mode.dispatchEvent(new Event('change'));await panel.$whenRendered();
-      await settings.saveSettings(new Event('submit',{cancelable:true}));
+      await settings.saveSettings(new Event('submit',{cancelable:true}),'connection');
       if(!panel.processError.includes('at least one'))throw new Error('Empty process filter was accepted');
       await panel.refreshProcesses();
       // Validation focuses the input, which may already own an inventory lookup.
@@ -47,8 +47,8 @@ export async function smokeProcessInspection(call, evaluate, screenshotPath) {
       if(panel.processNames.join()!=='transmog.exe')throw new Error('Keyboard Add did not normalize the executable name');
       panel.processNameInput.value='TRANSMOG.EXE';panel.addName();
       if(!panel.processError.includes('already')||panel.processNames.length!==1)throw new Error('Process list did not reject duplicates');
-      panel.processNameInput.value='';await settings.saveSettings(new Event('submit',{cancelable:true}));
-      if(settings.settingsError)throw new Error(settings.settingsError);
+      panel.processNameInput.value='';await settings.saveSettings(new Event('submit',{cancelable:true}),'connection');
+      if(settings.connectionError)throw new Error(settings.connectionError);
       await settings.startHttpsTunnels();
       const status=await window.__TAURI_INTERNALS__.invoke('app_status'),saved=await window.__TAURI_INTERNALS__.invoke('product_state'),after=await window.__TAURI_INTERNALS__.invoke('desktop_bootstrap');
       const probe=globalThis.__processInspectionProbe;
@@ -69,35 +69,37 @@ export async function smokeProcessInspection(call, evaluate, screenshotPath) {
       const capture=await window.__TAURI_INTERNALS__.invoke('capture_status');
       const recordingRun=await window.__TAURI_INTERNALS__.invoke('app_status');await settings.refreshStatus();
       const checkLive=async(enabled)=>{const live=await window.__TAURI_INTERNALS__.invoke('app_status'),recording=await window.__TAURI_INTERNALS__.invoke('capture_status');if(live.lifecycle!=='running'||live.listener!==recordingRun.listener||live.httpsDecryption!==enabled||recording.state!=='active'||recording.path!==capture.path)throw new Error('Saving HTTPS mode restarted the listener or recording: '+JSON.stringify({live,recording}));};
-      const decrypt=settings.settingsForm.elements.namedItem('decryptHttps');
+      const decrypt=settings.connectionForm.elements.namedItem('decryptHttps');
       const changeDecrypt=value=>{decrypt.checked=value;decrypt.dispatchEvent(new Event('change',{bubbles:true}));};
       if(!probe.bootstrap.caFilesPresent){
         panel.processNameInput.value='native-draft.exe';panel.addName();
-        changeDecrypt(true);await settings.saveSettings(new Event('submit',{cancelable:true}));
-        if(!settings.settingsError||!settings.httpsEnableError||!decrypt.checked||!panel.processNames.includes('native-draft.exe'))throw new Error('Enabling without a certificate lost its actionable draft');
+        changeDecrypt(true);await settings.saveSettings(new Event('submit',{cancelable:true}),'connection');
+        if(!settings.connectionError||!settings.httpsEnableError||!decrypt.checked||!panel.processNames.includes('native-draft.exe'))throw new Error('Enabling without a certificate lost its actionable draft');
         if((await window.__TAURI_INTERNALS__.invoke('product_state')).preferences.decryptHttps)throw new Error('Missing-certificate enable persisted before validation');
         await checkLive(false);
         const action=[...settings.querySelectorAll('.settings-save button')].find(button=>button.textContent.trim()==='Interception certificate…');
-        action.click();await settings.$whenRendered();
-        if(!settings.interceptionSummary.closest('details').open||settings.getRootNode().activeElement!==settings.interceptionSummary)throw new Error('Missing-certificate recovery did not focus certificate settings');
-        await settings.backToPreferences();
+        const recoveryFocused=()=>settings.interceptionSummary.closest('details').open&&settings.interceptionSummary.matches(':focus');
+        action.focus();action.click();
+        const focusDeadline=performance.now()+3000;
+        while(!recoveryFocused()&&performance.now()<focusDeadline)await new Promise(resolve=>setTimeout(resolve,20));
+        if(!recoveryFocused())throw new Error('Missing-certificate recovery did not focus certificate settings');
         if(!decrypt.checked||!panel.processNames.includes('native-draft.exe'))throw new Error('Certificate navigation discarded the failed-enable draft');
         await window.__TAURI_INTERNALS__.invoke('create_ca',{request:{certificatePath:probe.bootstrap.caCertificatePath,privateKeyPath:probe.bootstrap.caPrivateKeyPath,commonName:'Transmog native live HTTPS fixture',validityDays:2}});
         const generated=await window.__TAURI_INTERNALS__.invoke('desktop_bootstrap');
         if(generated.ownedCaTrusted!==probe.bootstrap.ownedCaTrusted)throw new Error('Live HTTPS fixture changed certificate trust');
+        await settings.refreshCertificateState();
         probe.missingCertificateDraftPreserved=true;
       }
-      changeDecrypt(true);await settings.saveSettings(new Event('submit',{cancelable:true}));if(settings.settingsError)throw new Error(settings.settingsError);await checkLive(true);
-      changeDecrypt(false);await settings.saveSettings(new Event('submit',{cancelable:true}));if(settings.settingsError)throw new Error(settings.settingsError);await checkLive(false);
-      settings.certificateSettingsButton.click();await settings.$whenRendered();
+      changeDecrypt(true);await settings.saveSettings(new Event('submit',{cancelable:true}),'connection');if(settings.connectionError)throw new Error(settings.connectionError);await checkLive(true);
+      changeDecrypt(false);await settings.saveSettings(new Event('submit',{cancelable:true}),'connection');if(settings.connectionError)throw new Error(settings.connectionError);await checkLive(false);
+      await settings.openInterceptionCertificate();
       if(!settings.interceptionSummary.closest('details').open||settings.getRootNode().activeElement!==settings.interceptionSummary)throw new Error('Certificate settings were unavailable while HTTPS decryption was off');
-      await settings.backToPreferences();if(settings.getRootNode().activeElement!==settings.certificateSettingsButton)throw new Error('Certificate settings did not restore their opener');
-      changeDecrypt(true);await settings.saveSettings(new Event('submit',{cancelable:true}));if(settings.settingsError)throw new Error(settings.settingsError);await checkLive(true);
+      changeDecrypt(true);await settings.saveSettings(new Event('submit',{cancelable:true}),'connection');if(settings.connectionError)throw new Error(settings.connectionError);await checkLive(true);
       const includeBefore=panel.processNames.join(),mode=panel.querySelector('select');mode.value='except';mode.dispatchEvent(new Event('change'));await panel.$whenRendered();
       panel.processNameInput.value='service.helper.exe';panel.addName();
       mode.value='only';mode.dispatchEvent(new Event('change'));await panel.$whenRendered();if(panel.processNames.join()!==includeBefore)throw new Error('Mode switch lost the include draft');
       mode.value='except';mode.dispatchEvent(new Event('change'));await panel.$whenRendered();
-      await settings.saveSettings(new Event('submit',{cancelable:true}));
+      await settings.saveSettings(new Event('submit',{cancelable:true}),'connection');
       const updated=await window.__TAURI_INTERNALS__.invoke('app_status');
       if(updated.processInspection.mode!=='except'||updated.processInspection.exclude.join()!=='service.helper.exe'||!updated.processInspection.include.includes('transmog.exe')||updated.httpsDecryption!==true)throw new Error('Live process policy or effective HTTPS status did not update');
       const remove=panel.querySelector('.process-names button');remove.click();await panel.$whenRendered();
@@ -141,7 +143,7 @@ export async function smokeProcessInspection(call, evaluate, screenshotPath) {
       if(probe.recordingStarted&&(await window.__TAURI_INTERNALS__.invoke('capture_status')).state==='active')await window.__TAURI_INTERNALS__.invoke('stop_capture');
       await window.__TAURI_INTERNALS__.invoke('stop_application');
       const latest=await window.__TAURI_INTERNALS__.invoke('product_state');
-      await window.__TAURI_INTERNALS__.invoke('save_product_state',{productState:probe.original,expectedProcessInspection:latest.preferences.processInspection});await settings.loadSettings();await settings.refreshStatus();settings.showSettingsSection(probe.section);shell.shadowRoot.querySelector('a[data-view="'+probe.view+'"]').click();delete globalThis.__processInspectionProbe;
+      await window.__TAURI_INTERNALS__.invoke('save_product_state',{productState:probe.original,expectedProcessInspection:latest.preferences.processInspection});await settings.loadSettings('connection');await settings.refreshStatus();settings.showSettingsSection(probe.section);shell.shadowRoot.querySelector('a[data-view="'+probe.view+'"]').click();delete globalThis.__processInspectionProbe;
     })()`);
   }
 }

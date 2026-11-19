@@ -13,17 +13,17 @@ export async function smokeNetworkSettings(call, evaluate, screenshotPath) {
     const original=await window.__TAURI_INTERNALS__.invoke('product_state');
     const bootstrap=await window.__TAURI_INTERNALS__.invoke('desktop_bootstrap');
     globalThis.__networkSettingsProbe={original,view:shell.activeView,section:settings.settingsSection};
-    shell.shadowRoot.querySelector('a[data-view="settings"]').click();settings.showSettingsSection('preferences');
+    shell.shadowRoot.querySelector('a[data-view="settings"]').click();settings.showSettingsSection('connection');
     const manual=structuredClone(original);manual.preferences.configureSystemProxy=false;
-    await window.__TAURI_INTERNALS__.invoke('save_product_state',{productState:manual});await settings.loadSettings();
-    const disclosure=settings.querySelector('.preferences-form .connection-advanced');
+    await window.__TAURI_INTERNALS__.invoke('save_product_state',{productState:manual});await settings.loadSettings('connection');
+    const disclosure=settings.querySelector('.connection-panel .connection-advanced');
     globalThis.__networkSettingsProbe.open=disclosure.open;
     if(disclosure.open)throw new Error('Advanced network settings opened by default');
-    if(settings.settingsForm.elements.namedItem('decryptHttps').closest('details'))throw new Error('HTTPS decryption remains advanced');
+    if(settings.connectionForm.elements.namedItem('decryptHttps').closest('details'))throw new Error('HTTPS decryption remains advanced');
     if(original.preferences.allowRemoteClients||original.preferences.proxyPort!==null||!original.preferences.reuseServerConnections)throw new Error('Unsafe network defaults');
     disclosure.open=true;
     for(const name of ['decryptHttps','isolateOutbound']) {
-      const input=settings.settingsForm.elements.namedItem(name);
+      const input=settings.connectionForm.elements.namedItem(name);
       if(!input.checked)throw new Error(name+' was not enabled by default');
       input.scrollIntoView({block:'center'});input.focus();
       const box=input.getBoundingClientRect();
@@ -86,8 +86,13 @@ export async function smokeNetworkSettings(call, evaluate, screenshotPath) {
     if((await window.__TAURI_INTERNALS__.invoke('product_state')).preferences.networkProfiles.activeProfile.id!=='webview2-chromium-154')throw new Error('Save only activated the native profile');
     await profiles.useProfile();
     if(profiles.networkError)throw new Error(profiles.networkError);
-    await settings.saveSettings(new Event('submit',{cancelable:true}));
+    const preferencesForm=settings.settingsForm;
+    const theme=preferencesForm.elements.namedItem('theme'),draftTheme=theme.value==='light'?'dark':'light';
+    theme.value=draftTheme;theme.dispatchEvent(new Event('change',{bubbles:true}));
+    await settings.saveSettings(new Event('submit',{cancelable:true}),'connection');
     const saved=await window.__TAURI_INTERNALS__.invoke('product_state');
+    if(saved.preferences.theme!==original.preferences.theme||theme.value!==draftTheme||!settings.settingsDirty)throw new Error('Connection save changed the Preferences draft');
+    await settings.loadSettings();
     if(saved.preferences.networkProfiles.activeProfile.settings.http2Alps)throw new Error('ALPS profile toggle did not persist');
     if(saved.preferences.networkProfiles.activeProfile.settings.http3Alps)throw new Error('HTTP/3 ALPS profile toggle did not persist');
     if(saved.preferences.networkProfiles.activeProfile.settings.encryptedClientHello)throw new Error('ECH profile toggle did not persist');
@@ -102,24 +107,26 @@ export async function smokeNetworkSettings(call, evaluate, screenshotPath) {
     if(!status.listener.startsWith('127.0.0.1:'))throw new Error('Default listener is remotely accessible');
     await settings.stopProxy();
     const port=Number(status.listener.split(':').at(-1));
-    const form=settings.settingsForm;
+    const form=settings.connectionForm;
     form.elements.namedItem('allowRemoteClients').checked=true;
     form.elements.namedItem('customProxyPort').checked=true;settings.updateProxyPortMode();await settings.$whenRendered();
     form.elements.namedItem('proxyPort').value=String(port);
-    await settings.saveSettings(new Event('submit',{cancelable:true}));
+    await settings.saveSettings(new Event('submit',{cancelable:true}),'connection');
     await settings.startProxy();
     const remote=await window.__TAURI_INTERNALS__.invoke('app_status');
     if(remote.listener!=='0.0.0.0:'+port)throw new Error('Remote opt-in or desired port was not applied: '+settings.proxyText);
     if((await window.__TAURI_INTERNALS__.invoke('product_state')).preferences.reuseServerConnections)throw new Error('Pooling choice was not saved');
     await settings.stopProxy();
-    const bodySelect=form.elements.namedItem('requestBodyLimit');bodySelect.value='custom';settings.updateRequestBodyLimit();await settings.$whenRendered();
-    form.elements.namedItem('customRequestBodyLimit').value='1.5';
+    settings.showSettingsSection('preferences');
+    const bodySelect=preferencesForm.elements.namedItem('requestBodyLimit');bodySelect.value='custom';settings.updateRequestBodyLimit();await settings.$whenRendered();
+    preferencesForm.elements.namedItem('customRequestBodyLimit').value='1.5';
     await settings.saveSettings(new Event('submit',{cancelable:true}));await settings.loadSettings();
     const bodyState=await window.__TAURI_INTERNALS__.invoke('product_state');
-    if(bodyState.privacy.requestBodyLimit!==1500000||bodySelect.value!=='custom'||form.elements.namedItem('customRequestBodyLimit').value!=='1.5')throw new Error('Custom body limit did not survive reload');
+    if(bodyState.privacy.requestBodyLimit!==1500000||bodySelect.value!=='custom'||preferencesForm.elements.namedItem('customRequestBodyLimit').value!=='1.5')throw new Error('Custom body limit did not survive reload');
+    if(bodyState.preferences.proxyPort!==port||!bodyState.preferences.allowRemoteClients)throw new Error('Preferences save changed Connection settings');
     if((await window.__TAURI_INTERNALS__.invoke('app_status')).lifecycle!=='stopped')throw new Error('Opaque proxy did not stop');
-    await settings.$whenRendered();form.elements.namedItem('customRequestBodyLimit').scrollIntoView({block:'center'});
-    return {settingsPersisted:true,inputsReachable:true,opaqueStartWithoutCertificate:true,certificateStatePreserved:true,remoteOptIn:true,persistentPort:true,reuseDisabled:true,decryptionProminent:true,customBodyLimit:true,networkProfileSaveOnly:true,networkProfileActivation:true,alpsProfileControl:true};
+    settings.showSettingsSection('connection');await settings.$whenRendered();settings.decryptInput.scrollIntoView({block:'center'});
+    return {settingsPersisted:true,independentDrafts:true,inputsReachable:true,opaqueStartWithoutCertificate:true,certificateStatePreserved:true,remoteOptIn:true,persistentPort:true,reuseDisabled:true,decryptionProminent:true,customBodyLimit:true,networkProfileSaveOnly:true,networkProfileActivation:true,alpsProfileControl:true};
   })()`);
     if (screenshotPath) {
       await writeFile(
@@ -152,7 +159,7 @@ export async function smokeNetworkSettings(call, evaluate, screenshotPath) {
   } finally {
     await call("Emulation.clearDeviceMetricsOverride");
     await evaluate(
-      `(async()=>{const probe=globalThis.__networkSettingsProbe;if(!probe)return;const shell=document.querySelector('app-shell'),settings=shell.shadowRoot.querySelector('settings-workspace');if((await window.__TAURI_INTERNALS__.invoke('app_status')).lifecycle!=='stopped')await settings.stopProxy();const profiles=settings.querySelector('network-profile-settings');if(profiles.networkEditor.open)profiles.discard();const current=await window.__TAURI_INTERNALS__.invoke('product_state'),catalog=current.preferences.networkProfiles,restore=structuredClone(probe.original);restore.preferences.decryptHttps=current.preferences.decryptHttps;await window.__TAURI_INTERNALS__.invoke('save_network_profiles',{expectedRevision:catalog.revision,profiles:probe.original.preferences.networkProfiles.customProfiles,useProfile:probe.original.preferences.networkProfiles.activeProfile.id});await profiles.load();await window.__TAURI_INTERNALS__.invoke('save_product_state',{productState:restore});await settings.loadSettings();settings.querySelector('.preferences-form .connection-advanced').open=probe.open;settings.showSettingsSection(probe.section);shell.shadowRoot.querySelector('a[data-view="'+probe.view+'"]').click();await settings.$whenRendered();await shell.$whenRendered();delete globalThis.__networkSettingsProbe;})()`,
+      `(async()=>{const probe=globalThis.__networkSettingsProbe;if(!probe)return;const shell=document.querySelector('app-shell'),settings=shell.shadowRoot.querySelector('settings-workspace');if((await window.__TAURI_INTERNALS__.invoke('app_status')).lifecycle!=='stopped')await settings.stopProxy();const profiles=settings.querySelector('network-profile-settings');if(profiles.networkEditor.open)profiles.discard();const current=await window.__TAURI_INTERNALS__.invoke('product_state'),catalog=current.preferences.networkProfiles,restore=structuredClone(probe.original);restore.preferences.decryptHttps=current.preferences.decryptHttps;await window.__TAURI_INTERNALS__.invoke('save_network_profiles',{expectedRevision:catalog.revision,profiles:probe.original.preferences.networkProfiles.customProfiles,useProfile:probe.original.preferences.networkProfiles.activeProfile.id});await profiles.load();await window.__TAURI_INTERNALS__.invoke('save_product_state',{productState:restore});await settings.loadSettings('connection');await settings.loadSettings();settings.querySelector('.connection-panel .connection-advanced').open=probe.open;settings.showSettingsSection(probe.section);shell.shadowRoot.querySelector('a[data-view="'+probe.view+'"]').click();await settings.$whenRendered();await shell.$whenRendered();delete globalThis.__networkSettingsProbe;})()`,
     );
   }
 }

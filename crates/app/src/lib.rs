@@ -169,8 +169,8 @@ pub use lifecycle::{
     interception_certificate_thumbprint, protect_ca_private_key, validate_ca_private_key,
 };
 pub use product_state::{
-    ArtifactKind, PrivacySettings, ProductPreferences, ProductState, RecentArtifact,
-    ThemePreference, WindowState,
+    ArtifactKind, PrivacySettings, ProductPreferences, ProductSettingsSection, ProductState,
+    RecentArtifact, ThemePreference, WindowState,
 };
 pub use request_actions::{ComposerSource, RequestCommand, RequestCommandFormat, RequestFile};
 pub use response_assets::{
@@ -915,7 +915,13 @@ impl Application {
     /// Returns a bounded validation or persistence error. A persistence error
     /// never changes proxy lifecycle state or prevents shutdown.
     pub fn save_product_state(&self, state: ProductState) -> Result<ProductState, AppError> {
-        self.save_product_state_inner(state, None, product_state::DecryptionWrite::Authored, None)
+        self.save_product_state_inner(
+            state,
+            None,
+            None,
+            product_state::DecryptionWrite::Authored,
+            None,
+        )
     }
 
     /// Saves settings with a checked process-policy baseline from the editing window.
@@ -929,6 +935,7 @@ impl Application {
     ) -> Result<ProductState, AppError> {
         self.save_product_state_inner(
             state,
+            None,
             Some(expected),
             product_state::DecryptionWrite::Authored,
             None,
@@ -948,6 +955,7 @@ impl Application {
     ) -> Result<ProductState, AppError> {
         self.save_product_state_inner(
             state,
+            None,
             expected_process,
             expected_decrypt_https.map_or(
                 product_state::DecryptionWrite::Preserve,
@@ -974,8 +982,34 @@ impl Application {
         fallback_request: &ProxyStartRequest,
         validate_trust: impl Fn(&str, bool, &ProxyStartRequest) -> Result<(), String>,
     ) -> Result<ProductState, AppError> {
+        self.save_product_settings_in_section(
+            None,
+            state,
+            expected_process,
+            expected_decrypt_https,
+            fallback_request,
+            validate_trust,
+        )
+    }
+
+    /// Saves settings owned by the selected form, merging with current durable state.
+    /// With no section, this has the behavior of [`Self::save_product_settings_with_https_validation`].
+    /// Certificate validation follows the same transaction and callback rules as that method.
+    ///
+    /// # Errors
+    /// Returns validation, certificate trust, or persistence errors before publishing the change.
+    pub fn save_product_settings_in_section(
+        &self,
+        section: Option<ProductSettingsSection>,
+        state: ProductState,
+        expected_process: Option<&ProcessInspectionPolicy>,
+        expected_decrypt_https: Option<bool>,
+        fallback_request: &ProxyStartRequest,
+        validate_trust: impl Fn(&str, bool, &ProxyStartRequest) -> Result<(), String>,
+    ) -> Result<ProductState, AppError> {
         self.save_product_state_inner(
             state,
+            section,
             expected_process,
             expected_decrypt_https.map_or(
                 product_state::DecryptionWrite::Authored,
@@ -992,6 +1026,7 @@ impl Application {
     fn save_product_state_inner(
         &self,
         state: ProductState,
+        section: Option<ProductSettingsSection>,
         expected: Option<&transmog_core::process_inspection::ProcessInspectionPolicy>,
         decryption: product_state::DecryptionWrite,
         https_validation: Option<HttpsSettingsValidation<'_>>,
@@ -1011,77 +1046,100 @@ impl Application {
                 true,
             ));
         }
-        let state = product_state::validate(state)?;
-        if self.buffer_preferences
-            && let Some(store) = &self.body_store
-        {
-            store
-                .prepare_buffer_limit(state.privacy.buffer_limit)
-                .map_err(|error| {
-                    AppError::new(ErrorCategory::Unavailable, error.to_string(), true)
-                })?;
-        }
+        let state = if section.is_none() {
+            product_state::validate(state)?
+        } else {
+            state
+        };
+        let updates_privacy = section != Some(ProductSettingsSection::Connection);
+        let updates_connection = section != Some(ProductSettingsSection::Preferences);
         let control = self.service.proxy_control();
         let run_settings = self
             .proxy_certificate_settings
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
-        let prepared_result = self.product_state.save_settings_prepared(state, expected, decryption, |next, previous| {
-            let enabling = next.preferences.decrypt_https && (
-                control.as_ref().is_some_and(|control| !control.https_decryption())
-                || https_validation.is_some() && !previous.preferences.decrypt_https
-            );
-            if !enabling { return Ok(None); }
-            let settings = run_settings.as_ref().filter(|_| control.is_some());
-            let request = settings.map(|settings| &settings.request)
-                .or_else(|| https_validation.as_ref().map(|validation| validation.fallback_request))
-                .ok_or_else(|| AppError::new(ErrorCategory::InvalidInput,
-                    "Set up the interception certificate in Settings → Connection before enabling HTTPS decryption.", false))?;
-            let prepared = lifecycle::prepare_https_interception(request)?;
-            if let Some(validation) = &https_validation {
-                (validation.validate_trust)(&prepared.thumbprint,
-                    settings.map_or(next.preferences.configure_system_proxy, |settings| settings.host_integration), request)
-                    .map_err(|message| AppError::new(ErrorCategory::InvalidInput,
-                        format!("{message} Open Settings → Connection to set up HTTPS interception, then save again."), false))?;
-            }
-            Ok(Some(prepared))
-        });
+        let prepared_result = self.product_state.save_settings_prepared(
+            state,
+            section,
+            expected,
+            decryption,
+            |next, previous| {
+                if updates_privacy
+                    && self.buffer_preferences
+                    && let Some(store) = &self.body_store
+                {
+                    store
+                        .prepare_buffer_limit(next.privacy.buffer_limit)
+                        .map_err(|error| {
+                            AppError::new(ErrorCategory::Unavailable, error.to_string(), true)
+                        })?;
+                }
+                let enabling = updates_connection
+                    && next.preferences.decrypt_https
+                    && (control.as_ref().is_some_and(|control| !control.https_decryption())
+                        || https_validation.is_some() && !previous.preferences.decrypt_https);
+                if !enabling {
+                    return Ok(None);
+                }
+                let settings = run_settings.as_ref().filter(|_| control.is_some());
+                let request = settings.map(|settings| &settings.request)
+                    .or_else(|| https_validation.as_ref().map(|validation| validation.fallback_request))
+                    .ok_or_else(|| AppError::new(ErrorCategory::InvalidInput,
+                        "Set up the interception certificate in Settings → Connection before enabling HTTPS decryption.", false))?;
+                let prepared = lifecycle::prepare_https_interception(request)?;
+                if let Some(validation) = &https_validation {
+                    let host_integration = settings.map_or(
+                        next.preferences.configure_system_proxy,
+                        |settings| settings.host_integration,
+                    );
+                    (validation.validate_trust)(&prepared.thumbprint, host_integration, request)
+                        .map_err(|message| AppError::new(ErrorCategory::InvalidInput,
+                            format!("{message} Open Settings → Connection to set up HTTPS interception, then save again."), false))?;
+                }
+                Ok(Some(prepared))
+            },
+        );
         let (result, prepared) = match prepared_result {
             Ok((state, prepared)) => (Ok(state), prepared),
             Err(error) => (Err(error), None),
         };
-        if let Ok(state) = &result {
+        if let Ok(state) = &result
+            && updates_privacy
+        {
             self.service
                 .set_redact_sensitive_headers(state.privacy.redact_sensitive_headers);
             self.service.catalog().set_stream_content_retention(
                 state.privacy.retain_request_bodies,
                 state.privacy.retain_response_bodies,
             );
-            if let Some(control) = &control {
-                if let Some(prepared) = prepared {
-                    *self
-                        .proxy_certificate
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner) =
-                        Some(prepared.certificate);
-                    control.set_https_decryption_with_certificates(true, prepared.certificates);
-                } else if !state.preferences.decrypt_https {
-                    control.set_https_decryption(false);
-                    *self
-                        .proxy_certificate
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
-                }
-                control.set_outbound_isolation(state.preferences.isolate_outbound_connections);
-                control
-                    .set_process_inspection(state.preferences.process_inspection.clone())
-                    .map_err(|error| {
-                        AppError::new(ErrorCategory::InvalidInput, error.to_string(), false)
-                    })?;
+        }
+        if let (Ok(state), Some(control)) = (&result, &control)
+            && updates_connection
+        {
+            if let Some(prepared) = prepared {
+                *self
+                    .proxy_certificate
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                    Some(prepared.certificate);
+                control.set_https_decryption_with_certificates(true, prepared.certificates);
+            } else if !state.preferences.decrypt_https {
+                control.set_https_decryption(false);
+                *self
+                    .proxy_certificate
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
             }
+            control.set_outbound_isolation(state.preferences.isolate_outbound_connections);
+            control
+                .set_process_inspection(state.preferences.process_inspection.clone())
+                .map_err(|error| {
+                    AppError::new(ErrorCategory::InvalidInput, error.to_string(), false)
+                })?;
         }
         if let Ok(state) = &result
+            && updates_privacy
             && self.entry_preferences
         {
             self.service.catalog().set_live_entry_limit(
@@ -1091,7 +1149,9 @@ impl Application {
                     .and_then(std::num::NonZeroUsize::new),
             );
         }
-        if let (Ok(state), Some(store)) = (&result, &self.body_store) {
+        if let (Ok(state), Some(store)) = (&result, &self.body_store)
+            && updates_privacy
+        {
             if self.buffer_preferences {
                 store
                     .set_buffer_limit(state.privacy.buffer_limit)

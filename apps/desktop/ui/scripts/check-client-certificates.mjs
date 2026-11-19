@@ -143,12 +143,25 @@ export async function checkClientCertificates(page, root) {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.locator('a[data-view="settings"]').click();
   const settings = page.locator("settings-workspace");
-  await settings.getByRole("button", { name: "Preferences", exact: true }).click();
-  const advanced = settings
-    .locator("details.connection-advanced")
-    .filter({ has: page.getByText("Advanced network settings", { exact: true }) });
-  await advanced.locator("summary").click();
-  await advanced.getByRole("button", { name: "Client certificates…", exact: true }).click();
+  await settings.getByRole("button", { name: "Connection", exact: true }).click();
+  const clientCertificates = settings.getByRole("button", {
+    name: "Client certificates…",
+    exact: true,
+  });
+  await clientCertificates.press("Enter");
+  const backToConnection = settings.getByRole("button", { name: "Back to Connection" });
+  await backToConnection.waitFor();
+  assert.equal(
+    await backToConnection.evaluate((button) => button.matches(":focus")),
+    true,
+    "Opening Client certificates left keyboard focus outside the editor",
+  );
+  await backToConnection.press("Enter");
+  assert.equal(
+    await clientCertificates.evaluate((button) => button.getRootNode().activeElement === button),
+    true,
+  );
+  await clientCertificates.click();
   const editor = page.locator("client-certificate-settings");
   await editor.getByLabel("Default client certificate action").waitFor();
   await page.waitForFunction(

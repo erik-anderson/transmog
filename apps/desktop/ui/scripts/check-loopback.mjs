@@ -24,6 +24,10 @@ export async function checkLoopback(page, root) {
     shell.settings.showSettingsSection("connection");
   });
   await page.locator('app-shell a[data-view="settings"]').click();
+  const advanced = page.locator(".connection-panel .connection-advanced");
+  if (!(await advanced.evaluate((details) => details.open))) {
+    await advanced.locator("summary").click();
+  }
   const launch = page.getByRole("button", { name: "Manage loopback exemptions…", exact: true });
   await launch.click();
   const dialog = page.getByRole("dialog", {

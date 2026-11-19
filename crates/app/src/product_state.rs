@@ -165,6 +165,95 @@ mod process_policy_tests {
     }
 
     #[test]
+    fn connection_save_keeps_newer_preferences_geometry_and_recent_paths() {
+        let manager = ProductStateManager::memory(ProductState::default());
+        let mut draft = manager.snapshot();
+        let baseline = draft.preferences.process_inspection.clone();
+        let mut newer = draft.clone();
+        newer.preferences.theme = ThemePreference::Dark;
+        newer.privacy.remember_recent_artifacts = true;
+        manager.save(newer).unwrap();
+        manager.save_proxy_routing(false).unwrap();
+        manager
+            .save_window_state(WindowState {
+                width: 1320,
+                ..WindowState::default()
+            })
+            .unwrap();
+        manager.remember(PathBuf::from("new.tmcap"), ArtifactKind::NativeCapture);
+        let mut expected = manager.snapshot();
+
+        draft.preferences.decrypt_https = false;
+        draft.preferences.process_inspection = ProcessInspectionPolicy {
+            mode: ProcessInspectionMode::Only,
+            include: vec!["browser.exe".into()],
+            exclude: vec![],
+        };
+        draft.preferences.allow_remote_clients = true;
+        draft.preferences.proxy_port = Some(8888);
+        draft.preferences.isolate_outbound_connections = false;
+        expected.preferences.decrypt_https = false;
+        expected.preferences.process_inspection = draft.preferences.process_inspection.clone();
+        expected.preferences.allow_remote_clients = true;
+        expected.preferences.proxy_port = Some(8888);
+        expected.preferences.isolate_outbound_connections = false;
+
+        let (saved, ()) = manager
+            .save_settings_prepared(
+                draft,
+                Some(ProductSettingsSection::Connection),
+                Some(&baseline),
+                DecryptionWrite::Checked(true),
+                |_, _| Ok(()),
+            )
+            .unwrap();
+        assert_eq!(saved, expected);
+        assert_eq!(manager.snapshot(), expected);
+    }
+
+    #[test]
+    fn preferences_save_keeps_newer_connection_settings_and_honors_recent_path_opt_out() {
+        let mut initial = ProductState::default();
+        initial.privacy.remember_recent_artifacts = true;
+        let manager = ProductStateManager::memory(initial);
+        let mut draft = manager.snapshot();
+        let baseline = draft.preferences.process_inspection.clone();
+        let mut newer = draft.clone();
+        newer.preferences.decrypt_https = false;
+        newer.preferences.proxy_port = Some(8888);
+        newer.preferences.process_inspection = ProcessInspectionPolicy {
+            mode: ProcessInspectionMode::Only,
+            include: vec!["browser.exe".into()],
+            exclude: vec![],
+        };
+        manager
+            .save_with_process_inspection(newer, Some(&baseline))
+            .unwrap();
+        manager.remember(PathBuf::from("new.tmcap"), ArtifactKind::NativeCapture);
+        assert_eq!(manager.snapshot().recent_artifacts.len(), 1);
+        let mut expected = manager.snapshot();
+
+        draft.preferences.theme = ThemePreference::Light;
+        draft.privacy.remember_recent_artifacts = false;
+        draft.privacy.redact_sensitive_headers = true;
+        expected.preferences.theme = draft.preferences.theme;
+        expected.privacy = draft.privacy.clone();
+        expected.recent_artifacts.clear();
+
+        let (saved, ()) = manager
+            .save_settings_prepared(
+                draft,
+                Some(ProductSettingsSection::Preferences),
+                None,
+                DecryptionWrite::Authored,
+                |_, _| Ok(()),
+            )
+            .unwrap();
+        assert_eq!(saved, expected);
+        assert_eq!(manager.snapshot(), expected);
+    }
+
+    #[test]
     fn concurrent_recent_artifacts_preserve_authored_settings() {
         let mut initial = ProductState::default();
         initial.privacy.remember_recent_artifacts = true;
@@ -367,6 +456,16 @@ pub struct ProductState {
     pub workspace: WorkspacePreferences,
 }
 
+/// The set of fields authored by a desktop settings form.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum ProductSettingsSection {
+    /// Appearance, capture storage, and privacy.
+    Preferences,
+    /// Proxy listener and inspection behavior.
+    Connection,
+}
+
 impl Default for ProductState {
     fn default() -> Self {
         Self {
@@ -450,76 +549,72 @@ impl ProductStateManager {
         expected: Option<&transmog_core::process_inspection::ProcessInspectionPolicy>,
         decryption: DecryptionWrite,
     ) -> Result<ProductState, AppError> {
-        self.save_settings_prepared(state, expected, decryption, |_, _| Ok(()))
+        self.save_settings_prepared(state, None, expected, decryption, |_, _| Ok(()))
             .map(|(state, ())| state)
     }
 
     pub(crate) fn save_settings_prepared<T>(
         &self,
         state: ProductState,
+        section: Option<ProductSettingsSection>,
         expected: Option<&transmog_core::process_inspection::ProcessInspectionPolicy>,
         decryption: DecryptionWrite,
         prepare: impl FnOnce(&ProductState, &ProductState) -> Result<T, AppError>,
     ) -> Result<(ProductState, T), AppError> {
         let mut inner = self.inner.lock().unwrap();
+        let current = &inner.state;
+        let (mut state, expected) = match section {
+            Some(ProductSettingsSection::Preferences) => {
+                let mut next = current.clone();
+                next.preferences.theme = state.preferences.theme;
+                next.privacy = state.privacy;
+                (next, None)
+            }
+            Some(ProductSettingsSection::Connection) => {
+                let mut next = current.clone();
+                next.preferences.decrypt_https = state.preferences.decrypt_https;
+                next.preferences.process_inspection = state.preferences.process_inspection;
+                next.preferences.allow_remote_clients = state.preferences.allow_remote_clients;
+                next.preferences.proxy_port = state.preferences.proxy_port;
+                next.preferences.isolate_outbound_connections =
+                    state.preferences.isolate_outbound_connections;
+                (next, expected)
+            }
+            None => {
+                let mut state = state;
+                state.workspace = current.workspace.clone();
+                state.preferences.network_profiles = current.preferences.network_profiles.clone();
+                state.preferences.client_certificate_policy =
+                    current.preferences.client_certificate_policy.clone();
+                (state, expected)
+            }
+        };
         if let Some(expected) = expected
             && expected != &state.preferences.process_inspection
-            && expected != &inner.state.preferences.process_inspection
-            && state.preferences.process_inspection != inner.state.preferences.process_inspection
+            && expected != &current.preferences.process_inspection
+            && state.preferences.process_inspection != current.preferences.process_inspection
         {
             return Err(invalid(
                 "Process inspection changed in another window. Revert changes to load the saved settings; your draft is still available.",
             ));
         }
-        // Main settings/window writes must not overwrite independently saved layout.
-        let allowed_outbound_protocols = inner
-            .state
-            .preferences
-            .network_profiles
-            .active_profile
-            .settings
-            .protocols;
-        let reuse_server_connections = inner
-            .state
-            .preferences
-            .network_profiles
-            .active_profile
-            .settings
-            .reuse_connections;
-        let state = validate(ProductState {
-            preferences: ProductPreferences {
-                decrypt_https: match decryption {
-                    DecryptionWrite::Preserve => inner.state.preferences.decrypt_https,
-                    DecryptionWrite::Checked(baseline)
-                        if baseline == state.preferences.decrypt_https =>
-                    {
-                        inner.state.preferences.decrypt_https
-                    }
-                    DecryptionWrite::Authored | DecryptionWrite::Checked(_) => {
-                        state.preferences.decrypt_https
-                    }
-                },
-                process_inspection: if expected
-                    .is_some_and(|expected| expected != &state.preferences.process_inspection)
-                {
-                    state.preferences.process_inspection
-                } else {
-                    inner.state.preferences.process_inspection.clone()
-                },
-                allowed_outbound_protocols,
-                reuse_server_connections,
-                network_profiles: inner.state.preferences.network_profiles.clone(),
-                client_certificate_policy: inner
-                    .state
-                    .preferences
-                    .client_certificate_policy
-                    .clone(),
-                ..state.preferences
-            },
-            workspace: inner.state.workspace.clone(),
-            ..state
-        })?;
-        let prepared = prepare(&state, &inner.state)?;
+        state.preferences.decrypt_https = match decryption {
+            DecryptionWrite::Preserve => current.preferences.decrypt_https,
+            DecryptionWrite::Checked(baseline) if baseline == state.preferences.decrypt_https => {
+                current.preferences.decrypt_https
+            }
+            DecryptionWrite::Authored | DecryptionWrite::Checked(_) => {
+                state.preferences.decrypt_https
+            }
+        };
+        if expected.is_none_or(|expected| expected == &state.preferences.process_inspection) {
+            state.preferences.process_inspection = current.preferences.process_inspection.clone();
+        }
+        let active = &current.preferences.network_profiles.active_profile.settings;
+        state.preferences.allowed_outbound_protocols = active.protocols;
+        state.preferences.reuse_server_connections = active.reuse_connections;
+        let state = validate(state)?;
+        let prepared = prepare(&state, current)?;
         self.persist(&mut inner, &state)?;
         Ok((state, prepared))
     }

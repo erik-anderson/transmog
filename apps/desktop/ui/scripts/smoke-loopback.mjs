@@ -4,8 +4,9 @@ export async function smokeLoopback(call, evaluate, screenshotPath) {
   try {
     const result = await evaluate(`(async()=>{
       const shell=document.querySelector('app-shell'),settings=shell.settings,manager=settings.loopbackManager;
-      globalThis.__loopbackProbe={view:shell.activeView,section:settings.settingsSection};
+      globalThis.__loopbackProbe={view:shell.activeView,section:settings.settingsSection,open:settings.listenerOptions.open};
       shell.shadowRoot.querySelector('a[data-view="settings"]').click();settings.showSettingsSection('connection');await settings.$whenRendered();
+      settings.listenerOptions.open=true;
       const button=[...settings.querySelectorAll('button')].find(button=>button.textContent==='Manage loopback exemptions…');button.focus();button.click();
       // Native enumeration has a 45-second command deadline. Observe that full
       // budget plus bounded IPC/render reporting, including deferred click delivery.
@@ -44,7 +45,7 @@ export async function smokeLoopback(call, evaluate, screenshotPath) {
     return result;
   } finally {
     await evaluate(
-      `(async ()=>{const probe=globalThis.__loopbackProbe;if(!probe)return;const shell=document.querySelector('app-shell'),manager=shell.settings.loopbackManager;const filter=manager.querySelector('.loopback-exempt-only input');if(filter.checked)filter.click();manager.clearSelection();await manager.close();shell.settings.showSettingsSection(probe.section);shell.shadowRoot.querySelector('a[data-view="'+probe.view+'"]').click();delete globalThis.__loopbackProbe;})()`,
+      `(async ()=>{const probe=globalThis.__loopbackProbe;if(!probe)return;const shell=document.querySelector('app-shell'),manager=shell.settings.loopbackManager;const filter=manager.querySelector('.loopback-exempt-only input');if(filter.checked)filter.click();manager.clearSelection();await manager.close();shell.settings.listenerOptions.open=probe.open;shell.settings.showSettingsSection(probe.section);shell.shadowRoot.querySelector('a[data-view="'+probe.view+'"]').click();delete globalThis.__loopbackProbe;})()`,
     );
   }
 }
