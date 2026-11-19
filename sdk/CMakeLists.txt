@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(TransmogSDK VERSION 0.1.0 LANGUAGES CXX)
+project(TransmogSDK VERSION 0.1.29 LANGUAGES CXX)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 include(CTest)

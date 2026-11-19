@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 from urllib.error import HTTPError
@@ -281,7 +282,7 @@ class ReleaseDecisions(unittest.TestCase):
                 self.assertEqual(uploads, [])
 
 
-def fixture(root):
+def fixture(root, *, sdk=True):
     for name in ("apps/desktop/src", "apps/desktop/ui", "fuzz/src"):
         (root / name).mkdir(parents=True, exist_ok=True)
     (root / "Cargo.toml").write_text('[workspace]\nmembers = ["apps/desktop"]\nresolver = "2"\n[workspace.package]\nversion = "0.1.0"\nedition = "2024"\n')
@@ -296,6 +297,29 @@ def fixture(root):
         packages={"": dict(name="@transmog/desktop-ui", version="0.1.0")}))
     command(["cargo", "generate-lockfile", "--offline"], cwd=root, capture=True)
     command(["cargo", "generate-lockfile", "--manifest-path", "fuzz/Cargo.toml", "--offline"], cwd=root, capture=True)
+    if sdk:
+        (root / "sdk/bindings/src").mkdir(parents=True)
+        (root / "sdk/managed").mkdir()
+        (root / "sdk/Cargo.toml").write_text(
+            '[workspace]\nmembers = ["bindings"]\nresolver = "2"\n[workspace.package]\nversion = "0.1.0"\n'
+        )
+        (root / "sdk/bindings/Cargo.toml").write_text(
+            '[package]\nname = "transmog-sdk-fixture"\nversion.workspace = true\nedition = "2024"\n'
+            '[dependencies]\ntransmog-desktop = { path = "../../apps/desktop" }\n'
+        )
+        (root / "sdk/bindings/src/lib.rs").write_text("// Metadata fixture.\n")
+        (root / "sdk/CMakeLists.txt").write_text('project(TransmogSDK VERSION 0.1.0 LANGUAGES CXX)\n')
+        (root / "sdk/managed/Transmog.Sdk.csproj").write_text(
+            '<Project Sdk="Microsoft.NET.Sdk">\n  <PropertyGroup>\n    <Version>0.1.0</Version>\n'
+            '    <AssemblyVersion>1.0.0.0</AssemblyVersion>\n    <FileVersion>$(Version).0</FileVersion>\n'
+            '    <TargetFramework>net10.0</TargetFramework>\n'
+            '  </PropertyGroup>\n</Project>\n'
+        )
+        command(["cargo", "generate-lockfile", "--manifest-path", "sdk/Cargo.toml", "--offline"], cwd=root, capture=True)
+
+
+def sdk_package_versions(contents):
+    return {p["name"]: p["version"] for p in tomllib.loads(contents)["package"]}
 
 
 class LocalReleaseFixtures(unittest.TestCase):
@@ -322,6 +346,39 @@ class LocalReleaseFixtures(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "fixture lockfile failure"):
             set_version(self.root, "0.1.1", run=run)
         self.assertEqual({p: p.read_bytes() for p in original}, original)
+
+    def test_sdk_version_drift_can_be_checked_and_repaired_without_a_product_version_bump(self):
+        fixture(self.root)
+        paths = [self.root / "sdk" / name for name in (
+            "Cargo.toml", "Cargo.lock", "CMakeLists.txt", "managed/Transmog.Sdk.csproj",
+        )]
+        original = {path: path.read_bytes() for path in paths}
+        for path in paths[:-1]:
+            path.write_bytes(original[path].replace(b"0.1.0", b"0.0.9"))
+        managed = paths[-1]
+        managed.write_bytes(original[managed].replace(b"    <Version>0.1.0</Version>", b"    <Version>0.0.9</Version>"))
+        with self.assertRaisesRegex(ValueError, "SDK versions differ"):
+            set_version(self.root, check=True)
+        # The hosted script also operates on older branches that relied on the managed default.
+        managed.write_text(managed.read_text().replace("    <Version>0.0.9</Version>\n", "")
+                           .replace("    <AssemblyVersion>1.0.0.0</AssemblyVersion>\n", "")
+                           .replace("    <FileVersion>$(Version).0</FileVersion>\n", ""))
+        set_version(self.root, "0.1.0")
+        self.assertEqual({path: path.read_bytes() for path in paths}, original)
+        set_version(self.root, check=True)
+        command(["cargo", "metadata", "--manifest-path", "sdk/Cargo.toml", "--format-version", "1",
+                 "--locked", "--offline"], cwd=self.root, capture=True)
+
+    def test_version_check_rejects_an_incomplete_sdk_lockfile(self):
+        fixture(self.root)
+        (self.root / "sdk/Cargo.lock").write_text('version = 4\n')
+        with self.assertRaisesRegex(ValueError, "SDK lockfile is missing local packages"):
+            set_version(self.root, check=True)
+
+    def test_version_bump_works_on_a_release_branch_without_an_sdk(self):
+        fixture(self.root, sdk=False)
+        set_version(self.root, "0.1.1")
+        self.assertFalse((self.root / "sdk").exists())
 
     def test_preflight_drafts_published_versions_and_reserved_lines(self):
         fixture(self.root)
@@ -378,6 +435,8 @@ class LocalReleaseFixtures(unittest.TestCase):
         create = dict(ref_type="branch", ref="release/0.1")
         module.advance(create, "create", checkout, environment)
         self.assertEqual(json.loads(git("show", "refs/remotes/origin/main:release-version.json"))["version"], "0.2.0")
+        self.assertEqual(sdk_package_versions(git("show", "refs/remotes/origin/main:sdk/Cargo.lock")),
+                         {"transmog-desktop": "0.2.0", "transmog-sdk-fixture": "0.2.0"})
         self.assertEqual(json.loads(git("show", "refs/remotes/origin/release/0.1:release-version.json"))["releaseType"], "Beta")
         main_commit = git("rev-parse", "refs/remotes/origin/main")
         module.advance(create, "create", checkout, environment)
@@ -423,6 +482,13 @@ class LocalReleaseFixtures(unittest.TestCase):
         self.assertEqual(canary, git("rev-parse", "refs/remotes/origin/main"))
         publish("main", "0.2.1", True)
         self.assertEqual(json.loads(git("show", "refs/remotes/origin/main:release-version.json"))["version"], "0.2.2")
+        self.assertEqual(sdk_package_versions(git("show", "refs/remotes/origin/main:sdk/Cargo.lock")),
+                         {"transmog-desktop": "0.2.2", "transmog-sdk-fixture": "0.2.2"})
+        self.assertIn('version = "0.2.2"', git("show", "refs/remotes/origin/main:sdk/Cargo.toml"))
+        self.assertIn("VERSION 0.2.2", git("show", "refs/remotes/origin/main:sdk/CMakeLists.txt"))
+        self.assertIn("<Version>0.2.2</Version>", git("show", "refs/remotes/origin/main:sdk/managed/Transmog.Sdk.csproj"))
+        command(["cargo", "metadata", "--manifest-path", "sdk/Cargo.toml", "--format-version", "1",
+                 "--locked", "--offline"], cwd=checkout, capture=True)
         git("branch", "release/0.2", "refs/remotes/origin/main")
         git("push", "-q", "origin", "release/0.2")
         module.advance(dict(ref_type="branch", ref="release/0.2"), "create", checkout, environment)

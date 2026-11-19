@@ -293,8 +293,11 @@ build.
    `release-version.json` records the semantic version, source channel, and default
    release track. `main` uses `Canary`; a release branch has the neutral `Release`
    source channel and a `Beta` or `Stable` track. The command preserves that track
-   unless `--release-type` is supplied. It synchronizes Cargo, both lockfiles,
-   Tauri, and the desktop UI package without updating external dependencies.
+   unless `--release-type` is supplied. It synchronizes Cargo, the main and fuzz
+   lockfiles, Tauri, and the desktop UI package without updating external
+   dependencies. The SDK's Rust crates, CMake project, managed project, and
+   local Cargo lockfile entries use the same product version. The managed
+   assembly keeps a stable CLR identity version.
    `python ./scripts/set-release-version.py --check` verifies committed versions.
    The normal SemVer `major.minor.patch` is used unchanged in packages, tags,
    installer filenames, product titles, diagnostics, and the SBOM. Components

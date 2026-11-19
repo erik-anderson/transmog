@@ -3,7 +3,7 @@ members = ["engine", "facade", "bindings", "model-codegen"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.9"
+version = "0.1.29"
 edition = "2024"
 rust-version = "1.100"
 license = "MIT"
