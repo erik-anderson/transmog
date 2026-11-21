@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <Version>0.1.29</Version>
+    <Version>0.1.30</Version>
     <!-- The CLR identity has a smaller numeric range than the product version. -->
     <AssemblyVersion>1.0.0.0</AssemblyVersion>
     <FileVersion>$(Version).0</FileVersion>
