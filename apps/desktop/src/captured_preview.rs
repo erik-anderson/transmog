@@ -664,7 +664,7 @@ mod tests {
     use super::*;
     #[test]
     fn deny_endpoint_closes_without_fabricating_an_http_response() {
-        use std::io::Write;
+        use std::io::{ErrorKind, Write};
         let proxy = DenyProxy::start().unwrap();
         for request in [
             b"GET http://origin.invalid/missing HTTP/1.1\r\nHost: origin.invalid\r\n\r\n"
@@ -673,12 +673,18 @@ mod tests {
         ] {
             let mut client = TcpStream::connect(proxy.address).unwrap();
             client
-                .set_read_timeout(Some(Duration::from_secs(2)))
+                .set_read_timeout(Some(Duration::from_secs(5)))
                 .unwrap();
             client.write_all(request).unwrap();
-            let mut bytes = Vec::new();
-            client.read_to_end(&mut bytes).unwrap();
-            assert_eq!(bytes, [] as [u8; 0]);
+            // A connection reset can also signal that the peer closed.
+            let first_byte = client.read_exact(&mut [0]);
+            assert!(
+                first_byte.as_ref().is_err_and(|error| matches!(
+                    error.kind(),
+                    ErrorKind::UnexpectedEof | ErrorKind::ConnectionReset
+                )),
+                "deny proxy must close before sending any response bytes: {first_byte:?}"
+            );
         }
     }
 }

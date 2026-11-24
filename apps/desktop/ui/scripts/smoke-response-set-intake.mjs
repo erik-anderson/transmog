@@ -124,7 +124,7 @@ export async function smokeResponseSetIntake({ main, waitFor, directory }) {
   await pointer(
     button(traffic + ".querySelector('.traffic-selection-bar')", "Add to response set…"),
   );
-  await waitFor(`${dialog}.open`);
+  await waitFor(`${picker}?.intakeDialog?.open`);
   await idle();
   assert.equal(await main.evaluate(`${picker}.intakeSelectedCount`), 2);
   await main.evaluate(`${picker}.destinationSelect.focus()`);
@@ -231,7 +231,7 @@ export async function smokeResponseSetIntake({ main, waitFor, directory }) {
   const openRules = async () => {
     await pointer(sets + ".addButton");
     await pointer(button(sets + ".addMenu", "From existing rules…"));
-    await waitFor(`${dialog}.open`);
+    await waitFor(`${picker}?.intakeDialog?.open`);
     await idle();
     for (const rule of ordinary)
       await pointer(dialog + `.querySelector('#intake-source-${rule.id} input')`);
@@ -451,7 +451,7 @@ export async function smokeResponseSetMoveSource({ main, waitFor, directory }) {
   await input(a + ".autoResponseForm.elements.namedItem('name')", "Saved native source draft");
   await pointer(a + ".ruleMoreButton");
   await pointer(button(a + ".ruleMenu", "Add to response set…"));
-  await waitFor(dialog + ".open");
+  await waitFor(p + "?.intakeDialog?.open");
   await idle();
   const checkbox = (index) => dialog + `.querySelector('#intake-source-${rules[index].id} input')`;
   await pointer(checkbox(1));
@@ -486,7 +486,7 @@ export async function smokeResponseSetMoveSource({ main, waitFor, directory }) {
   assert.equal(await main.evaluate(a + ".autoResponseBody.value"), "unsaved native source body");
   await pointer(a + ".ruleMoreButton");
   await pointer(button(a + ".ruleMenu", "Add to response set…"));
-  await waitFor(dialog + ".open");
+  await waitFor(p + "?.intakeDialog?.open");
   await idle();
   await main.evaluate(p + ".destinationSelect.focus()");
   await key("End", "End", 35);

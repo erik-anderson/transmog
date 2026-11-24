@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use webui::{BuildOptions, CssStrategy, Plugin, ProjectionManifestSource, build};
+use webui::{BuildOptions, CssStrategy, LazyPackFile, Plugin, ProjectionManifestSource, build};
 
 struct AssetSource {
     public_path: String,
@@ -126,9 +126,40 @@ fn compile_webui(ui_dir: &Path) {
             expected_bytes: None,
         });
     }
+    sources.extend(
+        result
+            .lazy_pack_files
+            .into_iter()
+            .map(|pack| template_pack_asset(&output_dir, pack)),
+    );
     sources.extend(client_assets(ui_dir));
     embed_assets(&output_dir, &sources, &mut generated);
     fs::write(output_dir.join("assets.rs"), generated).expect("write WebUI asset index");
+}
+
+fn template_pack_asset(output_dir: &Path, pack: LazyPackFile) -> AssetSource {
+    let filename = &pack.file_name;
+    assert!(
+        Path::new(filename)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+            && filename
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')),
+        "WebUI emitted an unsafe template pack filename: {filename}"
+    );
+    let relative_path = pack.path();
+    assert_eq!(relative_path, format!("_webui/packs/{filename}"));
+    let path = output_dir.join(&relative_path);
+    fs::create_dir_all(path.parent().expect("template pack directory"))
+        .expect("create template pack directory");
+    fs::write(&path, pack.content).expect("write WebUI template pack");
+    AssetSource {
+        public_path: format!("/{relative_path}"),
+        content_type: "application/json; charset=utf-8",
+        source_path: path,
+        expected_bytes: None,
+    }
 }
 
 fn client_assets(ui_dir: &Path) -> Vec<AssetSource> {

@@ -3,12 +3,14 @@ import { dirname, join, relative, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
-import { esbuildProjection } from "@microsoft/webui/projection.js";
+import { bundleClient, prepareBuild } from "@microsoft/webui/build.js";
 import { buildCredits } from "./scripts/build-credits.mjs";
 import { monacoCompletionLifecycle } from "./scripts/monaco-completion-lifecycle.mjs";
 
 const workingDirectory = fileURLToPath(new URL("./", import.meta.url));
+const projectDirectory = resolve(workingDirectory, "../../..");
 const outputDirectory = resolve(workingDirectory, "dist");
+const templateOutput = join(outputDirectory, "webui");
 
 async function installedVersion(name) {
   let directory = dirname(fileURLToPath(import.meta.resolve(name)));
@@ -39,9 +41,44 @@ if (relative(workingDirectory, outputDirectory) !== "dist")
   throw new Error("Unsafe build output directory: " + outputDirectory);
 await rm(outputDirectory, { recursive: true, force: true });
 await mkdir(outputDirectory, { recursive: true });
-const client = await esbuild.build({
+const templates = prepareBuild({
+  appDir: join(workingDirectory, "src"),
+  plugin: "webui",
+  css: "link",
+  assetBase: "/",
+  cssFileNameTemplate: "[name]-[hash].[ext]",
+  modulesOut: join(templateOutput, "modules"),
+});
+templates.writeModules();
+const client = await bundleClient({
+  // The UI imports the shared traffic filter catalog from the Rust workspace.
+  project: projectDirectory,
+  entries: { app: relative(projectDirectory, join(workingDirectory, "src/index.ts")) },
+  outDir: outputDirectory,
+  tsconfig: relative(projectDirectory, join(workingDirectory, "tsconfig.json")),
+  chunkNames: "chunks/[name]-[hash].js",
+  external: ["/monaco.js"],
+  minify: true,
+  target: "es2022",
+});
+for (const { code, message } of client.warnings) console.warn(`${code}: ${message}`);
+const compiled = templates.finish({ projectionManifests: [client.manifestPath] });
+if (compiled.warnings.length) throw new Error(compiled.warnings.join("\n"));
+// The browser fixtures use the same preparation whose generated modules entered the bundle.
+await writeFile(join(templateOutput, "protocol.bin"), compiled.protocol);
+await writeFile(join(templateOutput, "stats.json"), JSON.stringify(compiled.stats) + "\n");
+for (let index = 0; index < compiled.cssFiles.length; index += 2)
+  await writeFile(join(templateOutput, compiled.cssFiles[index]), compiled.cssFiles[index + 1]);
+for (const pack of compiled.lazyPackFiles) {
+  const file = join(templateOutput, pack.path);
+  await mkdir(dirname(file), { recursive: true });
+  await writeFile(file, pack.content);
+}
+
+// Monaco has its own stylesheet, workers, and completion lifecycle patch.
+const monaco = await esbuild.build({
   absWorkingDir: workingDirectory,
-  entryPoints: { app: "src/index.ts", monaco: "src/monaco.ts" },
+  entryPoints: { monaco: "src/monaco.ts" },
   outdir: outputDirectory,
   chunkNames: "chunks/[name]-[hash]",
   bundle: true,
@@ -51,16 +88,21 @@ const client = await esbuild.build({
   minify: true,
   sourcemap: false,
   target: ["es2022"],
-  define: {
-    __WEBUI_DEV__: "false",
-  },
   legalComments: "inline",
   loader: { ".ttf": "dataurl" },
-  plugins: [esbuildProjection(), monacoCompletionLifecycle()],
+  plugins: [monacoCompletionLifecycle()],
 });
 
-const outputs = { ...client.metafile.outputs };
-const inputs = { ...client.metafile.inputs };
+const clientOutputs = Object.fromEntries(
+  Object.entries(client.metafile.outputs).map(([path, metadata]) => [
+    relative(workingDirectory, resolve(projectDirectory, path)).replaceAll("\\", "/"),
+    metadata,
+  ]),
+);
+const browserOutputs = { ...clientOutputs, ...monaco.metafile.outputs };
+const browserInputs = { ...client.metafile.inputs, ...monaco.metafile.inputs };
+const outputs = { ...browserOutputs };
+const inputs = { ...browserInputs };
 for (const [entryPoint, outfile] of [
   ["node_modules/monaco-editor/esm/vs/editor/editor.worker.js", "monaco-editor.worker.js"],
   ["script-worker.mjs", "monaco-ts.worker.js"],
@@ -84,12 +126,6 @@ for (const [entryPoint, outfile] of [
   Object.assign(inputs, worker.metafile.inputs);
 }
 
-// Split roots each receive identical CSS; templates load the Monaco entry once.
-const shippedOutputs = Object.fromEntries(
-  Object.entries(outputs).filter(
-    ([file]) => !file.endsWith(".css") || file.endsWith("/monaco.css"),
-  ),
-);
 // Document-scoped fonts and styles ship outside the client asset inventory.
 const documentStyles = await esbuild.build({
   absWorkingDir: workingDirectory,
@@ -101,12 +137,12 @@ const documentStyles = await esbuild.build({
   metafile: true,
 });
 await buildCredits(workingDirectory, join(outputDirectory, "credits.json"), {
-  outputs: { ...shippedOutputs, ...documentStyles.metafile.outputs },
+  outputs: { ...outputs, ...documentStyles.metafile.outputs },
   inputs: { ...inputs, ...documentStyles.metafile.inputs },
 });
 
 // The native origin embeds only the current bundler outputs, including dynamic chunks.
-const assets = Object.entries(shippedOutputs)
+const assets = Object.entries(outputs)
   .map(([file, metadata]) => {
     const name = relative(outputDirectory, resolve(workingDirectory, file)).replaceAll("\\", "/");
     if (!/^(?:chunks\/)?[a-zA-Z0-9_.-]+\.(?:js|css)$/.test(name))
@@ -133,7 +169,7 @@ await writeFile(
 );
 await writeFile(
   join(outputDirectory, "client-metafile.json"),
-  JSON.stringify(client.metafile, null, 2) + "\n",
+  JSON.stringify({ inputs: browserInputs, outputs: browserOutputs }, null, 2) + "\n",
 );
 // Bind frontend versions to this exact set of bundled assets for native diagnostics.
 await writeFile(

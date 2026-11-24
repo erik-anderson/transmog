@@ -122,8 +122,9 @@ pub use automation::{
     HeaderRuleTestInput, ResponseSet, ResponseSetApplyUndo, ResponseSetChange,
     ResponseSetIntakeDestination, ResponseSetIntakeInput, ResponseSetIntakeMode,
     ResponseSetIntakeResult, ResponseSetIntakeReview, ResponseSetIntakeRow,
-    ResponseSetIntakeSource, ResponseSetSnapshot, ResponseSetVersion, RuleDiagnostic, RuleUsage,
-    TextTransformTestInput,
+    ResponseSetIntakeSource, ResponseSetIntakeTrafficPage, ResponseSetIntakeTrafficQuery,
+    ResponseSetIntakeTrafficRow, ResponseSetSnapshot, ResponseSetVersion, RuleDiagnostic,
+    RuleUsage, TextTransformTestInput,
 };
 pub use autoresponse_batch::{AutoResponseBatchInput, AutoResponseBatchResult};
 pub use body_ranges::{BodyBytePage, BodyRangeRequest};

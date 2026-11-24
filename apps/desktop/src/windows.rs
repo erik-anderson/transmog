@@ -1213,6 +1213,26 @@ async fn create_autoresponse_batch(
 }
 
 #[tauri::command]
+async fn query_response_set_intake_traffic(
+    input: transmog_app::ResponseSetIntakeTrafficQuery,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::ResponseSetIntakeTrafficPage, AppError> {
+    let application = state.window_application(&window)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        application.query_response_set_intake_traffic(input)
+    })
+    .await
+    .map_err(|_| AppError {
+        category: transmog_app::ErrorCategory::Internal,
+        message: "Response picker query failed".into(),
+        retryable: true,
+        exception: None,
+        logs: Vec::new(),
+    })?
+}
+
+#[tauri::command]
 fn review_response_set_intake(
     input: transmog_app::ResponseSetIntakeInput,
     state: State<'_, DesktopState>,
@@ -3133,6 +3153,7 @@ pub fn run() {
                 autoresponse_source_headers,
                 edit_response_asset,
                 create_autoresponse_batch,
+                query_response_set_intake_traffic,
                 review_response_set_intake,
                 collect_response_set,
                 pick_response_body,

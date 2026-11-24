@@ -42,7 +42,8 @@ export function bundledNpmPackages(uiRoot, outputs, inputs = {}) {
   const usedInputs = new Set();
   for (const output of Object.values(outputs)) {
     for (const [input, contribution] of Object.entries(output.inputs)) {
-      if (contribution.bytesInOutput) usedInputs.add(input);
+      if (contribution.bytesInOutput || contribution.renderedBytesBeforeMinify)
+        usedInputs.add(input);
     }
   }
   // Inlined CSS assets are charged to their stylesheet, not to the font/image

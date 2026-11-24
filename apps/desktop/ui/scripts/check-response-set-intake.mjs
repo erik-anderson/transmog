@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 
-export async function checkResponseSetIntake(page, root) {
+export async function checkResponseSetIntake(page, root, errors) {
   await page.goto("https://workspace.test/");
   const traffic = page.locator("traffic-workspace"),
     workspace = page.locator("automation-workspace"),
@@ -25,20 +25,235 @@ export async function checkResponseSetIntake(page, root) {
     });
     if (await checkbox.isVisible()) await checkbox.check();
   };
-  const openTraffic = async () => {
+  const trafficOpener = async () => {
     await page.getByRole("link", { name: "Traffic", exact: true }).click();
     await traffic.locator('tr[data-session-id="first"]').click();
     await traffic
       .locator(".selection-actions")
       .getByRole("button", { name: "Actions", exact: true })
       .click();
-    await traffic
+    return traffic
       .locator("#selected-request-actions")
-      .getByRole("button", { name: "Add to response set…", exact: true })
-      .click();
+      .getByRole("button", { name: "Add to response set…", exact: true });
+  };
+  const openTraffic = async ({ keyboard = false } = {}) => {
+    const add = await trafficOpener();
+    if (keyboard) await add.press("Enter");
+    else await add.click();
     await dialog.waitFor({ state: "visible" });
     await idle();
   };
+  const requestIntake = (detail) =>
+    page.evaluate(
+      (detail) =>
+        document
+          .querySelector("app-shell")
+          .onResponseSetIntake(new CustomEvent("response-set-intake-request", { detail })),
+      detail,
+    );
+  assert.equal(await intake.count(), 0, "Intake component mounted at startup");
+  assert.equal(
+    await page.evaluate(() =>
+      performance.getEntriesByType("resource").some(({ name }) => name.includes("/_webui/packs/")),
+    ),
+    false,
+    "Intake fetched a template pack at startup",
+  );
+  const pack = "**/_webui/packs/*.json";
+  const prefetched = page.waitForResponse((response) => response.url().includes("/_webui/packs/"));
+  const add = await trafficOpener();
+  const queries = () => page.evaluate(() => globalThis.__workspaceFixture.intakeTrafficQueries);
+  await add.focus();
+  assert.equal((await prefetched).ok(), true);
+  assert.equal(await dialog.isVisible(), false, "Prefetch opened the picker");
+  assert.equal(await queries(), undefined, "Prefetch queried captured responses");
+  await page.goto("https://workspace.test/");
+  const releasePack = Promise.withResolvers();
+  const errorsBeforeFailure = errors.length;
+  let packRequests = 0,
+    queriesAtPack;
+  const delayPack = async (route) => {
+    if (++packRequests === 1) {
+      queriesAtPack = await queries();
+      await route.fulfill({ status: 503 });
+      return;
+    }
+    if (packRequests === 2) {
+      await releasePack.promise;
+    }
+    await route.fallback();
+  };
+  await page.route(pack, delayPack);
+  try {
+    // Activate without focusing or hovering the opener so the injected failure is on demand.
+    await (await trafficOpener()).evaluate((button) => button.click());
+    await dialog.waitFor({ state: "visible" });
+    const retry = dialog.getByRole("button", { name: "Try again", exact: true });
+    await retry.waitFor({ state: "visible" });
+    assert.deepEqual(queriesAtPack, [{ offset: 0, search: "", selectedIds: ["first"] }]);
+    assert.match(await dialog.getByRole("alert").textContent(), /could not be loaded/);
+    await Promise.all([page.waitForRequest(pack), retry.press("Enter")]);
+    await dialog
+      .getByText("Loading response picker…", { exact: true })
+      .waitFor({ state: "visible" });
+    const response = page.waitForResponse((response) => response.url().includes("/_webui/packs/"));
+    await page.keyboard.press("Escape");
+    await dialog.waitFor({ state: "hidden" });
+    const opener = traffic
+      .locator(".selection-actions")
+      .getByRole("button", { name: "Actions", exact: true });
+    assert.equal(
+      await opener.evaluate((button) => button.getRootNode().activeElement === button),
+      true,
+    );
+    releasePack.resolve();
+    await response;
+    assert.deepEqual(await queries(), queriesAtPack, "Pack retry repeated the source query");
+    await page.evaluate(async () => {
+      await document.querySelector("app-shell").$whenRendered();
+    });
+    assert.equal(
+      await dialog.locator(".intake-content").count(),
+      0,
+      "A canceled pack mounted the picker",
+    );
+  } finally {
+    releasePack.resolve();
+    await page.unroute(pack, delayPack);
+    // Chromium logs the deliberate network failure even when the picker handles it.
+    for (let index = errors.length - 1; index >= errorsBeforeFailure; index--) {
+      if (
+        errors[index] ===
+        "Failed to load resource: the server responded with a status of 503 (Service Unavailable)"
+      ) {
+        errors.splice(index, 1);
+      }
+    }
+  }
+  assert.deepEqual(
+    errors.slice(errorsBeforeFailure),
+    [],
+    "Handled pack failure escaped the picker",
+  );
+  await page.evaluate(() => {
+    const fixture = globalThis.__workspaceFixture;
+    fixture.failIntakeTrafficQuery = true;
+    fixture.sessions.push(
+      ...Array.from({ length: 100 }, (_, index) => ({
+        ...fixture.sessions[0],
+        id: "intake-pagination-" + index,
+        requestNumber: String(index + 10),
+      })),
+    );
+  });
+  await openTraffic({ keyboard: true });
+  await dialog.getByRole("grid", { name: "Responses to collect" }).waitFor({ state: "visible" });
+  assert.equal(
+    await dialog.getByRole("searchbox").evaluate((box) => box.getRootNode().activeElement === box),
+    true,
+  );
+  const retry = dialog.getByRole("button", { name: "Try again", exact: true });
+  await retry.waitFor({ state: "visible" });
+  assert.match(await dialog.getByRole("alert").textContent(), /temporarily unavailable/);
+  assert.equal(
+    await dialog.getByText("No eligible responses match.", { exact: false }).isVisible(),
+    false,
+  );
+  await dialog.getByLabel("Response set", { exact: true }).selectOption("__new");
+  const name = dialog.getByLabel("Response set name", { exact: true });
+  await name.fill("Draft name while sources are unavailable");
+  await retry.press("Enter");
+  await idle();
+  assert.equal(await name.inputValue(), "Draft name while sources are unavailable");
+  await dialog.getByRole("button", { name: "Load more responses", exact: true }).waitFor();
+  assert.equal(
+    await dialog.locator("#intake-source-first").getByRole("checkbox").isChecked(),
+    true,
+  );
+  const detailCalls = () => page.evaluate(() => globalThis.__workspaceFixture.calls.session_detail);
+  const detailCount = await detailCalls();
+  const queryCount = (await queries()).length;
+  await dialog.getByRole("searchbox").evaluate((search) => {
+    const picker = document.querySelector("app-shell").responseSetIntake;
+    search.value = "no-matching-traffic";
+    search.dispatchEvent(new Event("input", { bubbles: true }));
+    // Race the search debounce with pagination from the previous results.
+    return picker.loadSources(true);
+  });
+  await page.waitForFunction(
+    () =>
+      globalThis.__workspaceFixture.intakeTrafficQueries.at(-1).search === "no-matching-traffic",
+  );
+  await idle();
+  assert.deepEqual((await queries()).slice(queryCount), [
+    { offset: 0, search: "no-matching-traffic", selectedIds: ["first"] },
+  ]);
+  assert.equal(await dialog.locator(".intake-source-list tbody tr").count(), 1);
+  assert.equal(
+    await dialog.locator("#intake-source-first").getByRole("checkbox").isChecked(),
+    true,
+  );
+  assert.equal(await detailCalls(), detailCount, "Picker search issued per-row detail requests");
+  const searchbox = dialog.getByRole("searchbox");
+  const pinned = dialog.locator("#intake-source-first").getByRole("checkbox");
+  await pinned.press("Space");
+  await pinned.waitFor({ state: "detached" });
+  assert.equal(await searchbox.evaluate((box) => box.getRootNode().activeElement === box), true);
+  await searchbox.fill("");
+  await page.keyboard.press("Escape");
+  await dialog.waitFor({ state: "hidden" });
+
+  await requestIntake({ source: "traffic", ids: ["first"], destinationId: "removed-set" });
+  await dialog.waitFor({ state: "visible" });
+  await idle();
+  assert.match(
+    await dialog.getByRole("alert").textContent(),
+    /response set is no longer available/,
+  );
+  assert.equal(await dialog.getByLabel("Response set", { exact: true }).inputValue(), "");
+  assert.equal(await pinned.isChecked(), true);
+  assert.equal(await dialog.locator(".intake-source-list tbody tr").count(), 101);
+  await page.evaluate(() => (globalThis.__workspaceFixture.failIntakeTrafficQuery = true));
+  await searchbox.fill("failed-filter");
+  await idle();
+  assert.match(await dialog.getByRole("alert").textContent(), /temporarily unavailable/);
+  assert.equal(await dialog.locator(".intake-source-list tbody tr").count(), 1);
+  assert.equal(await pinned.isChecked(), true);
+  await searchbox.fill("");
+  await idle();
+  assert.equal(await dialog.locator(".intake-source-list tbody tr").count(), 101);
+  await page.evaluate(() => (globalThis.__workspaceFixture.deferIntakeTrafficQuery = true));
+  assert.equal(
+    await searchbox.evaluate((input) => {
+      const checkbox = input
+        .getRootNode()
+        .getElementById("intake-source-first")
+        .querySelector("input");
+      input.value = "still-no-matching-traffic";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      // The same-turn click can run before the rendered disabled attribute changes.
+      checkbox.click();
+      return checkbox.checked;
+    }),
+    true,
+    "A blocked checkbox click changed the native checked state",
+  );
+  await page.waitForFunction(
+    () => typeof globalThis.__workspaceFixture.releaseIntakeTrafficQuery === "function",
+  );
+  assert.equal(await pinned.isDisabled(), true, "Rows are selectable while loading");
+  await dialog.getByRole("button", { name: "Clear selection", exact: true }).click();
+  assert.equal(await searchbox.evaluate((box) => box.getRootNode().activeElement === box), true);
+  await page.evaluate(() => globalThis.__workspaceFixture.releaseIntakeTrafficQuery());
+  await idle();
+  assert.equal(await dialog.locator(".intake-source-list tbody tr").count(), 0);
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await dialog.waitFor({ state: "hidden" });
+
+  await page.evaluate(() => {
+    const fixture = globalThis.__workspaceFixture;
+    fixture.sessions = fixture.sessions.filter((row) => !row.id.startsWith("intake-pagination-"));
+  });
   for (const type of ["keydown", "pointerdown"]) {
     const opened = await page.evaluate(async (type) => {
       const shell = document.querySelector("app-shell"),
@@ -57,7 +272,9 @@ export async function checkResponseSetIntake(page, root) {
             detail: { source: "traffic", ids: ["first"] },
           }),
         );
-        await waiting;
+        if (!(await Promise.race([waiting.then(() => true), request.then(() => false)]))) {
+          throw new Error("Intake completed before the render checkpoint");
+        }
         document.dispatchEvent(
           type === "keydown"
             ? new KeyboardEvent(type, { key: "Escape", bubbles: true })
@@ -107,6 +324,15 @@ export async function checkResponseSetIntake(page, root) {
     "Shift range selection highlighted source text",
   );
   assert.equal(await dialog.getByRole("checkbox", { checked: true }).count(), 2);
+  await dialog
+    .locator("#intake-source-second")
+    .getByRole("checkbox")
+    .click({ modifiers: ["Shift"] });
+  assert.equal(
+    await dialog.getByRole("checkbox", { checked: true }).count(),
+    2,
+    "A range checkbox click unchecked a row that remained selected",
+  );
   await dialog.getByRole("button", { name: "Clear selection", exact: true }).click();
   await dialog.locator("#intake-source-first").focus();
   await page.keyboard.press("Space");
@@ -220,6 +446,22 @@ export async function checkResponseSetIntake(page, root) {
       );
   });
   const sourceBefore = (await state()).rules;
+  await requestIntake({
+    source: "rules",
+    ids: [sourceBefore[0].id, "removed-rule"],
+    destinationId: destination,
+  });
+  await idle();
+  const nativeReviews = () =>
+    page.evaluate(() => globalThis.__workspaceFixture.calls.review_response_set_intake);
+  const originalReviews = await nativeReviews();
+  await dialog.getByRole("button", { name: "Review responses", exact: true }).click();
+  assert.match(
+    await dialog.getByRole("alert").textContent(),
+    /selected responses are no longer available/,
+  );
+  assert.equal(await nativeReviews(), originalReviews, "Review submitted a partial selection");
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
   await sets.getByRole("button", { name: "Add responses…", exact: true }).click();
   await sets
     .locator("#set-add-menu")

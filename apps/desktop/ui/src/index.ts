@@ -1,5 +1,6 @@
 import { startRuntime } from "@microsoft/webui-framework/runtime.js";
 import "@microsoft/webui-framework/lazy-hydration.js";
+import "../dist/webui/modules/lazy.webui.js";
 import "./stream-inspector/stream-inspector.js";
 import "./inspection-copy-menu/inspection-copy-menu.js";
 import "./converter-host/converter-host.js";

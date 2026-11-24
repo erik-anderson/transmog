@@ -1,5 +1,6 @@
 {
   "loadedWorkspaces": { "automation": false, "composer": false, "breakpoints": false, "captures": false },
+  "responseSetIntakeLoaded": false,
   "mcpEnabled": false,
   "mcpIndicatorVisible": false,
   "mcpIndicatorText": "MCP enabled",
@@ -2130,6 +2131,9 @@
   "intakeSearch": "",
   "intakeMode": "copy",
   "intakeLoading": false,
+  "intakeBodyLoading": false,
+  "intakeBodyFailed": false,
+  "intakeDataFailed": false,
   "intakeReviewBusy": false,
   "intakeSaving": false,
   "intakeReview": null,

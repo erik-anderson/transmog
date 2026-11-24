@@ -13,7 +13,6 @@ import "../captured-preview/captured-preview.js";
 import type { CapturedPreview } from "../captured-preview/captured-preview.js";
 import "../response-set-page-picker/response-set-page-picker.js";
 import type { ResponseSetPagePicker } from "../response-set-page-picker/response-set-page-picker.js";
-import "../response-set-intake/response-set-intake.js";
 import type { ResponseSetIntake } from "../response-set-intake/response-set-intake.js";
 import type { ResponseSetIntakeRequest } from "../models.js";
 import type { SavedDemoPreviewIntent } from "../saved-demo-models.js";
@@ -58,6 +57,7 @@ const loaders = {
   composer: () => import("../composer-workspace/composer-workspace.js"),
   captures: () => import("../capture-workspace/capture-workspace.js"),
 };
+const loadResponseSetIntake = () => import("../response-set-intake/response-set-intake.js");
 
 /** Composition, shared status, and local workspace selection. */
 export class AppShell extends WebUIElement {
@@ -1112,33 +1112,58 @@ export class AppShell extends WebUIElement {
     }
   }
   responseSetIntake!: ResponseSetIntake;
+  @observable responseSetIntakeLoaded = initialState.responseSetIntakeLoaded;
   private intakeRevision = 0;
+  async prefetchResponseSetIntake(event: Event): Promise<void> {
+    event.stopPropagation();
+    if (this.viewerMode || this.responseSetIntake?.intakeDialog?.open) {
+      return;
+    }
+    const navigation = this.navigationGeneration;
+    try {
+      await loadResponseSetIntake();
+      if (!this.isConnected || navigation !== this.navigationGeneration) {
+        return;
+      }
+      this.responseSetIntakeLoaded = true;
+      await this.$whenRendered();
+      if (this.isConnected && navigation === this.navigationGeneration) {
+        this.responseSetIntake?.$prefetch("intakeOpen");
+      }
+    } catch {
+      // Activation will surface a failure if the picker remains unavailable.
+    }
+  }
   async onResponseSetIntake(event: CustomEvent<ResponseSetIntakeRequest>): Promise<void> {
     event.stopPropagation();
-    if (this.viewerMode) {
+    if (this.viewerMode || this.responseSetIntake?.intakeSaving) {
       return;
     }
     const revision = ++this.intakeRevision,
       navigation = this.navigationGeneration,
-      intent = capturePresentationIntent(this);
+      intent = capturePresentationIntent(this),
+      current = () =>
+        revision === this.intakeRevision &&
+        navigation === this.navigationGeneration &&
+        intent.current();
     try {
-      await loaders.automation();
-      if (
-        revision !== this.intakeRevision ||
-        navigation !== this.navigationGeneration ||
-        !intent.current()
-      ) {
+      await Promise.all([loaders.automation(), loadResponseSetIntake()]);
+      if (!current()) {
         return;
       }
-      this.loadedWorkspaces = { ...this.loadedWorkspaces, automation: true };
+      if (!this.loadedWorkspaces.automation) {
+        this.loadedWorkspaces = { ...this.loadedWorkspaces, automation: true };
+      }
+      this.responseSetIntakeLoaded = true;
       await this.$whenRendered();
-      if (
-        revision !== this.intakeRevision ||
-        navigation !== this.navigationGeneration ||
-        !intent.current()
-      ) {
+      if (!current()) {
         return;
       }
+    } catch (error) {
+      if (current()) {
+        this.diagnosticText = describeError(error);
+      }
+      return;
     } finally {
       intent.dispose();
     }

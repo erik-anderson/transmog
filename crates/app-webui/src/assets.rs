@@ -68,11 +68,11 @@ pub(super) fn respond(method: &str, path: &str) -> Result<Option<crate::UiRespon
     } else {
         asset.bytes()?.to_vec()
     };
-    Ok(Some(crate::UiResponse::asset(
-        200,
-        asset.content_type,
-        body,
-    )))
+    let mut response = crate::UiResponse::asset(200, asset.content_type, body);
+    if asset.path.starts_with("/_webui/packs/") {
+        response.cache_control = "public, max-age=31536000, immutable";
+    }
+    Ok(Some(response))
 }
 
 pub(super) fn protocol_bytes() -> Result<Vec<u8>, UiError> {
@@ -122,7 +122,15 @@ mod tests {
             let get = renderer.respond("GET", path, &view).unwrap();
             assert_eq!(get.status, 200);
             assert_eq!(get.content_type, asset.content_type);
-            assert_eq!(get.cache_control, "no-store");
+            assert_eq!(
+                get.cache_control,
+                if path.starts_with("/_webui/packs/") {
+                    assert_eq!(get.content_type, "application/json; charset=utf-8");
+                    "public, max-age=31536000, immutable"
+                } else {
+                    "no-store"
+                }
+            );
             assert_eq!(get.body, *original, "response bytes changed for {path}");
             assert_eq!(
                 renderer

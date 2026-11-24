@@ -5,6 +5,10 @@ import { describeError } from "./utilities.js";
 
 /** Typed events keep workspace components independent of their containing shell. */
 export abstract class WorkspaceElement extends WebUIElement {
+  prefetchResponseSetIntake(): void {
+    this.$emit("response-set-intake-intent");
+  }
+
   protected showError(title: string, message: string): Promise<void> {
     return new Promise((resolve) =>
       this.$emit("operation-error", { title, message, resolve } satisfies OperationError),

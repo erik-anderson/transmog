@@ -409,6 +409,11 @@ export async function checkFormatConverter(page, root) {
   });
   await host.getByRole("button", { name: "Save output…", exact: true }).click();
   await page.waitForFunction(() => globalThis.__workspaceFixture.finishConverterSaveRender);
+  assert.equal(
+    await host.evaluate((converter) => converter.converterSaving),
+    false,
+    "Save stayed busy while waiting to present the error",
+  );
   await page.keyboard.press("Escape");
   await filter.focus();
   await page.evaluate(() => {

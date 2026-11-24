@@ -34,7 +34,8 @@ pub(crate) use header_rules::{test as test_header_rule, test_transform};
 pub use response_set_intake::{
     ResponseSetIntakeDestination, ResponseSetIntakeInput, ResponseSetIntakeMode,
     ResponseSetIntakeResult, ResponseSetIntakeReview, ResponseSetIntakeRow,
-    ResponseSetIntakeSource,
+    ResponseSetIntakeSource, ResponseSetIntakeTrafficPage, ResponseSetIntakeTrafficQuery,
+    ResponseSetIntakeTrafficRow,
 };
 pub(crate) use response_sets::MAX_RESPONSES;
 pub use response_sets::{

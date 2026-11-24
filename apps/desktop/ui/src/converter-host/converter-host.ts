@@ -85,6 +85,7 @@ export class ConverterHost extends WebUIElement {
   private history: Edit[] = [];
   private future: Edit[] = [];
   private revision = 0;
+  private saveRevision = 0;
   private menuEpoch = 0;
   private timer: number | undefined;
   private selection: ConverterSelection | null = null;
@@ -517,6 +518,7 @@ export class ConverterHost extends WebUIElement {
     }
     this.converterSaving = true;
     const revision = this.revision,
+      saveRevision = ++this.saveRevision,
       input = this.resultInput,
       presentation = capturePresentationIntent(this);
     try {
@@ -524,26 +526,27 @@ export class ConverterHost extends WebUIElement {
       if (revision === this.revision) {
         this.converterStatus = saved ? "Output saved." : "Save canceled.";
       }
+      return;
     } catch (error: unknown) {
-      this.converterSaveError = describeError(error);
       if (!presentation.current() || revision !== this.revision) {
         return;
       }
-      const current = await renderPresentation(this, () => [
-        this.revision,
-        this.standalone || this.panel.matches(":popover-open"),
-      ]);
-      if (
-        !current() ||
-        !presentation.current() ||
-        (!this.standalone && !this.panel.matches(":popover-open"))
-      ) {
-        return;
-      }
-      this.saveErrorDialog.showModal();
+      this.converterSaveError = describeError(error);
     } finally {
-      presentation.dispose();
       this.converterSaving = false;
+    }
+    const current = await renderPresentation(this, () => [
+      this.revision,
+      this.saveRevision,
+      this.standalone || this.panel.matches(":popover-open"),
+    ]);
+    if (
+      current() &&
+      presentation.current() &&
+      saveRevision === this.saveRevision &&
+      (this.standalone || this.panel.matches(":popover-open"))
+    ) {
+      this.saveErrorDialog.showModal();
     }
   }
   async detach(): Promise<void> {

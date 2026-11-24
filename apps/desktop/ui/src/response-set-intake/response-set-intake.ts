@@ -1,18 +1,18 @@
 import { WebUIElement, observable } from "@microsoft/webui-framework";
-import { captureFocus, captureRenderScope, renderPresentation } from "../rendering.js";
+import { captureFocus, captureRenderScope } from "../rendering.js";
 import { invoke } from "@tauri-apps/api/core";
 import { ListSelection, isTextEditing } from "../list-selection.js";
+import { describeError } from "../utilities.js";
 import {
-  clientResponseSource,
-  autoResponseUnavailableReason,
-  describeError,
-} from "../utilities.js";
+  loadIntakeData,
+  queryIntakeTraffic,
+  type IntakeData,
+  type IntakeTrafficPage,
+} from "./source-data.js";
 import type {
   AutomationStatus,
   AutomationRule,
   ResponseAsset,
-  SessionDetail,
-  SessionPage,
   ResponseSetIntakeRequest,
   ResponseSetIntakeInput,
   ResponseSetIntakeReview,
@@ -21,6 +21,7 @@ import type {
 
 type SourceRow = {
   id: string;
+  inResults: boolean;
   name: string;
   method: string;
   url: string;
@@ -77,6 +78,9 @@ export class ResponseSetIntake extends WebUIElement {
   @observable intakeSearch = "";
   @observable intakeMode = "copy";
   @observable intakeLoading = false;
+  @observable intakeBodyLoading = false;
+  @observable intakeBodyFailed = false;
+  @observable intakeDataFailed = false;
   @observable intakeReviewBusy = false;
   @observable intakeSaving = false;
   @observable intakeReview: ResponseSetIntakeReview | null = null;
@@ -102,11 +106,23 @@ export class ResponseSetIntake extends WebUIElement {
   private status: AutomationStatus | null = null;
   private assets: ResponseAsset[] = [];
   private host: IntakeHost | null = null;
+  private opening: { request: ResponseSetIntakeRequest; data: Promise<IntakeData> } | null = null;
   private reviewedInput: ResponseSetIntakeInput | null = null;
   private resolution: IntakeDraftResolution | null = null;
   private resultId = "";
   private returnFocus: HTMLElement | null = null;
   private searchTimer: number | undefined;
+
+  constructor() {
+    super();
+    this.addEventListener("lazyerror", (event) => {
+      // The picker shows an error and retry for its own template pack.
+      if (event.target === this) {
+        event.preventDefault();
+      }
+    });
+  }
+
   private active(): Element | null {
     const root = this.getRootNode();
     return root instanceof ShadowRoot ? root.activeElement : document.activeElement;
@@ -125,6 +141,9 @@ export class ResponseSetIntake extends WebUIElement {
       active = this.active();
     this.returnFocus = active instanceof HTMLElement ? active : null;
     this.host = host;
+    this.status = null;
+    this.assets = [];
+    this.intakeDestinations = [];
     this.intakeSource = request.source;
     this.selection.clear();
     this.selection.ids = new Set(request.ids ?? []);
@@ -139,54 +158,118 @@ export class ResponseSetIntake extends WebUIElement {
     this.reviewedInput = null;
     this.resolution = null;
     this.intakeCompleted = false;
-    this.intakeLoading = true;
     this.offset = 0;
     this.intakeMore = false;
     this.updateSelection();
     this.intakeOpen = true;
-    const presentation = await renderPresentation(this, () => [this.epoch, this.intakeOpen]);
-    if (!presentation() || epoch !== this.epoch || !this.intakeOpen) {
-      if (epoch === this.epoch) {
-        this.returnFocus = null;
-        this.close();
+    this.intakeDialog.showModal();
+    this.closeButton.focus({ preventScroll: true });
+    this.beginOpening(request);
+    await this.loadIntakeBody(epoch);
+  }
+  private beginOpening(request: ResponseSetIntakeRequest): void {
+    const data = loadIntakeData(request);
+    // The read can settle before the template pack loads or after the picker closes.
+    void data.catch(() => undefined);
+    this.opening = { request, data };
+  }
+  async retryIntake(): Promise<void> {
+    if (!this.opening || !this.current()) {
+      return;
+    }
+    const epoch = this.epoch;
+    if (this.intakeBodyFailed) {
+      await this.loadIntakeBody(epoch);
+    } else if (this.intakeDataFailed) {
+      this.beginOpening({ ...this.opening.request, ids: [...this.selection.ids] });
+      this.sourceSearch.focus({ preventScroll: true });
+      await this.loadOpeningData(epoch);
+    }
+  }
+  private async loadIntakeBody(epoch: number): Promise<void> {
+    const focus = captureFocus(this);
+    this.intakeError = "";
+    this.intakeBodyFailed = false;
+    this.intakeBodyLoading = true;
+    this.intakeLoading = true;
+    try {
+      await this.$whenRendered();
+    } catch {
+      if (this.current(epoch)) {
+        this.intakeBodyLoading = false;
+        this.intakeBodyFailed = true;
+        this.intakeLoading = false;
+        this.intakeError = "The response picker could not be loaded. Try again.";
       }
       return;
     }
+    if (!this.current(epoch)) {
+      return;
+    }
+    this.intakeBodyLoading = false;
     this.sourceSearch.value = "";
     this.intakeNameInput.value = "";
     this.intakeNotesInput.value = "";
-    this.intakeDialog.showModal();
-    this.sourceSearch.focus({ preventScroll: true });
+    if (focus()) {
+      this.sourceSearch.focus({ preventScroll: true });
+    }
+    await this.loadOpeningData(epoch);
+  }
+  private async loadOpeningData(epoch: number): Promise<void> {
+    const opening = this.opening;
+    if (!opening) {
+      return;
+    }
+    const { data } = opening;
+    const load = this.loadEpoch;
+    this.intakeLoading = true;
+    this.intakeDataFailed = false;
+    this.intakeError = "";
     try {
-      const [status, assets] = await Promise.all([
-        invoke<AutomationStatus>("automation_status"),
-        invoke<ResponseAsset[]>("response_assets"),
-      ]);
+      const { status, assets, traffic } = await data;
       if (!this.current(epoch)) {
         return;
       }
-      this.status = status;
+      this.opening = null;
       this.assets = assets;
-      this.intakeDestinations = (status.responseSets ?? []).map((set) => ({
-        id: set.id,
-        name: set.name,
-      }));
-      if (
-        request.destinationId &&
-        !this.intakeDestinations.some((set) => set.id === request.destinationId)
-      ) {
-        throw new Error("The selected response set is no longer available.");
+      const missingDestination = this.applyStatus(status);
+      if (traffic && !this.intakeSearch) {
+        this.applyTrafficPage(traffic, false);
+      } else {
+        await this.loadSources();
       }
-      await this.loadSources(false, request.ids ?? []);
+      if (
+        missingDestination &&
+        this.current(epoch) &&
+        !this.intakeDestination &&
+        !this.intakeError
+      ) {
+        this.intakeError = "The selected response set is no longer available.";
+      }
     } catch (error) {
       if (this.current(epoch)) {
+        this.intakeDataFailed = this.opening === opening;
         this.intakeError = describeError(error);
       }
     } finally {
-      if (this.current(epoch)) {
+      if (this.current(epoch) && load === this.loadEpoch) {
         this.intakeLoading = false;
+        this.updateSelection();
       }
     }
+  }
+  private applyStatus(status: AutomationStatus): boolean {
+    this.status = status;
+    this.intakeDestinations = (status.responseSets ?? []).map(({ id, name }) => ({ id, name }));
+    if (
+      this.intakeDestination &&
+      this.intakeDestination !== "__new" &&
+      !this.intakeDestinations.some((set) => set.id === this.intakeDestination)
+    ) {
+      this.intakeDestination = "";
+      return true;
+    }
+    return false;
   }
   private ordinaryRows(): SourceRow[] {
     if (!this.status) {
@@ -205,6 +288,7 @@ export class ResponseSetIntake extends WebUIElement {
           name = rule.displayName ?? rule.id;
         return {
           id: rule.id,
+          inResults: (name + " " + url).toLocaleLowerCase().includes(query),
           name,
           method: rule.matcher.method ?? "ANY",
           url,
@@ -223,14 +307,38 @@ export class ResponseSetIntake extends WebUIElement {
           selected: false,
           tabIndex: "-1",
         };
-      })
-      .filter(
-        (row) =>
-          this.selection.ids.has(row.id) ||
-          (row.name + " " + row.url).toLocaleLowerCase().includes(query),
-      );
+      });
   }
-  async loadSources(more = false, initialIds: string[] = []): Promise<void> {
+  private applyTrafficPage(page: IntakeTrafficPage, more: boolean): void {
+    const rows = page.rows.map((row): SourceRow => ({
+      id: row.id,
+      inResults: row.inPage,
+      name:
+        row.requestNumber === null
+          ? "Unavailable captured response"
+          : `#${row.requestNumber} · ${row.method ?? "Request"}`,
+      method: row.method ?? "",
+      url: row.url,
+      response:
+        row.requestNumber === null
+          ? "Unavailable"
+          : `${row.status ?? "No response"} · ${row.retainedBytes.toLocaleString()} bytes`,
+      bodySource: row.requestNumber === null ? "" : "Copy complete captured bytes",
+      eligible: row.unavailableReason === null,
+      reason: row.unavailableReason ?? "Ready",
+      selected: false,
+      tabIndex: "-1",
+    }));
+    this.intakeRows = more
+      ? [...new Map([...this.intakeRows, ...rows].map((row) => [row.id, row])).values()]
+      : rows;
+    this.offset = page.nextOffset ?? 0;
+    this.intakeMore = page.nextOffset !== null;
+  }
+  async loadSources(more = false): Promise<void> {
+    if (more && (this.intakeLoading || !this.intakeMore)) {
+      return;
+    }
     const epoch = this.epoch,
       load = ++this.loadEpoch;
     this.intakeLoading = true;
@@ -242,71 +350,21 @@ export class ResponseSetIntake extends WebUIElement {
         this.intakeMore = false;
         return;
       }
-      const offset = more ? this.offset : 0;
-      const page = await invoke<SessionPage>("query_sessions", {
-        query: {
-          limit: 100,
-          offset,
-          search: this.intakeSearch,
-          sort: { column: "request-number", direction: "descending" },
-        },
-      });
+      const selectedIds = more
+        ? []
+        : [...new Set([...this.intakeRows.map((row) => row.id), ...this.selection.ids])].filter(
+            (id) => this.selection.ids.has(id),
+          );
+      const page = await queryIntakeTraffic(more ? this.offset : 0, this.intakeSearch, selectedIds);
       if (!this.current(epoch) || load !== this.loadEpoch) {
         return;
       }
-      const preserved = this.intakeRows.filter((row) => this.selection.ids.has(row.id));
-      const ids = [...new Set([...initialIds, ...page.sessions.map((row) => row.id)])];
-      const rows: SourceRow[] = [];
-      for (let start = 0; start < ids.length; start += 8) {
-        const loaded = await Promise.all(
-          ids.slice(start, start + 8).map(async (id) => {
-            try {
-              const detail = await invoke<SessionDetail>("session_detail", { id }),
-                request = detail.requests.find((head) => head.boundary === "client-request"),
-                source = clientResponseSource(detail),
-                metadata = detail.storedBodies.find((body) => body.boundary === "client-response"),
-                status = detail.responses.find(
-                  (head) => head.boundary === "client-response",
-                )?.status;
-              return {
-                id,
-                name: `#${detail.requestNumber} · ${request?.method ?? "Request"}`,
-                method: request?.method ?? "",
-                url: request?.target ?? "",
-                response: `${status ?? "No response"} · ${(metadata?.retainedBytes ?? 0).toLocaleString()} bytes`,
-                bodySource: "Copy complete captured bytes",
-                eligible: !!source,
-                reason: source ? "Ready" : autoResponseUnavailableReason(detail),
-                selected: false,
-                tabIndex: "-1",
-              };
-            } catch (error) {
-              return {
-                id,
-                name: "Unavailable captured response",
-                method: "",
-                url: "",
-                response: "Unavailable",
-                bodySource: "",
-                eligible: false,
-                reason: describeError(error),
-                selected: false,
-                tabIndex: "-1",
-              };
-            }
-          }),
-        );
-        if (!this.current(epoch) || load !== this.loadEpoch) {
-          return;
-        }
-        rows.push(...loaded);
-      }
-      const merged = more ? [...this.intakeRows, ...rows] : [...preserved, ...rows];
-      this.intakeRows = [...new Map(merged.map((row) => [row.id, row])).values()];
-      this.offset = offset + page.sessions.length;
-      this.intakeMore = this.offset < page.totalMatched;
+      this.applyTrafficPage(page, more);
     } catch (error) {
       if (this.current(epoch) && load === this.loadEpoch) {
+        if (!more) {
+          this.intakeRows = this.intakeRows.map((row) => ({ ...row, inResults: false }));
+        }
         this.intakeError = describeError(error);
       }
     } finally {
@@ -319,7 +377,15 @@ export class ResponseSetIntake extends WebUIElement {
   sourceSearchChanged(event: Event): void {
     this.intakeSearch = (event.currentTarget as HTMLInputElement).value;
     window.clearTimeout(this.searchTimer);
-    this.searchTimer = window.setTimeout(() => void this.loadSources(), 180);
+    if (this.status) {
+      // The input changes before the debounced query starts. Its previous
+      // results and pagination must lose ownership immediately.
+      this.loadEpoch++;
+      this.intakeLoading = true;
+      this.intakeMore = false;
+      this.invalidateReview();
+      this.searchTimer = window.setTimeout(() => void this.loadSources(), 180);
+    }
   }
   changeDestination(event: Event): void {
     this.intakeDestination = (event.currentTarget as HTMLSelectElement).value;
@@ -348,8 +414,21 @@ export class ResponseSetIntake extends WebUIElement {
     return this.intakeRows.filter((row) => row.eligible).map((row) => row.id);
   }
   private updateSelection(): void {
-    const focus = this.selection.focused ?? this.intakeRows.find((row) => row.eligible)?.id;
-    this.intakeRows = this.intakeRows.map((row) => ({
+    const rows = this.intakeRows.filter((row) => row.inResults || this.selection.ids.has(row.id));
+    if (rows.length < this.intakeRows.length) {
+      const activeRow = this.active()?.closest("tr")?.id;
+      if (
+        activeRow?.startsWith("intake-source-") &&
+        !rows.some((row) => "intake-source-" + row.id === activeRow)
+      ) {
+        this.sourceSearch.focus({ preventScroll: true });
+      }
+    }
+    if (this.selection.focused && !rows.some((row) => row.id === this.selection.focused)) {
+      this.selection.focused = null;
+    }
+    const focus = this.selection.focused ?? rows.find((row) => row.eligible)?.id;
+    this.intakeRows = rows.map((row) => ({
       ...row,
       selected: this.selection.ids.has(row.id),
       tabIndex: row.id === focus ? "0" : "-1",
@@ -357,19 +436,30 @@ export class ResponseSetIntake extends WebUIElement {
     this.intakeSelectedCount = this.selection.ids.size;
   }
   selectRow(id: string, event: MouseEvent, checkbox = false): void {
-    if (this.intakeLoading || this.intakeReviewBusy || this.intakeSaving) {
-      return;
-    }
+    const input = checkbox ? (event.currentTarget as HTMLInputElement) : null;
     const row = this.intakeRows.find((row) => row.id === id);
-    if (!row?.eligible && !this.selection.ids.has(id)) {
+    if (
+      this.intakeLoading ||
+      this.intakeReviewBusy ||
+      this.intakeSaving ||
+      (!row?.eligible && !this.selection.ids.has(id))
+    ) {
+      if (input) {
+        event.preventDefault();
+      }
       return;
     }
     event.stopPropagation();
-    this.selection.choose(
-      id,
-      this.order(),
-      checkbox ? { ctrlKey: true, shiftKey: event.shiftKey } : event,
-    );
+    const modifiers = !row?.eligible
+      ? { ctrlKey: true }
+      : input
+        ? { ctrlKey: true, shiftKey: event.shiftKey }
+        : event;
+    this.selection.choose(id, this.order(), modifiers);
+    // A range can leave an already selected row checked.
+    if (input && input.checked !== this.selection.ids.has(id)) {
+      event.preventDefault();
+    }
     this.invalidateReview();
     this.updateSelection();
   }
@@ -397,7 +487,7 @@ export class ResponseSetIntake extends WebUIElement {
           this.intakeOpen,
         ]);
       await this.$whenRendered();
-      if (!current() || !focus()) {
+      if (!current() || !focus() || !this.selection.focused) {
         return;
       }
       const root = this.getRootNode();
@@ -408,10 +498,14 @@ export class ResponseSetIntake extends WebUIElement {
       focused?.focus({ preventScroll: true });
     }
   }
-  clearSelection(): void {
+  clearSelection(event: Event): void {
+    const ownsFocus = this.active() === event.currentTarget;
     this.selection.clear();
     this.invalidateReview();
     this.updateSelection();
+    if (ownsFocus) {
+      this.sourceSearch.focus({ preventScroll: true });
+    }
   }
   acknowledge(event: Event): void {
     this.intakeAcknowledged = (event.currentTarget as HTMLInputElement).checked;
@@ -445,10 +539,19 @@ export class ResponseSetIntake extends WebUIElement {
       this.intakeError = "Select at most 1,000 responses.";
       return;
     }
+    const ids = this.intakeRows
+      .filter((row) => this.selection.ids.has(row.id))
+      .map((row) => row.id);
+    if (ids.length !== this.selection.ids.size) {
+      this.intakeError =
+        "Some selected responses are no longer available. Clear the selection and choose responses again.";
+      return;
+    }
     const epoch = this.epoch,
       source = this.active();
     this.intakeReviewBusy = true;
     this.intakeError = "";
+    let focusSubmit: (() => void) | undefined;
     try {
       if (!this.intakeDestination) {
         throw new Error("Choose a response set or create a new response set.");
@@ -471,7 +574,7 @@ export class ResponseSetIntake extends WebUIElement {
       if (!this.current(epoch)) {
         return;
       }
-      this.status = status;
+      this.applyStatus(status);
       const set = status.responseSets?.find((set) => set.id === this.intakeDestination);
       if (this.intakeDestination !== "__new" && !set) {
         throw new Error("The selected response set is no longer available.");
@@ -480,7 +583,7 @@ export class ResponseSetIntake extends WebUIElement {
         generation: status.generation,
         source: {
           kind: this.intakeSource as "traffic" | "rules",
-          ids: this.intakeRows.filter((row) => this.selection.ids.has(row.id)).map((row) => row.id),
+          ids,
         },
         destination: set
           ? { kind: "existing", id: set.id, incarnation: set.incarnation, revision: set.revision }
@@ -508,9 +611,12 @@ export class ResponseSetIntake extends WebUIElement {
           ? `Move ${review.rows.length} rule${review.rows.length === 1 ? "" : "s"}`
           : "Add responses";
       this.intakeReviewSummary = `Add to ${set?.name ?? this.intakeName.trim()} · ${input.source.kind === "traffic" ? "Copy captured responses" : input.mode === "move" ? "Move rules" : "Copy rules"}`;
-      await this.$whenRendered();
-      if (ownsFocus && this.current(epoch) && this.intakeReview === review && focus()) {
-        this.submitButton.focus({ preventScroll: true });
+      if (ownsFocus) {
+        focusSubmit = () => {
+          if (this.current(epoch) && this.intakeReview === review && focus()) {
+            this.submitButton.focus({ preventScroll: true });
+          }
+        };
       }
     } catch (error) {
       if (this.current(epoch)) {
@@ -520,6 +626,10 @@ export class ResponseSetIntake extends WebUIElement {
       if (this.current(epoch)) {
         this.intakeReviewBusy = false;
       }
+    }
+    if (focusSubmit) {
+      await this.$whenRendered();
+      focusSubmit();
     }
   }
   async submit(): Promise<void> {
@@ -538,6 +648,7 @@ export class ResponseSetIntake extends WebUIElement {
       host = this.host;
     this.intakeSaving = true;
     this.intakeError = "";
+    let focusClose: (() => void) | undefined;
     try {
       if (resolution?.beforeCommit && !resolution.beforeCommit()) {
         throw new Error(
@@ -553,9 +664,12 @@ export class ResponseSetIntake extends WebUIElement {
         const ownsFocus = this.active() === this.submitButton;
         const focus = captureFocus(this);
         this.intakeCompleted = true;
-        await this.$whenRendered();
-        if (ownsFocus && this.current(epoch) && this.intakeCompleted && focus()) {
-          this.closeButton.focus({ preventScroll: true });
+        if (ownsFocus) {
+          focusClose = () => {
+            if (this.current(epoch) && this.intakeCompleted && focus()) {
+              this.closeButton.focus({ preventScroll: true });
+            }
+          };
         }
       }
     } catch (error) {
@@ -572,6 +686,10 @@ export class ResponseSetIntake extends WebUIElement {
     } finally {
       this.intakeSaving = false;
     }
+    if (focusClose) {
+      await this.$whenRendered();
+      focusClose();
+    }
   }
   close(event?: Event): void {
     event?.preventDefault();
@@ -579,6 +697,10 @@ export class ResponseSetIntake extends WebUIElement {
     this.loadEpoch++;
     window.clearTimeout(this.searchTimer);
     this.intakeOpen = false;
+    this.opening = null;
+    this.intakeBodyLoading = false;
+    this.intakeBodyFailed = false;
+    this.intakeDataFailed = false;
     this.intakeDialog?.close();
     this.intakeLoading = false;
     this.intakeReviewBusy = false;

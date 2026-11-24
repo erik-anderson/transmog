@@ -389,6 +389,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     }
     this.flagBusy = true;
     this.flagStatus = "Adding marker…";
+    let markerId: string | undefined;
     try {
       const review = await invoke<MarkerReview>("add_trace_marker", {
         exchangeId: this.flagId,
@@ -401,23 +402,26 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.markersOpen = true;
       this.flagDialog.close();
       this.markerStatus = "Marker added. Save a copy to keep your changes.";
-      const marker = review.markers.at(-1);
-      if (marker) {
-        this.markerCurrent = review.traceId + ":" + marker.id;
-        const current = captureRenderScope(this, () => [
-          this.markerCurrent,
-          this.markersTraceId,
-          this.markersOpen,
-        ]);
-        await this.$whenRendered();
-        if (current()) {
-          this.markerIntake.selectMarker(marker.id, false);
-        }
+      markerId = review.markers.at(-1)?.id;
+      if (markerId) {
+        this.markerCurrent = review.traceId + ":" + markerId;
       }
     } catch (error: unknown) {
       this.flagStatus = "Marker could not be added: " + describeError(error);
+      return;
     } finally {
       this.flagBusy = false;
+    }
+    if (markerId) {
+      const current = captureRenderScope(this, () => [
+        this.markerCurrent,
+        this.markersTraceId,
+        this.markersOpen,
+      ]);
+      await this.$whenRendered();
+      if (current()) {
+        this.markerIntake.selectMarker(markerId, false);
+      }
     }
   }
   @observable markerReviews: MarkerReview[] = [];

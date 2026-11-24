@@ -60,11 +60,11 @@ import { checkTrafficAdvanced } from "./check-traffic-advanced.mjs";
 import { checkStreams } from "./check-streams.mjs";
 import { checkWindowShortcuts } from "./check-window-shortcuts.mjs";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { build, Protocol } from "@microsoft/webui";
+import { Protocol } from "@microsoft/webui";
 import { checkHexViewer } from "./check-hex-viewer.mjs";
 import { checkTrafficPresentation } from "./check-traffic-presentation.mjs";
 import { checkTrafficClassifications } from "./check-traffic-classifications.mjs";
@@ -129,16 +129,11 @@ const scriptDeclarations = await readFile(
 );
 const metadata = JSON.parse(await readFile(resolve(root, "dist/client-metafile.json"), "utf8"));
 const assets = JSON.parse(await readFile(resolve(root, "dist/client-assets.json"), "utf8"));
-const built = build({
-  appDir: resolve(root, "src"),
+const templateOutput = resolve(root, "dist/webui");
+const templateStats = JSON.parse(await readFile(resolve(templateOutput, "stats.json"), "utf8"));
+const protocol = new Protocol(await readFile(resolve(templateOutput, "protocol.bin")), {
   plugin: "webui",
-  css: "link",
-  assetBase: "/",
-  cssFileNameTemplate: "[name]-[hash].[ext]",
-  projectionManifests: [resolve(root, "dist/webui-projection.json")],
 });
-assert.deepEqual(built.warnings, []);
-const protocol = new Protocol(built.protocol, { plugin: "webui" });
 const renderHtml = (viewerMode = false) =>
   protocol
     .render(
@@ -175,11 +170,17 @@ resources.set("/transmog-icon.svg", {
   file: resolve(root, "../icons/icon.svg"),
   contentType: "image/svg+xml",
 });
-for (let index = 0; index < built.cssFiles.length; index += 2)
-  resources.set("/" + built.cssFiles[index], {
-    body: built.cssFiles[index + 1],
-    contentType: "text/css",
-  });
+for (const file of await readdir(templateOutput, { recursive: true })) {
+  const path = file.replaceAll("\\", "/");
+  const contentType = /^[\w.-]+\.css$/.test(path)
+    ? "text/css"
+    : /^_webui\/packs\/[\w.-]+\.json$/.test(path)
+      ? "application/json"
+      : null;
+  if (contentType) {
+    resources.set("/" + path, { body: await readFile(resolve(templateOutput, path)), contentType });
+  }
+}
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({
   viewport: { width: 1280, height: 800 },
@@ -3022,6 +3023,66 @@ await page.addInitScript(
           case "watch_sessions":
             state.channel = args.onEvent;
             return;
+          case "query_response_set_intake_traffic": {
+            const { offset, search, selectedIds } = args.input;
+            (state.intakeTrafficQueries ??= []).push(structuredClone(args.input));
+            if (state.failIntakeTrafficQuery) {
+              state.failIntakeTrafficQuery = false;
+              throw new Error("Fixture response metadata is temporarily unavailable");
+            }
+            if (state.deferIntakeTrafficQuery) {
+              state.deferIntakeTrafficQuery = false;
+              await new Promise((resolve) => (state.releaseIntakeTrafficQuery = resolve));
+            }
+            const matched = trafficRows({
+                search,
+                sort: { column: "request-number", direction: "descending" },
+              }),
+              page = matched.slice(offset, offset + 100),
+              pageIds = new Set(page.map((row) => row.id)),
+              ids = new Set([...selectedIds, ...pageIds]);
+            return {
+              nextOffset: offset + page.length < matched.length ? offset + page.length : null,
+              rows: [...ids].map((id) => {
+                if (
+                  state.evictedIds?.includes(id) ||
+                  state.dismissedIds?.includes(id) ||
+                  !state.sessions.some((row) => row.id === id)
+                ) {
+                  return {
+                    id,
+                    inPage: pageIds.has(id),
+                    requestNumber: null,
+                    method: null,
+                    url: "",
+                    status: null,
+                    retainedBytes: 0,
+                    unavailableReason: "Session is unavailable or has been evicted",
+                  };
+                }
+                const session = detail(id),
+                  request = session.requests[0],
+                  response = session.responses[0],
+                  body = session.storedBodies.find((body) => body.boundary === "client-response");
+                return {
+                  id,
+                  inPage: pageIds.has(id),
+                  requestNumber: session.requestNumber,
+                  method: request.method,
+                  url: request.target,
+                  status: response.status,
+                  retainedBytes: body?.retainedBytes ?? 0,
+                  unavailableReason:
+                    session.terminalState === "completed" &&
+                    response.status >= 200 &&
+                    response.status <= 599 &&
+                    body?.availability === "complete"
+                      ? null
+                      : (body?.reason ?? "The captured request or response is incomplete."),
+                };
+              }),
+            };
+          }
           case "query_sessions":
           case "query_traffic_view": {
             if (state.deferResultQuery && args.query.searchResultId) {
@@ -5402,7 +5463,7 @@ try {
     process.exit(0);
   }
   if (process.argv.includes("--set-intake-only")) {
-    await checkResponseSetIntake(page, root);
+    await checkResponseSetIntake(page, root, errors);
     await checkResponseSetIntakeRefresh(page, root);
     assert.deepEqual(errors, []);
     await browser.close();
@@ -11144,7 +11205,7 @@ try {
   await runBrowserCheck(checkResponseSetDraftRegressions, page);
   await runBrowserCheck(checkResponseSetPendingDialogs, page, root);
   await runBrowserCheck(checkResponseSetCollectionAdds, page, root);
-  await runBrowserCheck(checkResponseSetIntake, page, root);
+  await runBrowserCheck(checkResponseSetIntake, page, root, errors);
   await runBrowserCheck(checkResponseSetIntakeRefresh, page, root);
   await runBrowserCheck(checkResponseSetIntakeMove, page, root);
   await runBrowserCheck(checkResponseSetLifecycle, page, root);
@@ -11166,7 +11227,7 @@ try {
       coalescedQueries: coalesced,
       editorsBefore,
       editorsVisible,
-      components: built.stats.componentCount,
+      components: templateStats.componentCount,
       cspViolations: 0,
     }) + "\n",
   );

@@ -203,6 +203,9 @@ async fn https_update_checks_redirects_and_downloads_are_inspectable_after_proxy
         .unwrap();
     let previous_listener = application.status().listener.unwrap();
     application.shutdown().await.unwrap();
+    // Shutdown drains the observer. Body inspection also needs the storage
+    // worker to finish processing the events the observer queued.
+    application.body_store().unwrap().flush().unwrap();
     // Keep the old port occupied so a stale updater route cannot pass by chance.
     let _previous_listener = tokio::net::TcpListener::bind(previous_listener)
         .await

@@ -364,6 +364,36 @@ async fn import_binary(app: &Application, root: &std::path::Path) -> String {
 }
 
 #[tokio::test]
+async fn traffic_picker_keeps_selected_rows_outside_the_current_search() {
+    let root = tempfile::tempdir().unwrap();
+    let app = configured(root.path());
+    let id = import_binary(&app, root.path()).await;
+    let evicted = "00000000000000000000000000000001".to_owned();
+    for search in ["captured", "unmatched"] {
+        let page = app
+            .query_response_set_intake_traffic(crate::ResponseSetIntakeTrafficQuery {
+                offset: 0,
+                search: search.into(),
+                selected_ids: vec![evicted.clone(), id.clone(), id.clone()],
+            })
+            .unwrap();
+        assert_eq!(page.next_offset, None);
+        assert_eq!(page.rows.len(), 2);
+        assert_eq!(page.rows[0].id, evicted);
+        assert!(!page.rows[0].in_page);
+        assert!(page.rows[0].unavailable_reason.is_some());
+        let row = &page.rows[1];
+        assert_eq!(row.id, id);
+        assert_eq!(row.in_page, search == "captured");
+        assert_eq!(row.method.as_deref(), Some("POST"));
+        assert_eq!(row.url, "https://intake.invalid/captured");
+        assert_eq!(row.status, Some(201));
+        assert_eq!(row.retained_bytes, 5);
+        assert_eq!(row.unavailable_reason, None);
+    }
+}
+
+#[tokio::test]
 async fn traffic_copies_complete_binary_bytes_and_cleans_assets_after_failed_commit() {
     let root = tempfile::tempdir().unwrap();
     let mut app = configured(root.path());

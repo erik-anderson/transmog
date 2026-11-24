@@ -1743,7 +1743,7 @@ fn display_bytes(bytes: &[u8]) -> (String, bool) {
     }
 }
 
-fn display_text(bytes: &[u8]) -> String {
+pub(crate) fn display_text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes)
         .chars()
         .take(MAX_FIELD_CHARS)

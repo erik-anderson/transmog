@@ -1,12 +1,63 @@
 //! Explicit collection of retained Traffic and ordinary saved responses.
 
 use super::{AutomationRegistry, AutomationRuleSet, AutomationStatus, ResponseSet};
-use crate::{AppError, Application, ErrorCategory, ResponseBodyFileMode, SessionResponseAsset};
+use crate::{
+    AppError, Application, BodyAvailability, ErrorCategory, ResponseBodyFileMode,
+    SessionQueryInput, SessionResponseAsset, SessionSort, SortDirection, StoredBodyMetadata,
+    TrafficColumn, inspector,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use transmog_automation::{RequestActions, ResponseActions, Rule, RuleMatcher, UrlCondition};
+use transmog_core::{intercept::ExchangeId, observe::ExchangeBoundary};
+use transmog_session::SessionSnapshot;
 
 const PRIORITY_BASE: i32 = -1_000_000;
+const INTAKE_PAGE_SIZE: usize = 100;
+
+/// Request for one page of captured responses plus the existing selection.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ResponseSetIntakeTrafficQuery {
+    /// Offset in the current search results.
+    pub offset: usize,
+    /// Traffic metadata search.
+    pub search: String,
+    /// Selected exchange IDs to include, even outside the page.
+    pub selected_ids: Vec<String>,
+}
+
+/// Display metadata for a captured response, without inspector headers or body bytes.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResponseSetIntakeTrafficRow {
+    /// Opaque exchange ID.
+    pub id: String,
+    /// Whether the row belongs to the requested page independently of selection.
+    pub in_page: bool,
+    /// Workspace request number, when the exchange is still available.
+    pub request_number: Option<String>,
+    /// Original client method, if captured.
+    pub method: Option<String>,
+    /// Display-safe client request URL.
+    pub url: String,
+    /// Original client response status, if captured.
+    pub status: Option<u16>,
+    /// Retained client response length.
+    pub retained_bytes: u64,
+    /// Display reason for an unavailable response. None means eligible for review.
+    pub unavailable_reason: Option<String>,
+}
+
+/// A bounded page with selected rows prepended in their existing order.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResponseSetIntakeTrafficPage {
+    /// Selected exchanges and matching results, without duplicates.
+    pub rows: Vec<ResponseSetIntakeTrafficRow>,
+    /// Offset for the following page, if any.
+    pub next_offset: Option<usize>,
+}
 
 /// Explicit source identities. Owned response-set content is never an ordinary rule.
 #[derive(Clone, Debug, Deserialize)]
@@ -132,6 +183,41 @@ pub struct ResponseSetIntakeResult {
 
 fn invalid(message: &str) -> AppError {
     AppError::new(ErrorCategory::InvalidInput, message, false)
+}
+
+fn intake_traffic_reason(
+    snapshot: &SessionSnapshot,
+    has_request: bool,
+    status: Option<u16>,
+    body: Option<StoredBodyMetadata>,
+) -> Option<String> {
+    let state = snapshot.state();
+    let reason = match state {
+        "active" => "Wait for this request to complete before saving its response.",
+        "cancelled" => {
+            "This request was cancelled; its response cannot be saved as a saved response."
+        }
+        "failed" => "This request failed; its response cannot be saved as a saved response.",
+        _ if snapshot.sequence_loss > 0 => {
+            "Some exchange evidence was lost; this response cannot be copied faithfully."
+        }
+        _ if status.is_some_and(|status| !(200..=599).contains(&status)) => {
+            "This response status cannot be replayed as a saved response."
+        }
+        _ if !has_request => "The original client request is unavailable.",
+        _ if status.is_none() => "The client-visible response has not completed.",
+        _ => match body {
+            None => "The client-visible response body metadata is unavailable.",
+            Some(body) if body.availability != BodyAvailability::Complete => {
+                return Some(body.reason.unwrap_or_else(|| {
+                    "The client-visible response body cannot be replayed exactly.".into()
+                }));
+            }
+            Some(_) if state == "completed" => return None,
+            Some(_) => "The captured request or response is incomplete.",
+        },
+    };
+    Some(reason.into())
 }
 
 fn conflict(message: &str) -> AppError {
@@ -312,6 +398,100 @@ fn warnings(
 }
 
 impl Application {
+    /// Lists captured responses for the picker with one body-metadata synchronization.
+    ///
+    /// # Errors
+    /// Returns a selection limit, invalid search, or body-metadata synchronization error.
+    pub fn query_response_set_intake_traffic(
+        &self,
+        input: ResponseSetIntakeTrafficQuery,
+    ) -> Result<ResponseSetIntakeTrafficPage, AppError> {
+        if input.selected_ids.len() > super::MAX_RESPONSES {
+            return Err(invalid("Select at most 1,000 responses."));
+        }
+        for id in &input.selected_ids {
+            inspector::parse_session_id(id)?;
+        }
+        let page = self.query_sessions(SessionQueryInput {
+            limit: Some(INTAKE_PAGE_SIZE),
+            offset: Some(input.offset),
+            search: Some(input.search),
+            sort: Some(SessionSort {
+                column: TrafficColumn::RequestNumber,
+                direction: SortDirection::Descending,
+            }),
+            ..SessionQueryInput::default()
+        })?;
+        if let Some(store) = &self.body_store {
+            store.flush().map_err(|_| {
+                AppError::new(
+                    ErrorCategory::Unavailable,
+                    "response body metadata is temporarily unavailable",
+                    true,
+                )
+            })?;
+        }
+        let offset = input.offset.saturating_add(page.sessions.len());
+        let page_ids: HashSet<_> = page.sessions.iter().map(|row| row.id.as_str()).collect();
+        let mut seen = HashSet::new();
+        let rows = input
+            .selected_ids
+            .iter()
+            .chain(page.sessions.iter().map(|row| &row.id))
+            .filter(|id| seen.insert(id.as_str()))
+            .map(|id| self.intake_traffic_row(id, page_ids.contains(id.as_str())))
+            .collect();
+        Ok(ResponseSetIntakeTrafficPage {
+            rows,
+            next_offset: (offset < page.total_matched).then_some(offset),
+        })
+    }
+
+    fn intake_traffic_row(&self, id: &str, in_page: bool) -> ResponseSetIntakeTrafficRow {
+        let snapshot = inspector::parse_session_id(id)
+            .ok()
+            .and_then(|id| self.service.catalog().get_metadata(ExchangeId(id)));
+        let Some(snapshot) = snapshot else {
+            return ResponseSetIntakeTrafficRow {
+                id: id.to_owned(),
+                in_page,
+                request_number: None,
+                method: None,
+                url: String::new(),
+                status: None,
+                retained_bytes: 0,
+                unavailable_reason: Some("session is unavailable or has been evicted".into()),
+            };
+        };
+        let request = snapshot
+            .request_heads
+            .iter()
+            .find(|head| head.boundary == ExchangeBoundary::ClientRequest);
+        let status = snapshot
+            .response_heads
+            .iter()
+            .find(|head| head.boundary == ExchangeBoundary::ClientResponse)
+            .map(|head| head.head.status);
+        let body = self.body_store.as_ref().and_then(|store| {
+            store
+                .metadata(snapshot.exchange_id)
+                .into_iter()
+                .find(|body| body.boundary == "client-response")
+        });
+        ResponseSetIntakeTrafficRow {
+            id: id.to_owned(),
+            in_page,
+            request_number: Some(snapshot.request_number.to_string()),
+            method: request.map(|head| inspector::display_text(head.head.method.as_bytes())),
+            url: request.map_or_else(String::new, |head| {
+                inspector::display_text(crate::request_actions::url(&head.head).as_bytes())
+            }),
+            status,
+            retained_bytes: body.as_ref().map_or(0, |body| body.retained_bytes),
+            unavailable_reason: intake_traffic_reason(&snapshot, request.is_some(), status, body),
+        }
+    }
+
     fn intake_sources(
         &self,
         document: &AutomationRuleSet,

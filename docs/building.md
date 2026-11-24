@@ -360,9 +360,12 @@ npm --prefix apps/desktop/ui run check
 
 `ui/dist` is generated and ignored by Git. `npm run check` type-checks the UI
 and builds the client bundle, styles, local Monaco workers, icon, and WebUI
-projection manifest, including on a clean checkout. Run it before invoking
-Cargo directly. Each UI build clears stale generated chunks. `transmog-app-webui`
-compiles `protocol.bin` and hashed CSS into Cargo's output directory. The protocol
+projection manifest, including on a clean checkout. It generates the lazy template
+loader before bundling and publishes matching compiler output for browser checks.
+Run it before invoking Cargo directly. Each UI build clears stale generated chunks.
+`transmog-app-webui` compiles `protocol.bin`, hashed CSS and content-addressed
+template packs into Cargo's output directory. Packs are fetched on demand from the
+embedded origin. The protocol
 and allowlisted resources are embedded with lossless Brotli compression. Renderer
 construction decodes and parses the protocol, then releases the temporary decoded
 bytes. Other resources are decoded and cached on first use; Tauri does not embed

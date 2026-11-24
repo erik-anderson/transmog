@@ -98,14 +98,13 @@ test("browser credits follow surviving inputs across main and worker bundles", (
   const outputs = {
     "app.js": {
       inputs: {
-        "src/index.ts": { bytesInOutput: 5 },
-        "node_modules/@scope/runtime/index.js": { bytesInOutput: 10 },
-        "node_modules/removed/index.js": { bytesInOutput: 0 },
+        "src/index.ts": { renderedBytesBeforeMinify: 5 },
+        [resolve(root, "node_modules/@scope/runtime/index.js")]: { renderedBytesBeforeMinify: 10 },
+        "node_modules/removed/index.js": { renderedBytesBeforeMinify: 0 },
       },
     },
     "worker.js": {
       inputs: {
-        "node_modules/@scope/runtime/worker.js": { bytesInOutput: 10 },
         "node_modules/parent/node_modules/helper/index.js": { bytesInOutput: 10 },
       },
     },

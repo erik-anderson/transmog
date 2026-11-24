@@ -62,38 +62,46 @@ export function captureFocus(owner: Element): () => boolean {
   };
 }
 
+const presentationRevisions = new WeakMap<Node, { value: number }>();
+
+function presentationRevision(root: Node): { value: number } {
+  let revision = presentationRevisions.get(root);
+  if (!revision) {
+    const state = { value: 0 };
+    const advance = (event: Event): void => {
+      if (
+        event.type === "pointerdown" ||
+        (event instanceof KeyboardEvent && event.key === "Escape")
+      ) {
+        state.value++;
+      }
+    };
+    root.addEventListener("keydown", advance, true);
+    root.addEventListener("pointerdown", advance, true);
+    presentationRevisions.set(root, state);
+    revision = state;
+  }
+  return revision;
+}
+
 /** Track cancellation from command entry through loading and rendering. */
 export function capturePresentationIntent(owner: Element): {
   current: () => boolean;
   dispose: () => void;
 } {
   const focus = captureFocus(owner),
-    root = owner.getRootNode(),
-    document = owner.ownerDocument;
-  let canceled = false;
-  const cancel = (event: Event): void => {
-    if (
-      event.type === "pointerdown" ||
-      (event instanceof KeyboardEvent && event.key === "Escape")
-    ) {
-      canceled = true;
-    }
-  };
-  root.addEventListener("keydown", cancel, true);
-  root.addEventListener("pointerdown", cancel, true);
-  if (root !== document) {
-    document.addEventListener("keydown", cancel, true);
-    document.addEventListener("pointerdown", cancel, true);
-  }
+    root = presentationRevision(owner.getRootNode()),
+    document = presentationRevision(owner.ownerDocument),
+    rootRevision = root.value,
+    documentRevision = document.value;
+  // Render waits can be abandoned on teardown, so listeners live at the root.
+  const unchanged = (): boolean =>
+    root.value === rootRevision && document.value === documentRevision;
+  let unchangedAtCompletion: boolean | undefined;
   return {
-    current: () => owner.isConnected && !canceled && focus(),
+    current: () => owner.isConnected && (unchangedAtCompletion ?? unchanged()) && focus(),
     dispose: () => {
-      root.removeEventListener("keydown", cancel, true);
-      root.removeEventListener("pointerdown", cancel, true);
-      if (root !== document) {
-        document.removeEventListener("keydown", cancel, true);
-        document.removeEventListener("pointerdown", cancel, true);
-      }
+      unchangedAtCompletion ??= unchanged();
     },
   };
 }
@@ -110,15 +118,6 @@ export async function renderPresentation(
     intent = capturePresentationIntent(owner);
   try {
     await owner.$whenRendered();
-  } catch (error) {
-    if (
-      error instanceof DOMException &&
-      error.name === "AbortError" &&
-      (!owner.isConnected || !current())
-    ) {
-      return () => false;
-    }
-    throw error;
   } finally {
     intent.dispose();
   }

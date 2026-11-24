@@ -1,11 +1,13 @@
 import type * as Monaco from "./monaco.js";
 
+// The editor is built separately and embedded at this same-origin URL.
+const monacoBundle = "/monaco.js";
 let pending: Promise<typeof Monaco> | null = null;
 
 /** One module graph and Trusted Types policy, shared by all editors. */
 export function loadMonaco(): Promise<typeof Monaco> {
   pending ??= import("./monaco-environment.js")
-    .then(() => import("./monaco.js"))
+    .then(() => import(monacoBundle))
     .catch((error: unknown) => {
       pending = null;
       throw error;

@@ -12,6 +12,7 @@ response-set-intake { display:contents; }
 .response-set-intake-dialog input:not([type="checkbox"]):not([type="radio"]),.response-set-intake-dialog textarea,.response-set-intake-dialog select { box-sizing:border-box; width:100%; min-width:0; }
 .intake-source-tools { display:flex; align-items:end; flex-wrap:wrap; gap:.5rem; margin-bottom:.5rem; font-size:.8125rem; }
 .intake-source-tools label { flex:1; min-width:12rem; }
+.response-set-intake-dialog .intake-source-choices { margin:0; padding:0; border:0; }
 .intake-source-list { max-height:30dvh; overflow:auto; border-block:1px solid var(--line); user-select:none; }
 .intake-source-list table { width:100%; min-width:0; border-collapse:collapse; table-layout:fixed; font-size:.8125rem; }
 .intake-source-list th,.intake-source-list td { height:auto; padding:.45rem; text-align:left; vertical-align:top; border-bottom:1px solid var(--line); overflow-wrap:anywhere; white-space:normal; }

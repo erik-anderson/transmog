@@ -300,14 +300,14 @@ Transmog includes the following third-party software.
 | matchers | 0.2.0 | MIT | https://github.com/hawkw/matchers |
 | memchr | 2.8.3 | Unlicense OR MIT | https://github.com/BurntSushi/memchr |
 | memoffset | 0.9.1 | MIT | https://github.com/Gilnaa/memoffset |
-| microsoft-webui | 3.1.1 | MIT | https://github.com/microsoft/webui |
-| microsoft-webui-discovery | 3.1.1 | MIT | https://github.com/microsoft/webui |
-| microsoft-webui-expressions | 3.1.1 | MIT | https://github.com/microsoft/webui |
-| microsoft-webui-handler | 3.1.1 | MIT | https://github.com/microsoft/webui |
-| microsoft-webui-parser | 3.1.1 | MIT | https://github.com/microsoft/webui |
-| microsoft-webui-protocol | 3.1.1 | MIT | https://github.com/microsoft/webui |
-| microsoft-webui-state | 3.1.1 | MIT | https://github.com/microsoft/webui |
-| microsoft-webui-tokens | 3.1.1 | MIT | https://github.com/microsoft/webui |
+| microsoft-webui | 3.2.1 | MIT | https://github.com/microsoft/webui |
+| microsoft-webui-discovery | 3.2.1 | MIT | https://github.com/microsoft/webui |
+| microsoft-webui-expressions | 3.2.1 | MIT | https://github.com/microsoft/webui |
+| microsoft-webui-handler | 3.2.1 | MIT | https://github.com/microsoft/webui |
+| microsoft-webui-parser | 3.2.1 | MIT | https://github.com/microsoft/webui |
+| microsoft-webui-protocol | 3.2.1 | MIT | https://github.com/microsoft/webui |
+| microsoft-webui-state | 3.2.1 | MIT | https://github.com/microsoft/webui |
+| microsoft-webui-tokens | 3.2.1 | MIT | https://github.com/microsoft/webui |
 | mime | 0.3.17 | MIT OR Apache-2.0 | https://github.com/hyperium/mime |
 | minimal-lexical | 0.2.1 | MIT/Apache-2.0 | https://github.com/Alexhuszagh/minimal-lexical |
 | minisign-verify | 0.3.0 | MIT | https://github.com/jedisct1/rust-minisign-verify |
@@ -739,7 +739,7 @@ The registry archives below are vendored with local patches. Original license an
 
 | Package | Version | License expression | Source |
 |---|---:|---|---|
-| @microsoft/webui-framework | 3.1.1 | MIT | https://registry.npmjs.org/@microsoft/webui-framework/-/webui-framework-3.1.1.tgz |
+| @microsoft/webui-framework | 3.2.1 | MIT | https://registry.npmjs.org/@microsoft/webui-framework/-/webui-framework-3.2.1.tgz |
 | @tauri-apps/api | 2.12.4 | Apache-2.0 OR MIT | https://registry.npmjs.org/@tauri-apps/api/-/api-2.12.4.tgz |
 | @types/trusted-types | 2.0.7 | MIT | https://registry.npmjs.org/@types/trusted-types/-/trusted-types-2.0.7.tgz |
 | dompurify | 3.4.17 | (MPL-2.0 OR Apache-2.0) | https://registry.npmjs.org/dompurify/-/dompurify-3.4.17.tgz |
