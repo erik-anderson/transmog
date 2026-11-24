@@ -69,7 +69,7 @@ only identity and URL, without retaining capture bytes. See [response
 sets](automation.md#response-sets) and [captured previews](captured-page-preview.md).
 
 Saving a trace preserves network evidence, not the automation workspace. Use
-[portable cases](portable-investigations.md#desktop-transfer-and-package-apis-k3)
+[portable cases](portable-investigations.md#desktop-transfer-and-package-apis)
 for reviewed sharing, optional package encryption and explicit plaintext working
 copies. Copying the application-state directory is not a supported transfer format.
 

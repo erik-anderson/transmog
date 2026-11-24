@@ -7,10 +7,9 @@ Status: accepted
 
 Use the human-facing profile name **Windows LLVM/Ninja**. Use the Rust toolchain
 required by the current manifests, LLVM/Clang as the C/C++ compiler, Ninja as the
-native build executor, CMake as BoringSSL's generator and NASM on Windows. The canonical Rust target
-remains `x86_64-pc-windows-msvc` because `msvc` describes the ABI and Windows
-SDK library ecosystem. `clang-cl` implements that ABI; Microsoft `cl.exe` is not
-the selected compiler.
+native build executor, CMake as BoringSSL's generator and NASM for x64 assembly.
+The Windows targets use the MSVC ABI and Windows SDK libraries. Clang's
+`clang-cl` compiles the native C and C++ sources for that ABI.
 
 Pin `boring`, `boring-sys`, `tokio-boring` and the test-only `hyper-boring` to one
 reviewed BoringSSL family. Select quiche's `boringssl-boring-crate` TLS backend; the
@@ -29,7 +28,7 @@ Certificate evidence never reads or serializes private keys.
 The Windows desktop updater uses the supported Tauri updater SDK's HTTPS client
 and platform trust to retrieve signed GitHub release assets. Its Rustls dependency
 chain is confined to the desktop-owned updater and its existing Reqwest client,
-which the desktop configures to use its active proxy and public interception root.
+which uses the active System proxy listener and its public interception root in that routing mode.
 The crypto graph gate allows that exact client package on the desktop edge only.
 This client never supplies a TLS context to proxy, replay, interception, or
 HTTP/3 resources. Cargo-deny permits
@@ -50,11 +49,6 @@ Local copies live under ignored `.tools`; hosted environments use reviewed,
 hash-checked downloads. See [building](../building.md) for prerequisites and
 bootstrap commands.
 
-The Visual Studio C++ component in `.vsconfig` supplies only the current Windows
-SDK, Universal CRT, STL headers, and ABI libraries needed by the MSVC Rust target.
-Native C and C++ compilation is explicitly configured to `clang-cl`, archiving
-to `llvm-lib`, and build execution to Ninja. Cargo's final Windows PE link uses
-the current SDK `link.exe`: quiche 0.30 declares an auxiliary `cdylib`, and LLD
-22.1.4 rejects that Rust-produced link despite an explicit subsystem. This
-narrow linker choice avoids a quiche manifest fork and does not introduce a
-second TLS or protocol implementation.
+Use Microsoft’s linker for the final Windows link. In the qualified build,
+LLD rejected quiche’s auxiliary `cdylib` even with an explicit subsystem.
+Selecting `link.exe` avoids maintaining a separate quiche manifest.

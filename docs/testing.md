@@ -158,25 +158,21 @@ clean up their subprocesses. See [MCP setup](mcp.md) and
 The `transmog-mcp` session tests exercise three simultaneous listeners, repeat
 starts, fixed-port collisions, revocation, idle expiry and sealing a private
 recording. The Windows CLI test runs manual recording against a disposable
-abandoned journal and compares system proxy settings before and after. Run the
-focused desktop browser routes after building the UI.
+abandoned journal and compares system proxy settings before and after. To
+isolate these cases and the proxy recovery UI, run the following commands.
 
 ```powershell
 python scripts/dev-env.py --run cargo test --locked -p transmog-mcp --features desktop private_listen
 python scripts/dev-env.py --run cargo test --locked -p transmog --test manual_proxy
-cd apps/desktop/ui
-node scripts/check-workspaces.mjs --proxy-recovery-only
-node scripts/check-workspaces.mjs --mcp-only
+node apps/desktop/ui/scripts/check-workspaces.mjs --proxy-recovery-only
 ```
 
 ## Desktop and capture workflows
 
-The native loopback inventory smoke observes the Windows enumeration command's
-45-second budget plus bounded IPC and rendering time. It records elapsed time
-and pending/error state, still rejects native errors and stuck operations, and
-does not change exemptions. The browser regression exercises the actual smoke
-against the production dialog with a result delayed beyond its former 12-second
-observation window.
+The Windows loopback check lists AppContainer exemptions without changing them.
+It allows 45 seconds for native enumeration plus time to display the result.
+The browser regression exercises a delayed response and checks for errors or
+stalled requests.
 
 Auth fixtures run with `cargo test -p transmog-auth` and the application auth
 tests. The ordinary browser gate includes masking, reveal/copy, stale replies,
@@ -211,6 +207,11 @@ npm --prefix apps/desktop/ui run test:workspaces
 ./scripts/test-windows-desktop.ps1 -WindowGeometryChecks
 ./scripts/test-windows-desktop.ps1 -ViewerChecks
 ```
+
+To check Traffic filter drafts and result counts, run
+`node apps/desktop/ui/scripts/check-workspaces.mjs --traffic-filters-only` from
+the repository root. For Favorites shared across windows and restored after
+restart, run `./scripts/test-windows-desktop.ps1 -ViewerChecks -TrafficFavoritesChecks`.
 
 The viewer gate includes imported metadata, binary Composer replay, independent
 window roles and captured-page isolation. The release soak adds
@@ -519,6 +520,10 @@ redacted protocol evidence under `verification/`. See
 qualification are in [the Windows release guide](windows-release.md).
 
 ## Script diagnostics and debugging
+
+The editor, MCP and [script guide](scripting.md) share [one help source](../crates/proxy-script/help.json).
+After editing it, run `node scripts/script-help.mjs` from the repository root.
+Use `node scripts/script-help.mjs --check` to verify the guide matches.
 
 Run the script/extension host tests on Windows for actual AppContainer coverage.
 They cover initialization, exception policies, steps, inert locals, native Stop,

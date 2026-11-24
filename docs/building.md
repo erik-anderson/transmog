@@ -216,19 +216,15 @@ native compilation and Rust's official Windows ABI target:
     ARM64 hosts use **MSVC ARM64 build tools** (`Microsoft.VisualStudio.Component.VC.Tools.ARM64`);
   - **Windows 11 SDK 10.0.26100** (`Microsoft.VisualStudio.Component.Windows11SDK.26100`).
 
-The technical `msvc` suffix names the ABI and system-library ecosystem; it does not select
-the C/C++ compiler. The Visual Studio components are a build dependency even
-though `cl.exe` is not
-the selected compiler. They provide the current Windows SDK, Universal CRT,
-C++ standard-library headers, and ABI-compatible import/static libraries that
-`clang-cl` and Rust's Windows ABI target consume. Native C/C++ compilation is
-configured to Clang, archiving to `llvm-lib`, and build execution to Ninja.
-Cargo's final PE link uses the current Windows SDK `link.exe` because the
-qualified quiche build includes an auxiliary `cdylib` that does not link with
-the reviewed LLD configuration.
+The MSVC target uses the Windows SDK, Universal CRT, C++ standard library
+headers and import libraries installed by Visual Studio. Clang compiles the C
+and C++ sources, `llvm-lib` creates archives and Ninja runs the native build.
+Cargo uses Microsoft’s `link.exe` for the final Windows executable because the
+quiche build includes a shared library that fails to link with the tested LLD
+configuration. See [the toolchain decision](adr/0001-native-stack.md).
 
 From Visual Studio Installer, choose **Modify**, then either import the checked-in
-`.vsconfig` or select the two individual components above. Installation requires
+`.vsconfig` or select the listed components for your target architecture. Installation requires
 administrator elevation and may require a restart. The library does not install
 or modify build tools at runtime.
 
@@ -239,8 +235,8 @@ committed. Equivalent or newer compatible system installations are also supporte
 On ARM64, `setup-windows-ci.ps1` installs pinned native ARM64 LLVM and CMake.
 LLVM lets Rust build scripts load its libclang DLL; native CMake lets BoringSSL
 select ARM64 assembly instead of x64 NASM objects. Setup verifies both tools'
-executable architecture. Ninja and NASM use verified portable tools through
-Windows emulation. `dev-env.py` selects the
+executable architecture. Setup also selects native ARM64 Ninja. NASM uses
+the verified x64 distribution. `dev-env.py` selects the
 ARM64 linker, CRT and Windows SDK libraries. `cache-v8.py` builds the reviewed
 native profile for the host, or accepts `--target` explicitly. To package ARM64,
 run `package-windows.ps1 -Target aarch64-pc-windows-msvc` on an ARM64 build host;
@@ -310,24 +306,11 @@ rather than a bundled browser. A clean-machine release gate must verify the
 Evergreen runtime is present and current before starting the app; Transmog does
 not include a fixed runtime, bootstrapper, or offline WebView installer.
 
-The reusable proxy libraries and the CLI's manual `serve` workflow can run
-without changing Windows host settings. Guided CLI `record` configures and
-restores the current-user proxy unless `--no-system-proxy` is specified, and
-asks for root installation unless manual setup is selected. See the
-[CLI guide](cli.md) for release-binary usage. The
-desktop Start action uses the current-user system-proxy adapter unless manual
-routing is configured. The adapter
-requires Windows PowerShell 5.1 or newer and access to
-`HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`. Explicit
-CA installation/removal uses the current-user Root certificate store and can
-display an operating-system consent dialog; it is never part of an unattended
-build or test. Automated tests use an in-memory host backend. Desktop HTTPS
-setup and guided CLI recording create their own interception roots. Durable
-private keys use OS-user protection and restricted state directories; the CLI's
-default ephemeral key stays in memory. The Windows desktop's **Set up HTTPS
-interception** action asks the user to approve the public certificate trust
-dialog. Manual `serve` users and embedders manage their clients' certificate
-trust and routing themselves.
+System proxy routing on Windows requires Windows PowerShell 5.1 or newer
+and access to `HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`.
+HTTPS interception can also require current-user certificate store access.
+For routing and trust setup, see the [desktop](product-shell.md#start-and-stop)
+or [CLI](cli-support-capture.md#other-platforms-and-manual-setup) instructions.
 
 Desktop dependency versions are pinned in the [Cargo](../Cargo.lock) and
 [npm](../apps/desktop/ui/package-lock.json) lockfiles. See the

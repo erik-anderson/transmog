@@ -1,12 +1,13 @@
 # Transmog documentation
 
-These guides describe the checked-in implementation. The [roadmap](roadmap.md)
-contains remaining work; Git history holds completed plans and migration notes.
+To record a trace for someone investigating a problem, start with [Record a trace
+for support](cli-support-capture.md). To inspect live or saved traffic yourself,
+start with the [Windows desktop guide](product-shell.md).
 
 ## Start here
 
 - [Architecture](architecture.md), [dependencies](dependencies.md) and [embedding](embedding.md)
-- [Windows desktop](product-shell.md) and [current limitations](limitations.md)
+- [Current limitations](limitations.md) and [roadmap](roadmap.md)
 - [Build prerequisites](building.md), [testing](testing.md) and [Windows releases](windows-release.md)
 - [UX principles](ux-principles.md) and [quality routine](ux-quality.md)
 
@@ -46,7 +47,7 @@ contains remaining work; Git history holds completed plans and migration notes.
 - [SAZ compatibility](saz-compatibility.md) and [HAR/NetLog](json-archives.md).
 - [CLI commands](cli.md) and [guided support capture](cli-support-capture.md).
 - [Support capture profiles](support-capture-profiles.md): reproduction steps, issue markers and reviewed evidence export.
-- [Portable investigations](portable-investigations.md): revision-0 case/rule APIs, ZIP64/TMCap transfer, encrypted desktop sharing and reviewed disabled import; CLI workflows remain planned.
+- [Portable investigations](portable-investigations.md): share cases with optional encryption, review evidence and import rules in a disabled state.
 
 ## Library contracts and decisions
 

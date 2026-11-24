@@ -13,21 +13,15 @@ container layouts; current consumers and fixtures move together.
 Application saves preserve [request ordering and source numbers](tmcap-format.md#application-stream-records)
 independently of exchange identity. Reopening assigns fresh workspace numbers.
 
-Hook-effect records carry the captured `chain_position` and an optional
-`response_snapshot` for frozen local response selections. Its camel-case fields
-are `status`, `bodyBytes`, `sha256` and `contentCodings`; the digest identifies
-content-encoded entity bytes before subsequent response hooks or HTTP no-body
-handling. The hook ID retains the rule/asset revisions. Body records remain
-independent evidence of the client-response output and its retention state.
-Snapshot metadata never grants filesystem access and contains no external path.
+A rule that supplies a local response can record the identity of the exact
+encoded body it selected. Compare that identity with retained client-response
+bytes to investigate later edits. The snapshot contains no external file path.
+See [recorded rule effects](tmcap-format.md#recorded-rule-effects).
 
-Stream lifecycle and WebSocket/SSE content are independently indexed. Optional
-stream-summary metadata retains establishment, terminal observation, observation cutoff
-and elapsed lifetime. Its legacy `openedAt` remains first observation and is not
-reinterpreted as establishment. Older summaries without explicit timing evidence
-remain readable without inventing missing timestamps. Persistent SSE IDs are
-stored once and referenced by later messages, avoiding repeated large fields
-on disk and in reopened histories.
+WebSocket and SSE summaries are indexed separately from their messages. This
+lets the desktop show stream lifetime without loading payloads. Persistent SSE
+IDs are stored once and referenced by later messages. See the [stream record
+layout](tmcap-format.md#application-stream-records).
 
 Circular recording also keeps stream payloads outside JSON metadata, including
 in its private memory or disk scratch storage. Export preserves the compressed

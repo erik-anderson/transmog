@@ -116,23 +116,20 @@ separate capture window. Files opened there join the same session.
 preserve your drafts; **Publish selected rule** creates a disabled shared rule.
 Review and enable it in **Automation → Rules** in the main window.
 
-Closing a review window leaves the session available under its normal idle
-deadline. Resolve unsaved edits before ending an offline inspection session.
-If a private listener ends with unsaved human edits, its review remains
-available for that work.
+Private sessions expire after 30 minutes of inactivity. An open review window
+keeps an offline session available. A private listener still expires during
+review. Incoming traffic, listing sessions and polling operations do not extend
+its deadline. For a long capture, call `transmog_session_renew` and check
+`expiresAt`.
 
-The idle deadline is 30 minutes. An open review window keeps an offline
-inspection session available. Private listeners keep their existing deadline
-when a review window opens or closes.
-Incoming traffic, session listing and operation polling do not renew the
-deadline. Use `transmog_session_renew` and check the returned `expiresAt`
-for long captures.
-Key revocation or expiry, disabling MCP and app restarts also end private sessions.
-When access ends while the app is running, unsaved human review work remains available.
+Key expiry or revocation, disabling MCP, and restarting the app also end
+sessions. Resolve unsaved edits before ending an offline session. If agent
+access ends while the app is running, the reviewer can keep working on unsaved
+edits.
 
-Sessions may also subscribe to live traffic. Subscribers share each real exchange
-and its updates; requests and live rules run once. Live rules and collection
-controls affect the shared proxy, regardless of which session reviews the traffic.
+A session can also subscribe to the main proxy. Subscribers see the same
+exchanges and rule effects. Starting a private listener is a separate operation
+for capturing one app’s traffic.
 
 ## Configuration, keys and restarts
 
@@ -143,16 +140,14 @@ invalidates its current key; update the agent with the new configuration.
 **Copy URL** and **Copy port** share the current private endpoint, which changes on
 restart. Agents connect through the generated stdio configuration.
 
-Keys, permissions, redaction settings and expiry survive restarts. Temporary
-approvals and control sessions do not. Reconnect after restarting and refresh
-selected-request scopes in the app. Turning **Allow MCP connections** off suspends
-all keys and ends temporary access and effects; still-valid keys work again when
-you re-enable it. Connected stdio servers exit when their desktop stops or MCP is
-disabled. Restart the agent's MCP connection after restarting or re-enabling it.
-Restart that connection after installing an update, too: CLI and desktop versions
-must match exactly. The installer can replace a running CLI, so closing the agent
-application is unnecessary. A retired executable still in use is cleaned up on
-a later Transmog start.
+Keys, permissions, redaction settings and expiry survive desktop restarts.
+Refresh selected-request scopes after restarting. Turning off **Allow MCP
+connections** suspends the keys and ends temporary approvals and control
+sessions. Still-valid keys work when you re-enable access.
+
+Restart the agent’s MCP connection after restarting the desktop, re-enabling MCP
+or installing an update. The CLI and desktop versions must match. You can leave
+the agent application open during installation.
 
 See [CLI commands](cli.md#mcp-agent-connections), the
 [developer reference](mcp-reference.md) and [MCP verification](testing.md#local-mcp-access).

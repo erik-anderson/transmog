@@ -97,174 +97,22 @@ saved script source and settings without changing the active script.
 
 ## Traffic script authoring and execution
 
-Open **Automation → Scripts**. A new workspace starts with an empty TypeScript
-draft. Choose a task in **Handlers**: **Add** inserts a handler, **Go to** reveals
-existing code, and **Review** takes you to a declaration that needs repair. One
-Undo removes an inserted handler and its new imports.
+Open **Automation → Scripts** for changes that need custom logic. Set the
+traffic filters and grant the permissions the script needs. **Save draft**
+keeps unfinished work. Test the draft in the sandbox, then use **Save & enable**
+or **Save & apply** to run that version on new matching proxy requests.
+Requests already in progress finish with the version they started with.
 
-Inserted sample behavior starts behind a boolean set to `false`. Change it to
-`true` to try the sample. Adding code does not grant permissions, save the draft
-or enable the script. **View full sample** opens a read-only reference example
-without inserting it.
+The [script guide](scripting.md#write-and-enable-a-script) covers handlers,
+permissions, validation and examples. See [language and draft recovery](scripting.md#change-language-and-recover-drafts)
+to repair a script after a type error, or [save conflicts](scripting.md#resolve-a-save-conflict)
+when another window has edited it.
 
-Set traffic scope and permissions in **Filters, capabilities, and parameters**.
-New drafts target `example.test`; blank request filters match all traffic.
-**Review settings** opens the field needed by an inserted handler. Body callbacks
-require **Read bounded bodies** even with the sample switch off. Complete-body
-handlers buffer matching messages and hold headers; the editor shows the inferred
-body mode below the source. See [streaming callbacks](scripting.md#stream-or-wait-for-response-bytes)
-for body modes and helpers.
-
-The **TypeScript / JavaScript** menu holds validation, language and comparison
-commands. **Debug** holds sandbox tests and debugger actions. **Open API docs**
-provides searchable guides, complete examples and the full `transmog:api`
-namespace. Search a symbol or use Ctrl+F within the read-only reference. Import
-helpers by name, or use a namespace import for `api.` completion.
-
-Traffic runs the applied JavaScript build. Direct Composer sends and imported
-captures do not run scripts. Packaged read-only visualizers use the separate
-[extension workflow](extensions.md).
-
-### Drafts, builds and live traffic
-
-| Version | What it means |
-| --- | --- |
-| Editing draft | Current source, settings, retained other-language source and previous JavaScript drafts. **Save draft** persists it without building or enabling it. |
-| Compiled build | The latest successful authoring build, including its JavaScript and source map. It can be newer than both the saved draft and applied build. |
-| Applied build | The exact artifact selected for new matching requests while the script is on. Pausing retains it for later resumption. |
-
-**Saved** describes the editing draft; **Unapplied changes** describes differences
-from the active source and settings. Retained-source or recovery-history changes
-need saving, but do not mark unchanged executable code as unapplied.
-
-| Action | Effect |
-| --- | --- |
-| **Save draft** or Ctrl+S | Saves unfinished source, settings and recovery drafts. Passing type checks is not required; live traffic is unchanged. |
-| **Discard changes** | Restores the saved draft, or the initial draft if none was saved, without changing the applied script. |
-| **TypeScript / JavaScript → Validate only** | Checks the current draft and retains a successful build. |
-| **Debug → Test in sandbox** | Runs the draft with the selected callback or exchange-scenario input and reports the result. |
-| **Debug → Run sandbox test in debugger** | Runs the same draft and input under the debugger. With pauses enabled, it stops at the first user statement. |
-| **Save & enable** / **Save & apply** | Validates/builds, starts the sandbox, saves that exact version as the editing baseline and atomically applies it to new requests. |
-| **Pause script** | Stops selecting the applied build for new requests and retains it. |
-| **Resume applied script** | Restarts the paused applied artifact, preserving newer or invalid drafts without rebuilding them. |
-
-Validation, sandbox-test preparation and generated-output comparisons can update
-the latest compiled build without saving or applying the editing draft. A
-successful build does not prove that the sandbox can start or that the script
-works for every input. Sandbox testing is optional.
-
-Open **Sandbox input and results** to choose a mode and set fixtures:
-
-- **Single callback** starts with empty state and bypasses request/body filters.
-- **Exchange scenario** tests filter selection, related callbacks, edits and shared
-  state. Inspect which callbacks ran and the resulting messages. A simulated
-  upstream failure can pass; callback or processing errors fail the test.
-
-Both modes use the draft's capabilities and parameters. They do not send traffic
-or resolve saved response assets. Use decoded body fixtures without
-`Content-Encoding`, then confirm behavior with matching proxy traffic. Test
-results become **Outdated** when source, settings or input changes. **Use selected
-Traffic request** copies the URL, method and nonsensitive headers; it clears the
-body input. See [sandbox testing](scripting.md#test-in-the-sandbox) for chunk timing
-and streaming fixtures.
-
-If applying fails, the previously applied version and current edits remain intact.
-Requests already in progress keep the version they started with. If another
-window saves changes, review them before applying your draft.
-**TypeScript / JavaScript → Compare with active** compares source and settings
-without applying the draft. Reopening restores the newest saved draft or applied
-source. Save the editing draft before closing the app; a compiled build does not
-replace it.
-
-### TypeScript checks and JavaScript recovery
-
-The editor checks TypeScript against the current bundled declarations when it
-first opens in a window, after edits, and before validation, sandbox testing or
-applying. These checks do not emit JavaScript or change the applied build.
-The type environment includes ECMAScript and the Transmog API without browser
-or Node globals.
-Type errors, syntax errors or an unavailable checker block those TypeScript
-actions; **Save draft** remains available. Diagnostic buttons jump to the reported
-source location, and **Check TypeScript again** retries the check.
-
-If an app update exposes new TypeScript errors, the previously applied JavaScript
-remains selected; the editor reports runtime availability separately. Fix the
-TypeScript or choose **TypeScript → Edit JavaScript**. That action starts from the
-**last successfully compiled JavaScript**, which may have come from validation or
-testing and may never have been applied. Newer TypeScript edits are retained
-separately and are not included in that JavaScript draft. Feedback identifies the
-starting build and whether it is applied. With no successful build, the editor
-opens an empty JavaScript editor while retaining the TypeScript draft.
-
-JavaScript authoring does not require retained TypeScript to pass checking. Its
-syntax, exported handlers and capabilities are still validated before activation.
-
-### Return to TypeScript and recover earlier JavaScript
-
-1. Choose **JavaScript → Return to TypeScript…** to repair the retained TypeScript while
-   preserving the current JavaScript draft.
-2. Choose **Compare generated JavaScript**. This checks and builds the TypeScript,
-   then compares current JavaScript on the left with generated JavaScript on the
-   right. Fix reported errors before continuing.
-3. Choose **Use TypeScript output** to select TypeScript authoring, or **Keep
-   JavaScript** to return to JavaScript while retaining TypeScript repairs.
-4. **Save draft** to persist the choice, or **Save & enable** / **Save & apply** to
-   apply it. Selecting a language or viewing the comparison does not apply it.
-
-**Use TypeScript output** requires a successful, current comparison; subsequent
-edits invalidate it. Closing the comparison keeps the TypeScript review open.
-From an expanded source editor, the comparison opens expanded with its acceptance
-action inside; closing it returns to expanded source editing. Saving during a
-TypeScript review saves the repairs as retained source while JavaScript remains
-the selected authoring language.
-
-Returning to TypeScript retains the displaced JavaScript. Before a later language
-switch replaces that retained work, the editor moves it into **Previous
-JavaScript drafts**, newest first. Expand an entry to inspect, restore or remove
-it. Restoring also retains the current JavaScript draft. The list holds up to
-eight earlier drafts; when full, explicitly remove one before retaining another.
-**Undo draft removal** restores the most recent removal in the current editor.
-Save the draft or apply it to persist language changes and recovery drafts across
-restart; merely switching or restoring does not save them.
-
-### Resolve a save conflict
-
-Saving and applying compare with the saved editing baseline loaded by this
-window. If another window changes it, both versions are preserved and **Compare
-with saved script** becomes available. Review the source and the **Compare
-settings and retained drafts** disclosure, then choose **Keep my draft** or
-**Load saved draft**. The disclosure and decision controls remain inside the
-comparison when expanded.
-
-**Keep my draft** accepts the reviewed baseline without saving over it; the next
-explicit save/apply replaces it. **Load saved draft** replaces the editor's
-contents and offers **Restore my previous draft** for the displaced local work.
-That recovery choice lasts in the current editor; save restored work before
-closing the app. Neither choice changes live traffic by itself.
-
-### Runtime availability and compatibility
-
-An enabled script shows **On** when its sandbox is available and **Unavailable**
-when it cannot run. **Paused** stops selecting the applied build for new requests.
-An unavailable runtime does not mean a newer draft was applied. **Retry applied
-script** restarts only that exact applied JavaScript artifact and preserves draft
-edits. Pause the script if its effects should stop while you repair it. The
-Automation activity count describes configured activation, not successful script
-execution.
-
-**TypeScript / JavaScript → View applied JavaScript** shows the code used by
-traffic, including while paused. The build disclosure identifies the compiled
-build and whether it is applied. Source/build alignment, type-check results and
-runtime availability are independent: unchanged source can match its build and
-have new type errors. Runtime failures show locations in the code that ran;
-TypeScript locations use its source map when available.
-
-Restart, resume and retry use stored JavaScript without recompiling TypeScript.
-Runtime and scripting API compatibility are separate constraints. Startup discards
-script workspace files with an older schema; current, newer and malformed files
-are preserved.
-See [persisted state](product-state-and-support.md#persisted-state) for storage and
-recovery boundaries.
+**On**, **Paused** and **Unavailable** describe the applied script. If its
+worker cannot start, **Retry applied script** retries the same build and keeps
+your draft. The activity count includes configured scripts even when their
+workers are unavailable. See [persisted state](product-state-and-support.md#persisted-state)
+for script storage and recovery.
 
 ## Choose an editing workflow
 
@@ -853,145 +701,31 @@ representation, coverage, exclusion and processing limits.
 
 ## Debug script execution
 
-Choose **Debug → Open debugger for live traffic** in **Automation → Scripts**, choose **Open debugger** in **Settings → Extensions**,
-or toggle it with **F12**, including from an editor. After the first open, the
-app toolbar keeps a **Debugger** shortcut until you quit the app.
-Sources lists saved scripts and installed extension files without activating
-them. Click beside a line number to toggle a breakpoint; right-click for a
-condition or to disable it. A filled red circle means a worker has bound the
-breakpoint; an outline is pending.
+Press **F12** to open the debugger. For a repeatable test, choose **Debug →
+Run sandbox test in debugger** from the script editor. The test uses the current
+draft and input. For live traffic, debug the applied build in the main window.
+Each capture viewer manages its own visualizer workers. See [debugging a
+visualizer](extensions.md#debugging-a-visualizer) for the difference between
+a fresh fixture and an existing parser.
 
-Opening without a remembered source shows a starting panel rather than choosing
-an installed extension file. **Use Scratch** focuses Console; **Open Scripts**
-opens the main window's script editor when that window is available. Browsing a
-source never activates it.
+The [debugger guide](scripting.md#debug-a-script) covers breakpoints, logpoints,
+watches, stepping, restart and docking. [Console and Scratch](scripting.md#use-console-or-scratch)
+covers command contexts, level filters, logged snapshots and copying.
 
-The open workspace catches `debugger;` statements and attaches to newly created
-workers before initialization. Use **Dock** to move it beside Traffic or into a
-separate window. Moving preserves execution and the console draft.
-The dock position, pane sizes and visibility return when reopened during the app
-session. **View** shows or hides Sources, Inspector and Console, with a checkmark
-beside each visible pane; choosing a pane closes the menu. **Escape** toggles the
-Console. Drag pane dividers to resize them. Compact docks show Code, Sources or
-Inspector one at a time, and the checkmark follows the visible pane. Console
-visibility stays independent.
-
-Use **Ctrl+P** to open a source and **Ctrl+Shift+F** to search saved and installed
-sources without activating them. Append `:line` or `:line:column` to a file name,
-or use `:line` for the current file. Search results select the matching text.
-Open files appear as tabs; **Alt+Left/Right**
-moves through source history. The Sources tree groups files into package folders
-and marks the selected file.
-
-Switch between mapped TypeScript and running JavaScript when a verified source
-map is available. Console's **Run in** choice selects **Scratch** or the selected
-worker. Worker commands run in the selected paused frame, or its global context
-when idle, and can change that worker's state. A live pause reveals its source
-and stack while preserving a Scratch command destination. Output filters change
-which records are shown independently of where commands run.
-
-Scratch is an empty JavaScript context available before any script runs. Its
-variables, draft and command history survive debugger close/reopen and docking
-changes during the owning main or capture window's lifetime. Each window has its
-own Scratch context. **Reset scratch** appears only while Scratch is selected;
-it cancels outstanding Scratch work and clears its variables, preserving output,
-history and the typed draft. Earlier object results keep their readable summaries
-but expire for expansion. **Clear output** clears Console output without clearing
-variables. Worker **Restart** remains a separate control.
-
-**Levels** combines Info, Warnings, Errors and Verbose. Info, warnings and errors
-appear by default, including normal `console.log()` output. Enable Verbose to see
-`console.debug()`. Warnings and errors have distinct icons and colors. Each log call
-from a command has its own row and follows these filters.
-
-Logged objects expand as bounded snapshots of their data at log time. Snapshots
-remain readable after the worker finishes or Scratch is reset. Accessors and
-proxies stay inert, and shortened values and repeated references are labeled.
-Right-click a message or property to copy it, or open its source when available.
-**Copy displayed subtree** copies displayed names and values. Right-click the
-transcript background for **Copy visible output** and **Clear output**.
-Shift+F10 opens the same actions for a focused item.
-
-
-Scope/property inspection stays inert; conditions reject side effects. An invalid
-condition pauses with an explanation.
-
-Right-click selected source to add it to Watch or evaluate it in Console
-(**Ctrl+Shift+E**). Watches can be edited in place and return when the debugger is
-reopened during the app session. **Copy stack trace** copies the paused frames
-with their source locations.
-
-Double-click a local or writable data-property value, press **F2** on its row, or
-choose **Edit value** from its context menu to replace that exact runtime value.
-Enter applies a JavaScript value expression; Shift+Enter adds a line and Escape
-cancels the draft. Replacement expressions reject side effects. Failed edits keep
-their draft and show the error beside it. Read-only properties and accessors remain
-inert. **Edit expression** changes a Watch expression, independently of runtime edits.
-Moving between docked and separate windows retains an uncommitted value edit while
-its exact pause is still available. Resuming or selecting a different frame expires
-that editor; it never applies a draft to a replacement binding.
-Edits to Symbol-keyed properties or properties with shortened names must be reopened
-after a refresh because their displayed names cannot reliably identify the same key.
-
-Locals and watches refresh after Console commands and value edits. Stepping and
-switching frames retain expanded property paths and reading position while acquiring
-fresh values; changed values are marked. Arrow keys navigate the value tree and
-expand or collapse objects. While stepping or refreshing, the previous tree stays
-visible as expired until its replacement and expanded descendants are ready.
-Matching property paths retain their rows; previews alone never establish that an
-object is unchanged, and every pause acquires fresh runtime handles. Loading a new
-branch shows progress at that branch's child position. Its context menu offers
-**View value** for selectable multiline text, **Add to Watch**, and
-**Copy property path** where a complete, unambiguous JavaScript path is available.
-Runtime-shortened previews are identified in the value viewer.
-
-Debugger source is the executing snapshot. **Edit script** opens the current script
-draft without replacing it or changing the running build. Matching source reveals
-the corresponding location; a differing draft is identified. Save and run a sandbox
-test to debug script changes. The docked workspace targets windows around 1024×768
-and larger; use **Dock → Open separate window** or resize its panes for more space.
-
-Transmog suspends dependent callback, body-read and upstream-attempt budgets
-while a worker is debugger-blocked. Cancellation and shutdown remain effective;
-remote clients and servers still control their own timeouts. Workspace pauses
-last until continued or closed. Source changes rebind a uniquely identifiable
-statement; removed or ambiguous statements lose their saved breakpoints.
-
-Choose **Debug → Run sandbox test in debugger** in Scripts to run the current callback or exchange-scenario
-input in a fresh worker without applying the draft. It opens this same workspace
-and pauses before the first user statement. Set breakpoints and exception policy,
-then continue. When paused, select a frame or scope and expand objects in place;
-getters and proxies stay inert. Scroll to load more properties; large collections
-use expandable ranges. Completed fixtures retain their result and logs
-in the recent worker list.
-
-Continue uses F8 or `Ctrl+\` (also F5); step over F10, into F11,
-out Shift+F11, and Stop Shift+F5.
-Shortcuts work throughout the debugger, including Monaco and selectors. Hover or
-focus an icon for its action and shortcut.
-
-While running or idle, F8 arms or cancels **Pause next callback**. **Pause in**
-chooses a worker or **Any script or extension**, independently of Console's
-destination. Any works before workers exist and remains available afterward.
-Each arm pauses one callback in this window; attachment and Scratch commands do
-not consume it. The target choice stays selected after continuing, ready to arm
-again. Closing cancels outstanding pause requests while remembering the target.
-
-**Restart** aborts the selected worker. For script tests, it uses the current
-draft and test input; for applied scripts, it restarts the applied build. For
-visualizers, it starts a fresh fixture in the originating inspector. **Stop**
-aborts selected work. Closing the debugger, including **F12** or **Continue and
-detach**, continues paused work and detaches all workers. Saved breakpoints
-return on reopening. While closed, breakpoints and `debugger;` do not pause execution.
-
-The live proxy uses the main window's workspace; capture-window visualizers use
-their own workspace. Extension breakpoints are shared, but worker control stays
-with its owning window. Source and variables stay local. Exceptions and console
-output are temporary and excluded from normal trace, case and support output.
-Authorized agents can inspect scoped script logs and exceptions under the
-[MCP diagnostic disclosure rules](mcp-reference.md#script-diagnostics).
-When an applied worker cannot start, exchange findings report its unavailability.
-Inspect startup errors, exceptions and logs in Automation → Scripts or, with
-all-traffic scope and unredacted access, `transmog_scripts_status` with
-`includeDiagnostics: true`.
-See the [Script API](scripting.md#debug-a-script) for inspection and console semantics.
+- **Source.** The debugger shows the code that ran. Switch between generated
+  JavaScript and TypeScript when a verified source map exists. **Edit script**
+  opens the current draft and reveals the location if it still matches.
+  **Alt+Left/Right** moves through source history.
+- **Values.** Expand a paused frame to inspect its locals. Press **F2** on a
+  writable value to edit it. Enter applies the expression and Escape cancels.
+  Edits expire on resume or a frame change. **View value** opens multiline text,
+  and **Copy property path** is available for unambiguous paths. After a step,
+  expanded rows retain their position while their values refresh.
+- **Pauses.** Transmog suspends its dependent callback, body-read and upstream
+  attempt timers while the worker is paused. Remote clients and servers can
+  still time out. Closing the debugger continues paused work.
+- **Diagnostics.** Exceptions and console output are temporary. For a worker
+  startup failure, inspect **Automation → Scripts**. An agent needs **View
+  request details**, all-traffic scope and unredacted access to read startup
+  logs and exceptions. Call `transmog_scripts_status` with
+  `includeDiagnostics: true`. See [MCP diagnostic access](mcp-reference.md#script-diagnostics).

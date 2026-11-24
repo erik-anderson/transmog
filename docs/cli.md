@@ -2,14 +2,11 @@
 
 Use the standalone CLI to record a support trace, run a manually configured
 proxy, inspect and convert native captures, or connect an MCP agent to the desktop.
-Download the signed Windows `transmog-cli.exe` from the project's
-[release assets](https://github.com/erik-anderson/transmog/releases). It is
-also included in the desktop installer and requires no Rust or
-Cargo installation. See the [support capture guide](cli-support-capture.md) for
-signature verification and the guided recording flow.
+The Windows installer includes the CLI. For standalone downloads and signature
+verification, see [Record a trace for support](cli-support-capture.md).
 
-Examples use PowerShell with the release executable in the current folder.
-Quote paths containing spaces. When a binary is on `PATH`, use `transmog-cli`
+Examples use PowerShell with `transmog-cli.exe` in the current folder. For the
+standalone ARM64 download, use `.\transmog-cli-arm64.exe`. Quote paths containing spaces. When a binary is on `PATH`, use `transmog-cli`
 instead; on Linux or macOS, a binary in the current directory is invoked as
 `./transmog-cli`. Building the portable CLI from source is covered in
 [Build prerequisites](building.md).
@@ -27,11 +24,6 @@ No arguments prints the command overview. Every command and command group
 accepts `--help` or `-h`. Help shows accepted options, defaults, and password
 roles before any certificate, proxy, or output-file setup. The
 [help source](../crates/proxy-cli/src/help.rs) contains the full option reference.
-
-The [context reader](#read-recorded-context) lists and extracts saved diagnostic
-context. Broader case/rule/script CLI ideas in the
-[portable investigation design](portable-investigations.md#intended-cli-interface)
-are deferred; existing command output and exit behavior remain unchanged.
 
 | Command | Task |
 | --- | --- |
@@ -77,46 +69,18 @@ connection after an update to load the replacement CLI.
 .\transmog-cli.exe record --output .\support-trace.tmcap
 ```
 
-On Windows, `record` asks to install its public interception root, configures
-the current user's system proxy, and restores routing before draining active
-requests on Ctrl+C. A second Ctrl+C terminates unfinished work and saves
-available evidence. Other platforms require manual client proxy configuration.
-`--no-system-proxy` leaves Windows routing alone through startup, recording and
-exit, including when a prior run left a recovery journal. Both `record` and
-`serve` print the bound socket as `LISTEN_ADDR`. For an app, use the
-client address printed alongside it. Use `--listen 127.0.0.1:0` to select an available port.
-Decrypted HTTPS requires the app to trust the public root. Use `--no-install-root`
-to get the public PEM for the app's trust setup or `--install-root` to explicitly
-request OS trust installation with either routing mode. Unattended decrypting
-runs specify one of those certificate options.
-OS consent still applies to installation and removal. `--no-decrypt-https`
-skips certificate setup entirely.
-
-The initial privacy defaults retain sensitive headers and up to 25,000,000
-bytes of each request body. Response bodies and measured byte counts are
-recorded. `--redact` and `--request-body-limit` change preferences for later CLI
-recordings; `--retain-sensitive` and `--unlimited-request-bodies` change them
-back or remove the request cap. Forwarding continues beyond a retained prefix.
-URLs, bodies, and metadata may contain private information even with redaction.
-
-Ordinary recording streams to disk. Add `--encrypt` for password protection or
-`--circular-buffer auto` to save only the newest retained exchanges at stop.
-Memory circular buffers are lost if the process is killed. A failed stop-time
-save preserves available evidence at the recovery path printed in the error.
-The [support guide](cli-support-capture.md) explains passwords, buffer sizing,
-persistence, and cleanup in detail.
+Wait for **Recording**, reproduce the issue, then press Ctrl+C to finish and
+save. Windows uses system proxy routing by default. See the [support capture
+guide](cli-support-capture.md) for certificate consent, privacy defaults,
+passwords, circular recording and interrupted runs.
 
 ## Run a manually configured proxy
 
-In the desktop, use **Routing for next start** beside **Start proxy** and
-choose **Manual proxy**. Select **Start proxy** and
-copy the bound address into the target application's HTTP and HTTPS proxy
-settings. Transmog remembers the routing choice. A running listener retains
-its original mode until it finishes. For HTTPS decryption, use **Trust for my
-Windows account…** for apps that use Windows trust or **Copy public certificate
-path** for apps with a separate trust store. Choose **Start with HTTPS
-tunnels** to run without a CA. **Recover host settings** in Connection settings
-explicitly restores a journal left by an earlier system-proxy run.
+Use `serve` to run a listener or `record --no-system-proxy` to save a trace
+while configuring only the target app. Both print the bound socket as
+`LISTEN_ADDR` and a client address for the app's HTTP and HTTPS proxy settings.
+Use `--listen 127.0.0.1:0` to allocate a loopback port. For the desktop
+equivalent, see [Start and stop](product-shell.md#start-and-stop).
 
 ### Select callers and HTTPS inspection
 
@@ -177,7 +141,9 @@ as `LISTEN_ADDR`. Both `serve` and `record` default to upstream route `auto`;
 `--route h1`, `h2`, or `h3` selects an explicit upstream protocol.
 `--upstream-ca-cert FILE` adds PEM roots for private origins to the normal
 upstream trust snapshot. It does not install those roots in the OS.
-Non-loopback listeners and remote clients require `--allow-remote`.
+To accept remote clients, specify both `--allow-remote` and a reachable
+interface with `--listen IP:PORT`. Windows `record` also requires
+`--no-system-proxy` for a non-loopback bind.
 
 To record with `serve`, add `--capture .\session.tmcap`; add
 `--capture-bodies` to retain body bytes as well as metadata. Sensitive headers

@@ -157,25 +157,12 @@ when changing the experience.
   interpretation and source rather than presenting an opaque wrapper as the
   decoded content's outcome.
 
-- Protocol extensions offer visualizers through explicit selection or opt-in Auto
-  parsing of the visible selected message, and declare
-  their request/response header and body inputs. The host owns presentation;
-  hidden visualizers release their workers and data. Manage installation and
-  declarations together in [Extensions settings](extensions.md), without access histories.
-  Present corresponding request/response visualizers together, preserving exact
-  direction-specific declarations and actions behind a compact access summary.
-  Combine matching conditions only when all predicates other than the selected
-  message direction are equivalent.
-  Keep development reload actions in those settings and apply them only to active
-  instances across windows, preserving each last good result on replacement failure.
-  Unpacked authoring inventories source paths without requiring byte lengths or
-  hashes. Calculate exact integrity metadata from bounded source snapshots and
-  retain strict length and hash validation for distributed packages.
-  Optional column cells read bounded header metadata after primary row rendering;
-  their results must not delay unfiltered traffic queries, rebuild ordinary cells
-  or mount installed-extension controls while those settings are closed. Explicit
-  extension column filters match retained headers natively before paging, with
-  bounded work and no body reads or extension scripts.
+- Let users inspect extension inputs and choose which visualizers run.
+  Automatic parsing requires opt-in and applies to the visible message.
+  The host renders the result and releases hidden workers. Keep a working
+  result visible if a development reload fails. Optional columns must leave
+  the ordinary traffic list responsive. See [extension settings, matching and
+  reload](extensions.md).
 
 ## Preserve work across changes
 
@@ -200,51 +187,19 @@ when changing the experience.
   consequential irreversible actions; keep routine selection fluid.
 - Closing a progress view is not cancellation. Keep monitoring ongoing work and
   make its result available without reopening dialogs or moving focus.
-- Debugging keeps controls reachable, reveals the paused statement and loads Local
-  variables without extra selection. Preserve breakpoint and exception choices
-  through reruns, and distinguish hiding the controller, stopping execution and
-  detaching a healthy worker. Compact action icons retain accessible names and
-  readable tooltips for pointer and keyboard use.
-  The dockable workspace stays usable beside Traffic. Moving its surface preserves
-  execution and drafts; closing it continues and detaches. Browsing unloaded
-  sources never activates them. Saved breakpoints retain intent across worker
-  lifetimes, and unresolved statements are cleaned up after verified source changes.
-  Keep debugger discovery beside Scripts and Extensions; reveal the top shortcut
-  after its first open in the current session. F12 toggles it, including from editors.
-  Preserve debugger placement and pane choices through close/reopen. Keep source
-  navigation searchable without activating workers, and let compact docks switch
-  panes instead of squeezing the editor between fixed sidebars.
-  Pane menus mark actual visibility, including the active pane in compact docks,
-  and expose the same state to assistive technology.
-  Keep the call stack visible and scopes independently expandable. Browse properties
-  in scrollable trees, with expandable ranges for large collections. Automatic
-  previews and watches reject side effects; property inspection and completion
-  never run getters or proxy traps. Explicit Console commands may change the worker.
-  Edit runtime values directly at the inspected binding or own writable property;
-  replacement expressions reject side effects. Keep failed edit drafts and explain
-  read-only values. Refresh inspection after explicit commands and edits, preserving
-  expanded paths, reading position and useful focus through stepping. Presentation
-  retains the prior tree until fresh expanded values are ready, reconciling rows by
-  complete property paths. Show new-branch loading where its children will appear.
-  Presentation memory never reuses expired runtime handles. Separate editing a
-  Watch expression, changing a runtime value and opening the current script draft.
-  Use 1024×768 as the practical docked debugger baseline, with resizing and undocking
-  available when the user needs more room for code and variables.
-  Expire values when their execution scope changes, and keep ordinary Console
-  output readable with technical identifiers behind details.
-  Show ordinary Console logs, warnings and errors by default. Let users combine
-  levels and opt into verbose output. Keep prompt logs individually filterable,
-  with commands and results visible. Logged object snapshots preserve bounded
-  data from log time, and contextual copying uses displayed values without
-  executing code. Distinguish severity with icons and accessible labels as well
-  as color.
-  Keep Console's execution destination separate from output filters and callback
-  pause targeting. A live pause preserves an explicitly chosen Scratch destination.
-  Each owning window retains its Scratch heap through debugger dismissal and moves;
-  Reset scratch appears only for Scratch and preserves the transcript, history and
-  draft. Clear output changes presentation rather than runtime state. Any-worker
-  callback targeting stays available before and after attachments; each arm has one
-  callback winner, with cancellation and the remembered target kept distinct.
+- When a worker pauses, reveal the statement, stack and locals. Keep source
+  browsing independent of execution. Watches, previews and property expansion
+  must be safe to inspect. Explicit Console commands may change worker state.
+- Moving a debugger preserves execution, drafts, expanded rows and reading
+  position. Closing it continues and detaches paused workers. Keep expired
+  values identifiable while fresh ones load. Runtime edits belong to the exact
+  paused frame and property the user chose.
+- Keep the Console command destination, output filters and pause target
+  independent. Clearing output preserves variables. Show ordinary logs by
+  default, distinguish warnings and errors accessibly, and let users copy the
+  exact message or field under the pointer. See the [debugger controls](scripting.md#debug-a-script)
+  and [workspace lifetime decision](adr/0012-debugger-workspace-lifetime.md).
+
 - Keep inspection and repair available when a saved configuration becomes invalid.
   Preserve authored choices and explain recovery instead of silently substituting
   a configuration with different trust, privacy or authorization consequences.
@@ -265,28 +220,15 @@ when changing the experience.
   and live activation. Show unavailable evidence with its remembered identity;
   replacing it requires an explicit choice rather than matching a later URL.
 
-- Incremental script authoring starts with an empty draft and a task-named handler
-  menu. Adding a handler includes executable sample code behind a descriptive
-  false-by-default local boolean. Selecting an existing handler reveals its source.
-  Insertion is one undoable source edit, with permissions and activation explicit.
-  Keep save and activation controls direct. Group sandbox runs and live debugging
-  in the Debug menu beside the language and handler menus. Keep script and draft
-  status alongside the actions that change them.
-  Show activity from other automation alongside the workspace tabs.
-- Script authoring defaults to TypeScript while execution uses immutable saved
-  JavaScript. Preserve the applied build through authoring failures and language
-  changes. Retain both language drafts; returning to TypeScript requires an
-  explicit review of generated JavaScript against current JavaScript. Source/build
-  alignment, current type-check results and applied state remain distinct. Show
-  actual runtime availability independently of configured activation. Reveal
-  comparisons in a reachable surface, and preserve recoverable language drafts
-  through later switches. Shared script saves compare with the loaded authoring
-  baseline and require an explicit reviewed choice on conflict. Keep the draft's
-  native traffic scope visible beside its source. Single-callback sandbox results
-  explain bypassed filters; exchange scenarios show native selection, carried state,
-  final fixture messages and per-phase outcomes. Both distinguish simulation from
-  network verification. Bundled API help is available
-  without leaving the editor and is shared with agent help.
+- Start script authoring with an empty TypeScript draft. Inserting a handler
+  is one undoable edit. Sample behavior starts off, and the user chooses scope,
+  permissions and activation explicitly. Keep those choices visible beside
+  the source.
+- Keep the editing draft, compiled JavaScript and applied version distinct.
+  Preserve the applied version across build failures. Review language changes
+  and conflicting saves before replacing work. Sandbox results must identify
+  which filters and callbacks ran and which network behavior still needs testing.
+  Keep the [script reference](scripting.md) available in the editor and agent help.
 
 ## Present evidence and failures honestly
 
@@ -335,32 +277,15 @@ when changing the experience.
   Large structured views may load explicit field ranges on demand. Keep source
   bytes accessible, identify flattened nesting, and report when copying requires
   a smaller range instead of silently omitting unloaded content.
-- Separate reusable Favorites, applied filters and window-local drafts. Keep
-  Favorite persistence independent of filter activation. Closing or switching
-  fields preserves the draft. Apply validates and commits all edited fields
-  together; Discard restores their applied state. Removing a field also clears
-  its pending draft. Keep unapplied state visible outside the picker.
-- Lead filtering with the frequent task: ranges first where available, observed
-  choices easy to reach, and idle Favorite libraries collapsed with a count.
-  Offer value authoring on demand and search for larger libraries without hiding
-  checked terms. Distinguish saved/custom and observed groups, revealing OR/AND
-  controls when relevant; additional requirements always combine with AND.
-- Keep checked choices first on opening and rows stable during editing. Preserve
-  explicit disclosure choices, typed values and useful keyboard focus across
-  asynchronous refreshes. Outlined and filled stars show Favorite state
-  independently of checkbox selection and retain a visible focus ring.
-- Validate complete batches before saving, save successfully before applying, and
-  preserve newer edits when work finishes late. Shared-library changes must not
-  rewrite draft roles or applied predicates. Preview the whole draft across the
-  retained scope, count overlapping matches once, and show a correction prompt
-  instead of a result count while input is incomplete or invalid. See
-  [Traffic filtering](traffic-inspection.md#search-and-select) for the control
-  behavior, matching rules and limits.
-- Count and match filter choices with the same definitions. Host wildcards include
-  the base domain and its descendants at whole DNS label boundaries. Common
-  choices must not hide unfamiliar observed values; expose a counted Other choice
-  when useful and distinguish it from missing evidence. Use canonical names for app-owned
-  values, normalizing external spellings without changing captured evidence.
+- Saving a Favorite makes it reusable across windows. Applying a filter changes
+  only that window’s query. Preserve the draft, typed values and focus while
+  the user switches fields or async results arrive.
+- Keep ranges and observed values easy to reach. Reveal how saved and observed
+  choices combine, keep rows stable during edits, and keep selected choices
+  reachable during search. Apply validates all fields together. Preview the
+  whole draft using the same matching rules as the list and count each request
+  once. See [Traffic filtering](traffic-inspection.md#search-and-select).
+
 - Keep comparison findings focused on changed content. Reordering identical
   headers does not create a change finding; retain original positions in source
   evidence and in findings for actual header changes.
@@ -379,26 +304,11 @@ when changing the experience.
 
 ## Keep product contracts in their topic guides
 
-Human and agent rule edits share saved revisions and conflict checks.
-Every authorized agent may read relevant rule effects; shared edits require an
-explicit permission. Preserve unsaved human drafts during agent refreshes and
-keep active agent access visible with a direct route to its controls.
-
-Agent inspection sessions open quietly and remain independent of the user's
-workspace. Review attaches the existing capture viewer to the same evidence;
-closing the window keeps the session. Keep ending a session explicit, preserve
-unsaved human work when access ends, and distinguish private drafts from shared
-live rules. Passwords for agent-requested capture loads are entered only in the
-app and never imply approval to disclose unredacted values.
-Agent requests for unredacted values appear without stealing focus.
-Default to omission, make temporary consent visibly time-bound with an immediate
-revoke action, and distinguish it from a durable change to the saved setting.
-Agent setup defaults to all main-workspace traffic, with explicit operations and
-one redaction choice. Allow all selects operations without disabling redaction.
-Keep configuration reusable through trusted settings with OS-protected key storage.
-Keep connection activity stable across brief calls. Show temporary sensitive-value
-access as a badge on the connection indicator; authorization and revocation
-feedback must stay immediate even when connection status is smoothed.
+Agent access must stay visible and easy to revoke. Keep temporary consent
+time-limited. Grant operations and disclosure separately. Private reviews
+share the session’s evidence, preserve unsaved human edits and require an
+explicit choice to publish rules. Enter capture passwords in the app.
+See [MCP permissions and session behavior](mcp.md).
 
 Update the owning guide when a deliberate product decision changes a convention.
 Keep exact labels, defaults, limits and activation rules there, with links from
@@ -421,7 +331,7 @@ other guides rather than repeated inventories.
 | Agent permissions, key lifecycle and shared rule collaboration | [Local MCP access](mcp.md) |
 | Preview isolation | [Safe previews](safe-previews.md) and [page preview](captured-page-preview.md) |
 | Save/import behavior and fidelity | [Trace saving](trace-saving.md) |
-| Portable case sharing, encryption and working copies | [Portable investigations](portable-investigations.md#desktop-transfer-and-package-apis-k3) |
+| Portable case sharing, encryption and working copies | [Portable investigations](portable-investigations.md#desktop-transfer-and-package-apis) |
 | Support profiles, incident navigation and evidence review | [Support capture profiles](support-capture-profiles.md) |
 | Installer ownership and release gates | [Windows release](windows-release.md) |
 

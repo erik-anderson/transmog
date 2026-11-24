@@ -5,7 +5,9 @@ extensions belong in the [roadmap](roadmap.md).
 
 ## Transport and routing
 
-- HTTP/3 is proxy-to-origin egress, not transparent browser QUIC interception.
+- Transmog supports HTTP/3 on connections to origin servers. Clients reach the
+  proxy over HTTP/1.1. For intercepted HTTPS, the client and proxy can negotiate
+  HTTP/1.1 or HTTP/2 inside CONNECT.
 - Disabling HTTPS decryption permits opaque CONNECT tunnels with destination and
   byte-count evidence only. With decryption enabled, CONNECT accepts intercepted
   TLS or browser-style H1 WebSocket handshakes bound to the CONNECT target.
@@ -19,11 +21,13 @@ extensions belong in the [roadmap](roadmap.md).
   HTTP/2. Forced routes and automatic routing without a cached alternative
   stream directly.
 - Reverse-proxy listeners, ACME, load balancing, and health checks are not
-  implemented. Provider seams do not imply those product features.
+  implemented.
 
 ## TLS and identity
 
-- Certificate-pinned clients fail; Transmog never bypasses pinning.
+- A client that pins the origin certificate or public key rejects the
+  interception certificate. Use [HTTPS tunnels](network-profiles.md#decryption-and-listener-settings)
+  to relay its encrypted connection.
 - The shared BoringSSL PKI verifier enforces public-certificate policy, CT,
   CRLSet/stapled-OCSP checks and bounded AIA issuer retrieval. Remaining Chrome
   differences include EV, optional online revocation, browser clock recovery,
@@ -84,4 +88,4 @@ extensions belong in the [roadmap](roadmap.md).
 - Saved traces have no fixed file-size or record-count ceiling, but opening them
   requires bounded metadata indexes. Recording can fail on storage errors or an
   oversized metadata record; unlimited capture does not remove these constraints.
-- The proxy binds only to loopback unless a deliberately unsafe option is set.
+- The proxy listens on loopback by default. See [manual and remote client setup](cli-support-capture.md#other-platforms-and-manual-setup) to allow a remote client.

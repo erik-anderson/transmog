@@ -22,9 +22,8 @@ the same capture is imported twice or different captures reuse exchange IDs.
    revisions, lineage, dependency state and authored observations. A rule
    collection uses the same packaging conventions with a smaller manifest.
    Native packages wrap that archive in TMCap for compression, with optional
-   encryption. Native TMCap packages are the only supported transfer form;
-   bare ZIP case/rule import and export have been removed to keep case sharing
-   free of packaging choices. This does not change SAZ traffic compatibility.
+   encryption. One transfer format lets recipients open a case without first
+   choosing how to unpack it. SAZ remains a separate traffic format.
 3. Identify evidence by actual source-artifact bytes, the source key inside that
    artifact, original exchange identity and occurrence. Runtime import IDs,
    display request numbers, filenames and labels are not portable keys.

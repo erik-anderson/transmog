@@ -1,11 +1,14 @@
 # Record a trace for support
 
-Use the signed `transmog-cli.exe` installed beside the desktop, or download it
-separately from the official
-[release assets](https://github.com/erik-anderson/transmog/releases). It runs
-without the desktop, Rust or Cargo.
-Right-click **transmog-cli.exe → Properties → Digital Signatures**,
-open the signature's details and confirm Windows says it is valid. Compare the
+The Windows installer includes `transmog-cli.exe`. For a standalone copy,
+download `transmog-cli.exe` (x64) or `transmog-cli-arm64.exe` (ARM64) from
+the [release assets](https://github.com/erik-anderson/transmog/releases).
+The examples use the installed filename. For the standalone ARM64 download,
+substitute `transmog-cli-arm64.exe` in the PowerShell commands. Open PowerShell
+in the folder containing the executable.
+
+Right-click the executable, choose **Properties → Digital Signatures**, then
+open the signature details and confirm Windows says it is valid. Compare the
 signer with the publisher named in that release's notes. Resolve a missing or
 invalid signature, or a different publisher, with your support contact first.
 
@@ -23,14 +26,15 @@ also downloaded the release checksums, compare SHA-256 using
 `Get-FileHash -Algorithm SHA256 .\transmog-cli.exe`. A matching checksum checks
 the downloaded bytes; the trusted signature identifies the publisher.
 
-Save it in a folder you can write to and open PowerShell in that folder.
-`record --help` explains the available options without starting setup:
+You can check recording options before starting setup.
 
 ```powershell
 .\transmog-cli.exe record --help
 ```
 
-To begin recording, choose a new `.tmcap` destination:
+Choose a new `.tmcap` file in a writable folder. To hide common credential
+header values, add `--redact`. See [recording
+preferences](#recording-preferences) for the retained data and defaults.
 
 ```powershell
 .\transmog-cli.exe record --output .\support-trace.tmcap
@@ -49,33 +53,26 @@ To begin recording, choose a new `.tmcap` destination:
    to terminate unfinished work and save the available evidence instead.
 4. Approve the certificate removal prompt if one appears. Wait for **Trace
    saved**, then open `support-trace.tmcap` through Transmog's **Files → Import traffic…** or
-   **Files → Import into separate viewer…**. Review the capture and share that one
-   chunk-compressed file with your support contact.
+   **Files → Import into separate viewer…**. Review the capture before sharing the file with your support contact.
 
-On first use, the CLI captures complete headers, including cookies and credentials, and
-retains up to 25 MB (25,000,000 bytes) per request body. Response bodies and
-observed byte counts are also recorded; trace files have no fixed size ceiling.
-Large requests continue forwarding when their capture prefix reaches the cap. To redact `Authorization`, `Proxy-Authorization`, `Cookie` and
-`Set-Cookie` values, add `--redact`. This choice persists for subsequent CLI
-captures. Use `--retain-sensitive` to change it back. The console prints the
-active privacy settings before recording. URLs, bodies, and metadata can still
-contain private information, so review the trace before sharing.
+## Recording preferences
 
-To remove the per-request capture cap (trace output has no file-size ceiling):
+By default, `record` retains sensitive headers (including cookies and
+credentials), response bodies, byte counts and up to 25,000,000 bytes of each
+request body. A larger request continues forwarding. The trace file has no
+fixed size ceiling.
 
-```powershell
-.\transmog-cli.exe record --unlimited-request-bodies --output .\large-trace.tmcap
-```
+| Recording preference | Option |
+| --- | --- |
+| Redact Authorization, Proxy-Authorization, Cookie and Set-Cookie header values | `--redact` |
+| Retain those header values | `--retain-sensitive` |
+| Limit retained bytes per request body | `--request-body-limit BYTES` (positive integer, default `25000000`) |
+| Remove the request-body capture limit | `--unlimited-request-bodies` |
 
-This preference persists for subsequent CLI runs. Use
-`--request-body-limit 25000000` to restore the default, or supply another positive
-byte count. The console prints the active limit before recording. Separate bounded
-body-processing limits still apply to tasks such as decoding and searching;
-they do not impose a trace-file size ceiling.
-
-Existing files are never overwritten. Choose another filename for the next
-capture. Use `.tmcap` for normal recording: TMCap compresses each chunk as it
-arrives and lets the desktop read body payloads on demand.
+These four command-line options apply to this and later recordings. The
+console prints the effective privacy and body settings before recording. Use
+a new filename for each trace. URLs, bodies and metadata can contain private
+information even when headers are redacted.
 
 ## Certificates and interrupted runs
 
@@ -206,9 +203,12 @@ Use `--no-install-root` for manual certificate setup; the public root path is
 printed. In a noninteractive console, specify `--install-root` to explicitly
 authorize the OS workflow or `--no-install-root`. OS consent is still required
 where applicable, including with manual routing. `--no-decrypt-https` uses
-HTTPS tunnels without an interception root. A remote listener requires
-`--allow-remote`. On Windows also use `--no-system-proxy`. From the other
-device, use the recording computer's reachable LAN address and listening port.
+HTTPS tunnels without an interception root.
+
+To record from another device, pass both `--allow-remote` and `--listen IP:PORT`.
+Use the recording computer’s LAN IP for `IP`. For Windows recording, also
+pass `--no-system-proxy`. Set the device’s HTTP and HTTPS proxy to that LAN
+address and the port printed when recording starts.
 
 On Linux systems without a supported system trust store, a run with
 `--no-install-root` can clean up its CLI-owned public files without invoking

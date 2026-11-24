@@ -181,7 +181,7 @@
       "id": "evidence",
       "title": "Logs, annotations and failures",
       "paragraphs": [
-        "Use console.log, debug, info, warn, error, or trace to inspect execution. Log individual fields: objects appear as labels rather than expanded values.",
+        "Use console.log, debug, info, warn, error, or trace to inspect execution. While the debugger is attached, expand a logged object to inspect its values at log time. Detached logs show object labels.",
         "Open Developer details in test results or Script findings for logs, exceptions, and call frames. Selecting a frame shows the code that ran, preserving your draft. Authorized MCP exchange reads with include changes can also return retained console output, exceptions and native callback outcomes under the unredacted-access setting.",
         "Annotations add notes to saved traffic and need Add saved traffic annotations. Diagnostics and console output are temporary and are not saved with traffic. Avoid logging credentials or other sensitive content.",
         "onFailed receives event.failure, one of the categories below, without the underlying error message."

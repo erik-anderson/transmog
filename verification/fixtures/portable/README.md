@@ -68,26 +68,7 @@ seed hashes, explicitly review and remove obsolete generated objects before
 `--write`; the generator never deletes files. Refresh these seeds when the
 experimental native format changes; do not add migration readers for this corpus.
 
-Rule interchange tests run `rules-only.json` through the production
-`transmog-portable` parser and Application review/import/export APIs. Tests also project the coded-header
-asset fixture into a rules-only collection and verify exact encoded bytes, raw
-duplicate fields and native matcher/action behavior. Run these with:
-
-```powershell
-python scripts/dev-env.py --run cargo test --locked -p transmog-portable
-python scripts/dev-env.py --run cargo test --locked -p transmog-app --lib rule_interchange
-```
-
-The `working_cases` integration tests run the case manifests through production
-schema/semantic validation and verified object snapshots, including missing assets,
-encrypted sources, optional future experiments, context and historical body objects.
-Application `investigation_tests` open native evidence, re-export selected streams
-and loss, preserve original source context, and verify stable source/entry links.
-They do not run tools or activate rules/scripts. Directory tests qualify history,
-interruption, stale writers, bounded streaming and Windows blocked replacement.
-
-Production `packages` tests exercise internal streamed ZIP64 and hostile
-archives inside native containers, plus bare-archive rejection, native encryption,
-forwarding, exact object/ZIP bytes, independent readers and failure cleanup.
-Native desktop checks use a fresh profile. These
-tests do not qualify the deferred case/rule CLI commands.
+Run the [production reader and application checks](../../../docs/testing.md#portable-investigations)
+after changing the corpus. These cover rule imports with raw duplicate headers
+and exact encoded bodies, case history and interrupted saves, and encrypted
+packages with hostile inner archives.

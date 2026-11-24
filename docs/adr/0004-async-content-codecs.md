@@ -9,10 +9,7 @@ It must fit Tokio body pumps without buffering complete representations, keep
 codec implementation types out of public contracts, and support gzip, deflate,
 Brotli, and zstd behind one Transmog-owned interface.
 
-The dependency choice is deliberately narrower than the planned product
-surface. Enabling a codec is a supply-chain and runtime decision of its own;
-accepting gzip, Brotli, deflate, and zstd does not implicitly accept every backend
-supported by the same crate.
+Each additional codec or backend requires its own dependency and runtime review.
 
 ## Decision
 

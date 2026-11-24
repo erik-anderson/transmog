@@ -1,23 +1,16 @@
 # Inspect and search traffic
 
-Right-click read-only fields and structured evidence to copy names,
-complete values, pairs or subtrees without changing selection. See
-[copying inspection values](copying-inspection-values.md) for formats, context
-menus, Auth masking and limits.
+Select a request in Traffic to inspect its headers, body and response. Live
+requests and imported captures use the same inspector. Wide panes show the
+request and response together. In a narrow pane, use the **Request/Response**
+switch. In the default request order, new requests appear at the bottom.
+Selecting a request or scrolling away pauses automatic scrolling. Choose
+**Follow newest** to resume.
 
-The per-message **Auth** view explains captured authentication formats, nested
-tokens, masking and source coverage alongside Headers and Body. See
-[authentication inspection](auth-inspection.md) for formats, reveal/copy, time
-interpretation, related traffic and limits.
-
-Traffic uses one selected-item inspector for live requests and imported captures.
-By default, new entries appear at the bottom and scroll into view while following. Selecting
-a request or scrolling away pauses following while entries keep loading. Inspect
-request and response together in a wide pane or use the Request/Response pill
-when space is limited. The pill switches in one click. In very narrow inspectors,
-the controls wrap together to keep the full URL accessible. Incomplete,
-unavailable, redacted and evicted evidence are distinct states; display previews
-can be shorter than the retained source.
+Right-click a field to copy its value. The [copy guide](copying-inspection-values.md)
+covers complete values, pairs and subtrees. When a message contains
+authentication data, open **Auth** to inspect its structure, masking and source
+coverage. See [Auth inspection](auth-inspection.md).
 
 **Expand inspector** temporarily fills the Traffic workspace with the selected
 exchange. **Restore** returns to the list and its prior scroll position. Use
@@ -91,23 +84,15 @@ Turning Decode off shows the original retained bytes.
 In Auto, Decode remains available while viewing raw binary bytes, so it can be
 turned back on without changing viewers.
 
-Cancellation appears as **Cancelled** in the Status column, inspector, State
-column, Timeline and copied request summary. Cancellation uses a neutral badge;
-the retained diagnostics explain whether the caller stopped waiting or the
-request was canceled in Transmog.
-An observed HTTP status remains in the inspector and copied summary when
-cancellation followed response headers. Cancellation does not establish whether
-the server processed the request.
-Proxy shutdown remains a separate outcome with a proxy-stop explanation.
-These distinctions also apply when opening a capture that already recorded its
-cancellation category.
+Use **Actions → Cancel request** to stop an active request, download, SSE stream
+or WebSocket. With several requests selected, **Cancel requests** stops the
+active ones. You can still inspect the row, any HTTP status received, headers,
+body bytes and messages captured before cancellation.
 
-**Actions → Cancel request** stops a selected active request, including a long-running
-download, SSE stream or open WebSocket. Traffic multiselection offers **Cancel
-requests** for active entries in the selection. Completed requests and imported
-evidence cannot be canceled. The row and retained headers, body bytes and messages
-stay available for inspection. Cancellation cannot establish whether the server
-already processed the request.
+**Cancelled** appears in the list, Timeline, inspector and copied summary.
+Diagnostics distinguish a caller that stopped waiting from a cancellation in
+Transmog. Either can happen after the server processed the request. A proxy
+shutdown has its own status.
 
 A response supplied by a saved response rule is highlighted as **Auto-responded**
 in the inspector and Request details, with its recorded rule name and revision.
@@ -318,14 +303,14 @@ addresses do not reserve an extra field. See
 
 ## Body viewers and Composer evidence
 
-Installed extensions can add matching choices to **Body viewer** and **Headers
-viewer**. Choose one explicitly to start its isolated parser. Transmog renders its
-structure, selected values, tables, format metadata and byte ranges. Changing
-exchange or message stage restores Auto and raw headers. Hidden visualizers stop
-and release their data; returning offers **Open visualizer** to start a fresh view.
-Manage packages and their declared inputs in **Settings → Extensions**. See
-[extension visualizers](extensions.md#desktop-visualizers) for source provenance
-and current development limitations.
+Installed extensions can add choices to **Body viewer** and **Headers viewer**.
+Select one to inspect its fields and byte ranges. **Auto** can also open a
+matching body visualizer. Each window remembers request and response viewer
+choices independently. If a choice is unavailable for another message, the
+inspector falls back to the request’s Headers or the response’s Body pane.
+The Body viewer can try other matching visualizers in Auto. Returning to a
+matching message restores the preference. Hidden visualizers release their
+workers. See [automatic visualization and remembered views](extensions.md#automatic-visualization-and-remembered-views).
 
 Live traffic updates preserve the selected body viewer, reading position and
 text or byte selection while its captured evidence is unchanged. Growing bodies,

@@ -5,6 +5,7 @@ Active definitions live in [`.github/workflows`](../.github/workflows/):
 | Workflow | Trigger and purpose |
 | --- | --- |
 | [Windows signed release](../.github/workflows/windows-release.yml) | Manual dispatch on `main` (Canary) or `release/<major>.<minor>` (Beta/Stable); qualifies x64 and ARM64 and creates a signed draft. |
+| [Prepare reusable Windows V8](../.github/workflows/prepare-windows-v8.yml) | Prepares the engine on changes to its inputs on main, by manual dispatch, or for a calling workflow. |
 | [Windows unsigned installer](../.github/workflows/windows-installer.yml) | Manual development packaging on x64; no release publication or signing access. |
 | [Windows hosted WebView startup probe](../.github/workflows/windows-desktop-probe.yml) | Manual runner diagnostics using a verified unsigned baseline. |
 | [Maintain release and Canary versions](../.github/workflows/advance-release-version.yml) | Branch creation and release events; maintains version tracks and update feeds. |
@@ -34,17 +35,25 @@ subprocess output consistent with the tooling's UTF-8 decoder.
 | Job | GitHub permissions | Azure access |
 | --- | --- | --- |
 | Policy, build and tests | `contents: read` | None |
+| Reusable V8 preparation and native verification | `contents: read`, `actions: read` | None |
 | Protected signing | `contents: read`, `id-token: write` | Sign only the selected production profile |
 | Installer smoke test | `contents: read` | None |
 | Negative identity test | `contents: read`, `id-token: write` | Authentication must be rejected |
 | Provenance attestation | `contents: read`, `id-token: write`, `attestations: write` | None |
 | Draft publication | `contents: write` | None |
 
-Only dependency downloads are cached, keyed by architecture and tool versions.
-Native/V8 archives are hash-verified after restoration. Compiled targets, unsigned
-payloads and signed outputs are never restored from caches. Same-run immutable
-artifact IDs carry hashes, commit, run ID, version and architecture between jobs.
-The signer verifies these before bundling; it neither recompiles the application
+CI caches dependency downloads, native tools and prepared V8 builds. It verifies
+the restored native and V8 archives by hash. Application binaries and signed
+outputs pass between jobs as artifacts. Immutable artifact IDs bind each
+transfer to its hashes, commit, run ID, version and architecture.
+Hosted builds install the [pinned MSVC toolset](../scripts/setup-windows-msvc.ps1)
+for both architectures and use the Windows SDK on the runner. Reusing a
+prepared V8 build requires matching engine inputs, target ABI and toolchain. The workflow checks cross-built ARM64 archives on a native consumer
+or verifies a matching prior native check. Disabling the cache forces fresh
+preparation and verification. See the [preparation workflow](../.github/workflows/prepare-windows-v8.yml)
+for matching rules, deadlines and failure reports.
+
+The signer verifies the release artifacts before bundling; it neither recompiles the application
 nor runs npm installation scripts with Azure credentials. See
 [release symbols](../docs/windows-release.md#crash-investigation-symbols) for PDB
 validation and the public symbols archives.
@@ -142,51 +151,32 @@ decision. See [the checklist](../docs/windows-release.md#clean-machine-release-c
 
 ## Unsigned development installers
 
-The **Windows unsigned installer** workflow is enabled under
-`.github/workflows/windows-installer.yml`. It runs only when a maintainer
-manually dispatches it, uses the standard `windows-2025` x64 runner, and grants
-only `contents: read`. It skips private repositories to preserve the public
-repository's free runner usage. It has no Azure access or signing credentials,
-does not publish a GitHub Release, and retains its artifacts for seven days.
+Run the [Windows unsigned installer workflow](../.github/workflows/windows-installer.yml)
+manually to build an x64 development installer in the public repository. It
+retains the installer, `SHA256SUMS` and build measurements for seven days.
 
 ## Run an unsigned build
 
-Open GitHub **Actions > Windows
-unsigned installer > Run workflow** and select the revision to build. Leave
-**Reuse dependency downloads** disabled for the first cold build.
+In **Actions → Windows unsigned installer → Run workflow**, select the revision.
+Leave **Reuse dependency downloads** off for a cold build. The V8 preparation
+job has read access to repository contents and Actions. The packaging job has
+read access to contents and verifies the engine artifact from that run before
+building on `windows-2025`.
 
-The workflow selects Node and uses the Rust version from `rust-toolchain.toml`.
-[`setup-windows-ci.ps1`](../scripts/setup-windows-ci.ps1) owns LLVM, CMake, Ninja
-and NASM download pins and verifies SHA-256 before extraction. Visual Studio C++
-tools and the Windows SDK come from the runner image. The checked-in workflow,
-dependency lockfiles and separately hash-pinned V8 archive own exact versions.
-
-`scripts/ci-windows-installer.ps1` installs UI dependencies with `npm ci` and
-calls the existing unsigned development packaging gate. That gate checks the
-UI, runs locked application/host/desktop tests, builds the release binaries,
-and packages NSIS. The CI wrapper requires an unsigned result and uploads the
-installer plus its `SHA256SUMS` file as a development artifact.
-
-The job summary and **windows-build-measurements** artifact record phase times,
-tool versions, free disk before and after the build, Cargo target size, commit,
-installer size/hash, and failure information. Build duration excludes checkout
-and Node setup; GitHub shows the complete job duration separately. Disk
-measurements are snapshots, not peak usage. A failed build still uploads any
-measurements produced before termination. The job timeout is 120 minutes and
-concurrency is limited to one packaging run.
+The [CI packaging script](../scripts/ci-windows-installer.ps1) installs the
+locked root and UI dependencies, runs the packaging checks and verifies the
+installer is unsigned. **windows-build-measurements** records phase times,
+tool versions, disk usage, installer size and hash, and any reported failure.
+Its duration starts with the packaging script, after V8 preparation and runner
+setup.
 
 ## Compare a cached build
 
-Once the cold build succeeds, rerun with **Reuse dependency downloads** enabled.
-The first enabled run populates the caches; a later enabled run can measure
-reuse. Caches contain npm, Cargo source downloads, native tool archives, and the
-V8 archive. They do not contain compiled Cargo targets. Every native/V8 archive
-is hash-checked after restoration. Keep GitHub's cache limit at its included
-allowance; increasing it is not required for this workflow.
-
-The signed workflow has its own architecture-specific dependency-download caches
-and independently verifies restored native/V8 archives; neither workflow reuses
-compiled targets for releases.
+Enable **Reuse dependency downloads** and compare builds of the same revision.
+A run can reuse matching native-tool downloads, Cargo downloads and prepared V8
+from an earlier workflow. Check the job summaries for cache hits before
+comparing times. The [shared Windows setup](../.github/actions/windows-release-setup/action.yml)
+defines the download caches and disables npm caching.
 
 ## Additional hosted coverage
 

@@ -41,11 +41,9 @@ Observers receive immutable events beside the HTTP path through finite queues;
 they cannot mutate traffic. Each registration selects body interest and sensitive
 header access, with redaction as the library default.
 
-`transmog-session` sits above this complete path. It turns observer evidence
-into a live catalog with configurable retention, owns one runtime task and dynamic
-capture worker, adapts experimental control decisions into an identified hook, and exposes
-injected replay and transactional host-integration seams. The layer is
-UI-independent and no lower crate depends on it.
+`transmog-session` collects observed traffic in a live catalog, manages the proxy
+and recording, and connects the engine to replay, interactive decisions and
+host proxy settings. It has no UI dependency.
 
 ## Layer map
 
@@ -86,12 +84,11 @@ before reaching application operations. This endpoint is separate from captured
 proxy traffic and the internal control transport. See the
 [MCP connector reference](mcp-reference.md) for disclosure and lifecycle boundaries.
 
-Private MCP inspection sessions own imported sources, evidence memberships and
-disabled rule drafts. Live memberships refer to the main engine's canonical
-exchanges and body sources; subscribers never duplicate network execution or
-hooks. Capture viewers attach to these existing backends with independent window
-state. Key ownership, expiry and shared resource budgets remain in `transmog-mcp`;
-live rules, scripts, breakpoints and collection controls stay global.
+A private MCP session can open saved captures, subscribe to shared traffic, or
+start a loopback listener for one app. A subscription observes requests already
+running through the main proxy. A private listener has its own proxy and traffic.
+Review windows attach to the session’s existing evidence. Keys, permissions,
+expiry and resource limits are described in the [MCP reference](mcp-reference.md).
 
 ## Interception lifecycle
 

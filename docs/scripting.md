@@ -124,7 +124,7 @@ respondText and respondJson return a local response. respondAsset("id@revision")
 
 ## Logs, annotations and failures
 
-Use console.log, debug, info, warn, error, or trace to inspect execution. Log individual fields: objects appear as labels rather than expanded values.
+Use console.log, debug, info, warn, error, or trace to inspect execution. While the debugger is attached, expand a logged object to inspect its values at log time. Detached logs show object labels.
 
 Open Developer details in test results or Script findings for logs, exceptions, and call frames. Selecting a frame shows the code that ran, preserving your draft. Authorized MCP exchange reads with include changes can also return retained console output, exceptions and native callback outcomes under the unredacted-access setting.
 

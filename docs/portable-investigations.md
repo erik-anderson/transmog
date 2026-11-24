@@ -5,22 +5,15 @@ optional package encryption. They support disabled rule import, frozen response
 previews and saved request/capture comparisons. Library APIs also provide
 rule interchange and plaintext working cases with revision history.
 
-The CLI currently supports [native capture context extraction](cli.md#read-recorded-context).
-Case/rule commands, offline script execution and persisted browser-run evidence
-remain planned. Revision 0 stays experimental.
-[ADR 0009](adr/0009-portable-investigation-boundaries.md) records the architecture;
-[the roadmap](roadmap.md) tracks remaining implementation.
+For the CLI commands that read saved capture context, see the [CLI guide](cli.md#read-recorded-context).
+The [roadmap](roadmap.md#capture-and-inspection-fidelity) lists planned case and rule commands.
 
 ## Support policy
 
-Revision 0 is experimental and may change without migration. A consumer supports
-only the current documented revision-0 layout and declared capabilities; it
-rejects other schema versions rather than guessing a downgrade. Refresh design
-fixtures when the contract changes. No TMCap migration or earlier-layout adapter
-is part of this work. A supported public v1 and its support window require a
-separate recorded decision before release; additional consumers do not establish
-such a promise. Private persistence, script API and live control retain
-their own policies; control revision 0 remains outside this decision.
+Revision 0 is experimental and may change without migration. Readers reject
+unsupported schema versions and required features. A stable v1 requires a
+separate compatibility decision. The [architecture decision](adr/0009-portable-investigation-boundaries.md)
+explains why cases have their own format and support policy.
 
 ## Implementation boundaries
 
@@ -43,41 +36,25 @@ object bytes. Paths are derived from digests, never supplied filesystem locators
 There are no absolute paths, URLs to fetch, links, scripts to run or environment
 variable substitutions in dependency resolution.
 
-Transfers use `.tmcase.tmcap` for cases and `.tmrules.tmcap` for rule collections.
-Each contains a ZIP/ZIP64 payload inside TMCap. Writers use Stored members so
-ZIP entries remain seekable and TMCap owns package compression. Native captures
-and many encoded response assets already compress internally. Readers reject other ZIP compression,
-member encryption, directories, duplicate names, unsafe names, reparse points,
-symlinks, inconsistent local/central headers, overlapping entries and trailing
-archive data. Standard streaming data descriptors and ZIP64 size fields are
-allowed: their local placeholders must agree with the descriptor and central
-directory under ZIP's rules, rather than being rejected as mismatches. Only
-`manifest.json` and declared object members are allowed.
-This profile accepts only ZIP64 extra fields; Unicode path aliases and other
-unmodeled ZIP extras are rejected rather than interpreted differently by another
-reader. Stored ZIPs emitted here remain readable by standard ZIP tools.
-New ZIP members use the export time in UTC, rounded to ZIP's two-second DOS
-timestamp precision. This is packaging time, not a claim about when original
-evidence was modified. Forwarding an existing package preserves its timestamps.
-Nested archive-looking asset bytes are ordinary response content, never extracted.
+Case transfers use `.tmcase.tmcap` and rule collections use `.tmrules.tmcap`.
+Both contain a ZIP archive inside a sealed TMCap document of kind
+`portable-archive`. ZIP members use the Stored method so readers can seek to a
+member. TMCap compresses the archive and optionally encrypts it. Unwrapping
+recovers the exact ZIP bytes. Bare ZIP files cannot be opened as transfers.
 
-Transfers store the exact ZIP byte stream as one logical artifact in a compressed
-TMCap container, with optional password encryption. Compression does not require
-encryption. The inner ZIP is unchanged by wrapping/unwrapping and remains usable by standard archive
-tools after explicit unwrap/decryption. The portable manifest does not depend on
-the compression/encryption mode. Do not add ZIP member encryption or a second
-encryption format. Bare ZIP case and rule packages are unsupported, including
-archives renamed with a native extension. The internal ZIP profile remains part
-of native package validation. SAZ traffic import/export is a separate format and
-retains its own ZIP compression and encryption support.
+The archive contains only `manifest.json` and declared objects at their digest
+paths. Readers reject directories, links, duplicate or unsafe names, overlapping
+entries, trailing data, member compression and member encryption. ZIP64 is the
+only supported extra field. Streaming data descriptors and ZIP64 placeholders
+must agree with the local and central directory records. Archive-looking bytes
+inside an object remain ordinary content.
 
-The `portable-archive` document kind separates packages from capture records.
-Its descriptor carries the case/rules media type, exact ZIP length and SHA-256,
-plus a bounded chunk index. The wrapper provides streaming writes and seekable,
-integrity-checked reads without a persisted decrypted archive. A valid transfer
-requires both a sealed wrapper and a complete, validated inner ZIP; capture
-checkpoint recovery cannot reconstruct a missing ZIP directory. See the
-[wire specification](tmcap-format.md#portable-archive-payload).
+New ZIP members carry the export time in UTC, rounded to ZIP’s two-second
+timestamp precision. Forwarding a package preserves its member timestamps.
+The outer descriptor records the media type, exact ZIP length, SHA-256 and
+chunk index. Opening a transfer verifies the sealed wrapper, the complete ZIP
+directory and every declared object. Later reads can seek to individual objects
+without writing a decrypted archive to disk. See the [wire format](tmcap-format.md#portable-archive-payload).
 
 Optional [TMCap encryption](tmcap-format.md#encryption-and-integrity) protects the
 manifest, member names, descriptor and objects. File/document type, encryption
@@ -132,18 +109,20 @@ fields are never translated into rules or treated as supported configuration.
 | Field | Revision-0 meaning |
 | --- | --- |
 | `format` | `transmog-investigation`; `schemaVersion` is numeric `0`. |
-| `kind` | `case` or `rules`. Rules packages omit evidence, notes, context and runs, not rule dependencies. |
+| `kind` | `case` or `rules`. Only cases accept `sources`, `notes`, `contexts`, `markers`, `runs` and `comparisons`. Both kinds carry rule dependencies. |
 | `id`, `revision` | Explicit portable identity and immutable revision; revision is a canonical positive decimal string. |
 | `title`, `createdAt`, `producer` | Authored title, UTC RFC3339 creation time and producer name/version. Descriptive data is not captured evidence. |
 | `requiredFeatures` | Package-wide required semantic identifiers. Unknown requirements prevent opening/import before mutation. |
-| `objects` | Unique SHA-256, decimal byte length and role (`capture`, `response-body`, `script-source`, `context`). All present members must match length/hash. |
+| `objects` | Each entry requires `sha256`, `bytes` (decimal string), `mediaType` and `role`. Rule collections accept only `response-body`. Cases also accept `capture`, `script-source` and `context`. Stored bytes must match the declared length and hash. |
 | `sources` | Capture object references, internal source keys, original/derived lineage and explicit loss/privacy context. |
 | `assets` | Exact asset ID/revision, status, ordered headers, encoded entity object and provenance/availability. |
 | `rules` | Optional ordered ordinary rules, separate from named response set ownership. Defaults to an empty array. |
 | `experiments` | Named variants and ordered immutable rule revisions with selected saved definitions and enabled/paused intent. |
 | `notes` | Authored text/reproduction steps and optional stable evidence references. |
 | `contexts` | Optional case-only inventory of immutable capture-time and separately collected diagnostic objects, with original source association, collection origin, completeness and explicit failures/omissions. |
-| `runs` | Frozen response set selection, actual retained response references/hashes, engine/script choice and authored outcomes with provenance. |
+| `markers` | Optional source-linked incident markers, with the original marker ID and elapsed time when available. |
+| `runs` | Response set, variant and revision, retained response references and authored outcome. |
+| `comparisons` | Optional saved request or capture comparisons, including evidence references, settings, pairing corrections and recorded summary. |
 | `extensions` | Optional namespaced descriptive JSON; bounded and preserved without executing or using it for matching. |
 
 Portable IDs use `[a-z0-9][a-z0-9._-]{0,127}` and are scoped to their owning graph.
@@ -190,11 +169,9 @@ the original rule ID as provenance while allocating/remapping local import IDs.
 | `header-edit` | Request or response head at its native position; `effective-request-head` or `effective-response-head`; ordered set/override-if-present/append/remove operations. |
 | `literal-response` | `final-effective-response-heads`, fresh-origin response body; UTF-8 literal Find/Replacement, First/All, optional required total count, exact media type and decoded input/output bound. |
 
-This distinction is essential: a captured original request cannot establish
-effective-head predicates after earlier native/script edits. `rules test` must
-report **unknown** when it lacks that boundary, and must not execute other hooks
-to manufacture an answer. It evaluates matches/precedence, not response bodies
-or proof of browser behavior. Unavailable is different from no match.
+A captured client request can establish what the client sent. To evaluate a
+condition on headers after a script or rule changed them, the reader also needs
+the headers at that point. With those headers missing, the result is unknown.
 
 The portable matcher names the method (`null` means Any), address kind and scope,
 query mode, and ordered request/response header predicates. Exact URLs normalize
@@ -204,8 +181,7 @@ required decoded pairs (including duplicates), or ignore. Regex declares URL/pat
 scope, whole/submatch and case choice, using the current bounded Rust matcher.
 Status/status-class predicates apply only to response phases. Examples contain
 explicit sample request fields and expected match decisions; they never influence
-matching. K1 translates explicit portable DTOs through the existing validators,
-without expanding which rule kinds the product supports.
+matching. The rule reader checks these fields with the native validators.
 
 Header names are ASCII tokens with original casing preserved. Header values use
 canonical padded RFC4648 Base64, including empty bytes. Arrays preserve duplicate
@@ -216,8 +192,7 @@ Do not silently omit redacted predicate values: mark that rule unavailable.
 Assets contain final status, ordered fields and exact **encoded entity** bytes,
 with their coding stack reflected in headers. SHA-256 identifies stored encoded
 bytes. Decoded hashes/text comparisons, if recorded, have their own representation
-labels. K1 repairs framing through existing response-asset services,
-not by treating a bounded editor preview as complete content.
+labels. The response-asset service recalculates framing from the complete asset.
 
 Dependencies carry `state`: `present`, `missing`, `not-exported`, `unsupported` or
 `locked`, and a reason when unavailable. Evidence completeness separately records
@@ -233,20 +208,18 @@ or claim an export-time copy was served earlier. A historical run needs retained
 boundary bytes matching its actual digest. Freeze failure aborts the selected
 response set export; inspection-only export must explicitly report omissions.
 
-Scripts reference inert UTF-8 source objects, declared API revision, handlers,
-capabilities, limits and asset references. Imported scripts stay disabled drafts.
-Validation does not execute; explicit sandbox tests/activation use current backend
-validation and host startup. K5 must qualify helper discovery/versioning and ship
-declarations before advertising standalone script test commands.
+Cases can retain UTF-8 script source as data. Opening a case never runs it.
+The rule importer handles saved responses, header edits and literal response edits.
 
-## Implemented rule interchange APIs (K1)
+## Rule interchange APIs
 
-[`transmog-portable`](../crates/portable/src/lib.rs) owns independent public
-[DTOs](../crates/portable/src/model.rs), strict JSON parsing, native semantic
-validation and verified object snapshots. It currently accepts only `kind="rules"`.
-Case/evidence/script semantics and unavailable dependencies cannot be imported by
-this reader. Unsupported versions, required features, action kinds and action
-phases fail explicitly; unknown fields and duplicate keys are invalid.
+The [portable crate](../crates/portable/src/lib.rs) validates the [rule wire
+types](../crates/portable/src/model.rs), parses JSON and verifies object snapshots.
+Its rule-collection reader accepts `kind="rules"`.
+
+Import requires the rule’s complete dependencies. The reader rejects
+unsupported versions, features, action kinds and phases, unknown fields and
+duplicate keys. Case evidence uses the separate working-case reader.
 
 `Collection::parse` validates metadata and the declared dependency graph without
 opening objects. `Collection::encode` applies the same validation and an 8 MiB
@@ -318,9 +291,7 @@ successful import. Unreferenced immutable body blobs may remain after a failed
 commit; they are not visible assets or a partially imported collection.
 
 Application errors distinguish `Unsupported`, `Canceled`, `InvalidInput`,
-`Conflict` and unavailable I/O. K1 does not change desktop commands, window roles,
-activation controls, file dialogs or CLI output. It adds no TMCap compatibility
-or migration code.
+`Conflict` and unavailable I/O.
 
 ### Current wire fields and limits
 
@@ -342,7 +313,7 @@ are separate from private Rust rule serialization:
 | Response set | `id`, `kind:"response-variants"`, `requiredFeatures`, `label`, `pausedIntent`, optional `archivedIntent` (false), optional `activeIntent:{variantId,revision}`, `variants`. Active intent must reference an included revision. |
 | Variant/revision | Variant `id`, `label`, optional `archivedIntent` (false), ordered `revisions:[{revision,rules}]`. An empty `baseline` variant is mandatory. |
 
-K1 recognizes `response-assets/1`, `header-edits/1` and `literal-response/1`.
+The rule reader recognizes `response-assets/1`, `header-edits/1` and `literal-response/1`.
 Namespaced extension keys use the portable ID alphabet, contain a dot and are at
 most 128 bytes. All nested JSON shares depth 32 and the 8 MiB manifest bound.
 Assets/objects are bounded to 16,384 each, bodies to 1 GiB, headers to 256 fields
@@ -354,9 +325,9 @@ The private application workspace still has its 4 MiB persistence limit and
 allows at most 64 retained imported collections. Combined native workspace
 limits also apply. A valid larger transfer can therefore fail import atomically
 without altering existing content; transfer validity is not a promise of available
-workspace capacity. Later archive/working-copy APIs have their own qualification.
+workspace capacity.
 
-## Implemented working-case APIs (K2)
+## Working-case APIs
 
 [`CaseManifest`](../crates/portable/src/case_model.rs) defines case-only source,
 note, marker, context, lineage and run DTOs. `parse` / `encode` apply strict JSON,
@@ -371,7 +342,7 @@ means supported rules and complete declared asset dependencies; it does not mean
 a browser run has occurred. Unsupported optional response sets remain opaque JSON
 and inspectable as unavailable. Unknown required package features fail early.
 `rules_for_import(ids, ordinary)` selects only supported, complete dependencies
-for K1's separate reviewed disabled import. Opening or saving a case does not
+for review and import as disabled rules. Opening or saving a case does not
 copy automation into the workbench or activate anything.
 
 `PreparedCase::prepare` snapshots declared objects from an explicit inert local
@@ -409,7 +380,7 @@ The [Application case APIs](../crates/app/src/investigations.rs) are:
 | `prepare_investigation(request, staging, canceled)` | Frozen selected rules/assets and an optional reviewed native evidence selection, source-linked authored notes, original context objects and incident-marker inventory. |
 | `open_investigation_evidence(case, source_id, password, canceled)` | Existing inert Traffic/source inspection with stable-reference-to-runtime navigation links. It shares native importer limits and atomic publication. |
 
-`CaseExportRequest.rules` supplies exact saved selections through K1;
+`CaseExportRequest.rules` identifies the saved rules to export and
 `evidence_review_id` is an existing frozen Traffic export review. Omitted evidence
 includes no Traffic. Selected workspace evidence requires explicit
 `derived_plaintext=true`: it creates a new plaintext derived native artifact,
@@ -449,14 +420,12 @@ they never infer a past run's bytes from today's linked file. Existing per-run
 snapshot evidence stays in selected native captures, and the working model can
 retain explicitly supplied historical body objects independently of current assets.
 
-Desktop transfer uses the K3 package APIs below; these working-directory APIs
-do not launch browsers or add CLI commands. Hosts use their existing read-only
-viewer role and permission checks when opening evidence; this does not grant a
-viewer global automation rights.
+Hosts check the viewer’s permissions before opening evidence. A read-only
+viewer can inspect case content without gaining permission to change live rules.
 Synchronous prepare/save APIs should run on a worker in a GUI host. Case evidence
 opening is asynchronous and cancels pending publication if its future is dropped.
 
-## Desktop transfer and package APIs (K3)
+## Desktop transfer and package APIs
 
 Traffic's **Files** menu leads with normal import/save actions. Its secondary
 **Cases** group offers **Save case…**, **Open case…**, and **Current case…**
@@ -579,25 +548,21 @@ copying or inspecting never imports automation automatically or executes scripts
 | `open(path, source_password, canceled)` | Pinned, fully verified read-only source; bounded ZIP directory and strict manifest validation. |
 | `open_object(digest)` | Independent seekable cursor over declared bytes; no source-machine path resolution. |
 | `write_transfer(...)` | Stream the exact inner ZIP into native output, optionally changing its password; verify before publication. |
-| `save_working_copy(...)` | Explicit create-new plaintext directory using K2 transactional persistence. |
+| `save_working_copy(...)` | Create a new plaintext directory using the working-case save procedure. |
 | `write_case_package` / `write_rules_package` | Stream a frozen dependency closure into Stored ZIP64 inside native TMCap; exclude working history/recovery. |
 | `Application::open_package_evidence` | Existing bounded native importer and body sources, with package/source handles pinned for lazy reads. |
 
-The ZIP preflight rejects unsafe/unlisted/duplicate names, links/directories,
-unsupported compression/encryption, inconsistent ZIP32/ZIP64 and local/central
-metadata, overlaps, incomplete descriptors and trailing data. Directory limits
-are checked before indexing; no payload-sized allocation is made. Standard
-streamed ZIP64 placeholders/descriptors are supported, including an unsigned
-descriptor whose CRC equals the optional signature. Transfer content is read in
-128 KiB chunks; the outer protected chunk index has a separate 16 MiB limit.
-Failure-injection, blocked replacement, large virtual ZIP64, independent ZIP-reader
-and encrypted native desktop tests are described in [testing](testing.md).
+The package reader checks directory limits before building the index. It
+accepts streamed ZIP64 descriptors, including an unsigned descriptor whose CRC
+equals the optional signature. It reads transfer data in 128 KiB chunks and
+limits the outer chunk index to 16 MiB. See [package and working-copy
+decisions](#package-and-working-copy-decisions) for archive validation and
+[portable investigation checks](testing.md#portable-investigations) for test coverage.
 
 ## Configuration and diagnostic context
 
-Use the same ZIP object store for saved configuration output and diagnostic
-snapshots, including capture-time context in the new format. A context attachment
-carries an ID, kind (`network-configuration` initially), collection time,
+Cases store configuration output and diagnostic snapshots as objects in the
+archive. Each context attachment records an ID, kind, collection time,
 collector name/version, platform, purpose, optional
 machine label, dependency state and completeness (`complete`, `partial` or
 `unknown`) with issues. Its `content` references exact bytes by object digest;
@@ -607,12 +572,11 @@ Unknown optional context kinds remain inspectable as unavailable metadata within
 the same bounds; they never acquire execution semantics. Package-wide required
 features still fail early when unsupported.
 
-K2's working-case reader stores these exact JSON/text bytes in context objects.
 Newly exported workspace sources use `kind="capture-metadata"` with a bounded
 JSON object containing original `context`, `notes` and `format`. That includes
 original network-configuration output, incident metadata and source notes. The
 embedded derived native capture has empty context/path fields; configuration is
-not duplicated there. Existing standalone native Save trace remains unchanged.
+stored only in the context object.
 Opening a case never invokes a recorded command or collects replacement context
 from the receiving computer.
 
@@ -648,10 +612,7 @@ output is included in privacy review and whole-package encryption along with
 notes and traffic. Privacy omission removes the selected context object/reference;
 if deliberately embedded opaque evidence still contains the same information,
 it needs an explicitly derived capture with new identity/lineage or a warning
-that the information remains. This is a content/privacy rule, not a requirement
-to support historical TMCap layouts.
-Collectors remain opt-in and unchanged. K2 supplies the context inventory and
-source associations; K3 packages and protects that same object model.
+that the information remains. Collection is opt-in.
 
 ## Desktop previews and saved comparisons
 
@@ -717,7 +678,7 @@ bytes stay in the existing shared objects; summaries never contain copied bodies
 
 ## Limits, persistence and import
 
-| Resource | Initial processing bound |
+| Resource | Revision-0 limit |
 | --- | --- |
 | UTF-8 manifest, including descriptive extensions | 8 MiB; maximum nesting depth 32. |
 | Objects / ZIP file members | 16,384 objects plus one manifest; central directory at most 16 MiB, checked before ZIP index allocation. |
@@ -735,14 +696,14 @@ names, then stream and hash all selected objects into owned staging before
 publishing. Reject digest/length mismatch, missing mandatory structure, unsupported
 requirements, excessive metadata and duplicate JSON keys. Optional omissions are
 explicit; unexpected/unlisted members are errors. Readers never extract names
-directly against a destination. Create-new CLI output is the default; desktop
-replacement uses the established native confirmation and atomic publication.
+directly into a destination. The desktop asks before replacing an existing
+file and publishes the replacement only after the write succeeds.
 Failure/cancellation preserves originals and removes only owned staging.
 
 An import review distinguishes new, identical, conflicting, unsupported, locked
 and missing content. Differing content gets new local identities by default;
 remap every dependent reference in one transaction. Never replace by label or
-portable ID alone. Import disables rules and scripts, preserves authored intent
+portable ID alone. Import disables rules, preserves authored intent
 as metadata, and leaves existing global gates, active revisions and drafts alone.
 Read-only viewers may inspect cases but cannot gain global automation privileges.
 
@@ -754,14 +715,6 @@ URLs, source labels, bodies, streams, script sources, assets and configuration
 snapshots with their source associations. Exclude private
 keys, passwords, supervisor tokens, root ledgers and product-state credentials.
 Package encryption does not erase plaintext working copies, previews or dumps.
-
-## Intended CLI interface
-
-The implemented [`context` command](cli.md#read-recorded-context) lists or extracts
-saved native-capture context. It does not author packages, unpack cases or test
-rules. See the [roadmap](roadmap.md#capture-and-inspection-fidelity) for deferred
-case/rule/script CLI work; proposed command names and result schemas are not
-shipped interfaces.
 
 ## Verification
 

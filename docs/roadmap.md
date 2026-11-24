@@ -1,11 +1,6 @@
 # Roadmap
 
-This roadmap lists remaining work. Current behavior is documented in the
-[topic guides](README.md).
-
-Priorities are intentionally not tied to dates. A feature moves out of this
-file when its durable contract is documented and its implementation and tests
-are checked in.
+The [topic guides](README.md) describe current behavior. This page lists unfinished work.
 
 ## Desktop and traffic workspace
 
@@ -16,19 +11,15 @@ are checked in.
 - Add request-body auto-response conditions only with explicit retention,
   privacy, resource, and replay semantics.
 - Extend headless tooling for persisted automation and script-workspace
-  management. Guided support recording, circular capture, native streaming
-  output and password-protected export already exist in the CLI.
+  management.
 
 ## Capture and inspection fidelity
 
 - Add case inspection/validation/unpacking, rule validation and recorded-evidence
   matching to the standalone CLI. Define structured results, exit codes and
-  separate package/source password roles before exposing these commands; do not
-  treat proposed grammar as an existing interface. CLI case packing is out of scope.
+  separate package and source password roles. CLI case packing is out of scope.
 - Qualify offline script tooling, persisted browser-run evidence and CLI
-  comparison separately. Desktop case previews and saved request/capture
-  comparisons already exist under the experimental revision-0
-  [portable investigation contract](portable-investigations.md).
+  comparison separately. See the [case format](portable-investigations.md).
 - Expand safe previews or semantic viewers only after a format-specific parser,
   sandbox, CSP, resource-limit, and hostile-corpus review.
 
@@ -36,8 +27,8 @@ are checked in.
 
 - Extend platform qualification beyond the Linux container gate to native Linux
   and macOS host integration, networking and process sandboxes.
-- Decide whether a Linux or macOS desktop shell has a supportable system WebView
-  and process-sandbox story before enabling those products.
+- Verify system WebView support and worker process isolation before shipping
+  a Linux or macOS desktop.
 - Add macOS caller-process attribution only if it can use a supported and
   testable operating-system contract; the available `libproc` socket APIs are
   currently private and subject to change.
@@ -50,8 +41,7 @@ are checked in.
 - Application-owned upstream byte streams for upgraded connections.
 - Native downstream HTTP/3, CONNECT-UDP, MASQUE, and WebTransport.
 - Reverse-proxy listener products, including certificate provisioning, load
-  balancing, and health checks. Existing provider seams do not imply these
-  features.
+  balancing, and health checks.
 - QUIC 0-RTT and connection migration only after replay and identity policy is
   explicit.
 
@@ -102,10 +92,6 @@ semantics and bounded queues. Review that product scope before implementation.
 HTTP/3 extended CONNECT and WebTransport likewise need working end-to-end behavior
 before their capabilities can be advertised.
 
-For each change, run the affected interoperability tests and local comparison.
-Keep qualification reports and review transcripts in generated evidence, not in
-the roadmap.
-
 ## Post-quantum trust
 
 - Evaluate PQ interception issuers and Merkle Tree Certificate support as
@@ -116,16 +102,14 @@ the roadmap.
 
 ## Control protocol stabilization
 
-Control revision 0 is a same-build, breakable internal contract. It may remain
-that way indefinitely. Stabilization begins only when a human maintainer
-explicitly records that it now makes sense; elapsed time, repository splits,
-consumer count, or test coverage do not trigger it.
+A human maintainer must explicitly decide to stabilize the control protocol.
+[ADR 0003](adr/0003-monorepo-layers-and-control-stability.md) records this policy.
 
-Once triggered, stop protocol feature work long enough to inventory producers,
-consumers, persisted references, and deployment topologies; define compatibility
-and support windows; specify canonical serialization and unknown-field behavior;
-add conformance and cross-version fixtures; and record the v1 decision in an
-ADR before promising compatibility.
+After that decision, pause protocol feature work. Identify the programs that
+produce or consume messages, the stored references and how programs are
+deployed together. Define the supported versions, serialization rules and
+handling of unknown fields. Add cross-version tests and record the v1 policy
+in an ADR before promising compatibility.
 
 ## Repository boundaries
 

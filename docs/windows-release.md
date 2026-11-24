@@ -5,24 +5,20 @@ current-user NSIS installer that uses the Evergreen WebView2 runtime already
 present on the supported Windows host. The app does not bundle a browser or
 WebView runtime, require administrator installation, or fetch runtime UI assets.
 
-Each release also builds, signs, timestamps and publishes `transmog-cli.exe` as
-a separate x64 asset and `transmog-cli-arm64.exe` for Windows ARM64. Both have
-the same semantic version and are covered by
-release checksums, signature evidence and provenance. Qualification verifies its
-version command and confirms that the app installer includes the signed CLI
-beside the desktop for local MCP connections.
-Local packaging returns both the installer and the standalone CLI paths.
+Each Windows release includes signed x64 and ARM64 installers, standalone CLIs,
+symbols, checksums and qualification reports. Both installers include a signed
+`transmog-cli.exe` beside the desktop executable for local MCP connections.
+The separate CLI downloads are named `transmog-cli.exe` (x64) and
+`transmog-cli-arm64.exe` (ARM64). Local packaging returns the installer and
+standalone CLI paths.
 
-The signed workflow compiles both x64 and ARM64 production binaries on
-`windows-2025`. The ARM64 engine, desktop, CLI, script host and preview worker are
-cross-compiled with x64-hosted tools. Both targets are qualified on native runners:
-x64 on `windows-2025`, ARM64 on `windows-11-arm`. Both builds
-must pass the repository, browser, CLI, and WebView soak gates before the protected
-signing job bundles them on x64. Signed installers are then installed, upgraded,
-and uninstalled on their matching native runners. A single draft contains both
-`Transmog_<version>_x64-setup.exe` and `Transmog_<version>_arm64-setup.exe`, their
-standalone CLIs, symbols, checksums, and architecture-specific qualification
-reports. Publication requires successful evidence for both architectures.
+The workflow builds both targets on x64 and runs the shared browser tests once
+there. Each target must also pass its repository, CLI and WebView checks on a
+native runner before signing. The signed installers then undergo installation,
+upgrade and uninstall tests on their respective architectures. Both must pass
+before the workflow publishes the installers to one draft release. See the
+[hosted workflow guide](../ci/README.md#signed-draft-releases) for job permissions
+and verification.
 
 The interactive installer offers independent **Use Transmog** choices for TMCap,
 SAZ and HAR, with TMCap checked on a first install. These add current-user
@@ -74,101 +70,10 @@ Transmog first. The client-certificate checks use owned CurrentUser/My fixture
 identities and clean them up afterward. Prepare the pinned policy tool with
 `./scripts/setup-release-validation-tools.ps1` if it is not already available.
 
-The workflow checks dependency policy before compiling either architecture.
-`release-policy.py` records the source commit, lockfile/policy hashes and RustSec
-database commit. Both architectures use that immutable snapshot; a separate fresh
-check runs after both builds and before signing. Policy summaries stay concise in
-the console, with complete JSON diagnostics retained as artifacts. Each build
-gate has a named workflow step and source-bound timing/result evidence.
-
-The signed and unsigned Windows workflows prepare V8 in a separate x64-hosted job
-per output architecture. Cold preparation has a 240-minute job budget and a 210-minute
-compile deadline, with verbose native progress and diagnostics upload afterward.
-The completed engine is verified and saved immediately; later application or
-test failures cannot discard that checkpoint. The reusable preparation workflow
-also runs when engine inputs change on main and can be dispatched ahead of a release.
-
-Native-tool archives, Cargo downloads and prepared V8 have independent caches.
-V8 keys bind the reviewed source, patches, profile, generated bindings, native
-tool setup, locked V8 build dependencies, compiler versions and the target SDK/MSVC
-headers and libraries. Host compiler triples and paths are recorded separately;
-they do not change the ARM64 target ABI. Every COFF member of the V8 archive must
-match the output architecture. Consumer checks retain compiler versions, target
-features, non-default flags, SDK/toolset versions and target library fingerprints.
-Unrelated application dependencies and release version bumps do not change that key.
-The engine manifest records the original source/run and archive/bindings hashes.
-Every Cargo consumer verifies that manifest and its target/features/ABI before
-linking. A mismatch fails closed; it never falls back to an unplanned cold build.
-A native ARM64 consumer verifies the cross-built engine's SDK and COFF target,
-then runs the real Cargo ABI-reuse path before engine preparation succeeds.
-Later runs can reuse that Cargo smoke check's immutable successful report. The
-x64 engine producer checks for a matching proof before allocating a native runner;
-a verified match skips the standalone ARM64 verification job and its tool setup.
-The producer still verifies current engine bytes, SDK and compiler identity.
-Hosted setup installs MSVC 14.51.36231 privately from the hash- and
-signature-verified Visual Studio Build Tools 18.11.3 fixed-version bootstrapper.
-Engine producers and native consumers select that installation before the
-runner image's Visual Studio, so an image rollout cannot silently switch the
-MSVC headers, CRT or native linker between jobs. Both GN's installation hint
-and override point to the same private tree; setup rejects extra toolsets or a
-different vcvarsall default. The existing SDK and toolset
-fingerprint checks still reject changed bytes. Changing this fixed profile
-invalidates the engine cache and native proof.
-Reuse additionally requires an identical engine manifest, consumer ABI, locked
-dependencies, local consumer sources and verification tooling. The report's
-artifact digest, source, branch, workflow and successful native job are checked
-through GitHub; a missing, expired, mismatched or unavailable report runs the
-original native job and Cargo check. Native consumer jobs queue by branch and
-recheck for newly available evidence before Cargo, so overlapping first-time
-prewarm and release runs also avoid duplicate smoke checks. Summaries distinguish
-a fresh check, reused Cargo verification and an entirely skipped native runner.
-Full native application validation and installer qualification still run on every
-release; `use_cache: false` also disables consumer-report reuse.
-Rust application targets, unsigned payloads and signed outputs are not cached.
-The unsigned workflow's `use_cache: false` also forces cold engine preparation.
-
-After policy preflight, frontend/browser acceptance runs once on native x64
-`windows-2025`, independently of engine preparation. Both package targets share
-this source/run-bound result for the web UI and mocked native bridge. The
-60-minute job includes release safety fixtures and retains the 25-minute deadline
-for the complete workspace and debugger browser suites. Once V8 is ready and
-frontend acceptance passes, each architecture runs Clippy, workspace tests, native
-acceptance and archive interoperability in its own 120-minute native validation
-job. Test compilation uses the matching native Rust, LLVM and CMake toolchains;
-this retains stable Rust's complete workspace and
-doc-test execution. Optimized production compilation runs independently in a
-90-minute x64 job. A source/run/target-bound immutable artifact transfers its four
-executables, full PDBs and UI to a 45-minute native qualification job for CLI/symbol
-checks and the desktop soak. Qualification and the signing boundary verify that
-the compiled bytes, symbols, UI and engine identity survive that transfer unchanged.
-Each gate has a shorter step deadline
-and records its result and duration. Diagnostic uploads run even after a failed
-or timed-out step. These budgets leave room beyond the observed warm timings;
-the next hosted cold/warm run must confirm actual headroom on both architectures.
-
-V8 producers for the same target and branch queue without cancelling one another,
-so a release can restore the engine prepared by an earlier prewarm run. Checkpoint
-steps look for an exact key before attempting an upload, then confirm availability
-separately. Their summaries distinguish restored checkpoints, a checkpoint saved
-by another producer, availability after an upload attempt, and explicitly disabled
-caching. An unavailable checkpoint fails with retained JSON evidence instead of
-reporting a successful cache save. Native tool archives use the same reporting.
-The verified engine artifact is still retained if only the cache checkpoint fails.
-
-Each architecture's aggregation job downloads producers by immutable artifact ID
-and requires all eight successful gates from the exact source and run. Both use
-the same frontend artifact. Stage and pipeline schema 2 mark its UI and Browser
-gates as `Target=shared` with `HostTarget=x86_64-pc-windows-msvc`; the other six
-gates must match the package's native target. Frontend execution rejects emulated
-or non-x64 hosts. Native ARM64 application, WebView, CLI, symbols and installer
-qualification remain required.
-
-Successful producers from an earlier attempt of that same run may be reused
-when retrying failed jobs; future attempts and other runs are rejected. Validation
-and packaging must use the identical engine artifact. `pipeline-inputs.json`
-retains the producer IDs, execution scopes, manifest digests and original engine
-identity, and the signing boundary checks the gate results again. The fresh final dependency-policy
-job still waits for every required producer before the protected signing gate.
+The hosted workflow shares one source-bound browser result across x64 and
+ARM64. Each target must pass its native checks before signing. See the [CI
+guide](../ci/README.md#signed-draft-releases) for build artifacts, dependency
+checks and permissions.
 
 For a local cross-build with the ARM64 Visual Studio C++ component installed, use
 `python scripts/dev-env.py --target aarch64-pc-windows-msvc --run cargo build --locked --target aarch64-pc-windows-msvc`.
@@ -237,7 +142,7 @@ CLI, check all four matching full PDBs, and run the release's three-minute WebVi
 soak. `SkipTests` here follows the complete gate above:
 
 Run this qualification on each native architecture available to you; the hosted
-pipeline repeats the full gate on both. On an ARM64 host, add
+pipeline repeats native checks on both. On an ARM64 host, add
 `-Target aarch64-pc-windows-msvc` to `package-windows.ps1` below and pass
 `-ExecutablePath (Join-Path $releaseBuild.BuildDirectory 'transmog.exe')` to the
 desktop probe so it uses the target-specific output directory.
@@ -741,7 +646,9 @@ Use a disposable, fully updated Windows 11 VM with no Transmog state:
    runtime, disconnect networking, and install the signed NSIS bundle. Confirm
    a valid Authenticode publisher and that no WebView payload is installed by
    Transmog.
-2. Launch Transmog twice. Confirm one process/window and focus handoff.
+2. Launch Transmog twice without a capture file. Confirm that the second launch
+   opens an empty Capture viewer in the existing application process. Close the
+   viewer and continue in the main window.
 3. Choose **Set up HTTPS interception**, verify the warning precedes the OS
    prompt, and approve current-user trust. Start the proxy and verify that the
    current-user proxy is applied, live traffic follows automatically, and HTTPS

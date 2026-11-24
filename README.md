@@ -6,23 +6,22 @@
 
 Transmog is a web debugging proxy. Capture traffic, inspect requests and
 responses, pause and edit exchanges, replay requests, and save traces for later.
-The Windows desktop uses Evergreen WebView2. The Rust engine and headless tools
-also run in the Linux test gate; Linux and macOS desktop products are not qualified.
+The desktop runs on Windows with Evergreen WebView2. The engine and command-line
+tools also run in the project’s Linux container tests.
 
 **[Download the latest Canary for Windows](https://github.com/erik-anderson/transmog/releases/tag/canary)**
 
-Only Canary prereleases are available for now. The download page links directly
-to the signed **x64** (Intel / AMD) and **ARM64** installers. The installer also
-includes the command-line tool. See [all releases](https://github.com/erik-anderson/transmog/releases)
-for older versions, standalone CLI downloads, and release evidence.
+The Canary download page links to signed **x64** (Intel / AMD) and **ARM64**
+prerelease installers. Both include the command-line tool. See [all releases](https://github.com/erik-anderson/transmog/releases)
+for older versions, standalone CLI downloads, checksums and signatures.
 
 > **MCP support:** Let agents inspect live traffic or private capture files and
 > collaborate on rules through local, scoped access keys. [Set up an agent](docs/mcp.md).
 
 ## Features
 
-- Live traffic with request/response inspectors, content search, caller-process
-  attribution, timing waterfalls, and shared connection evidence.
+- Inspect requests and responses, search their contents, identify the calling app
+  when available, and see where a request spent its time.
 - Breakpoints, header rules, ordered auto-responses, and sandboxed scripts with
   audit records of traffic changes.
 - HTTP/1.1 and HTTP/2 interception, WebSockets over H1/H2, server-sent events,
@@ -36,16 +35,15 @@ for older versions, standalone CLI downloads, and release evidence.
   and optional password encryption.
 
 The proxy binds to loopback by default. The desktop guides HTTPS trust setup and
-restores the previous per-user Windows proxy settings when stopped. Traffic is
+restores the Windows proxy settings it changed when you stop it. Traffic is
 transient unless saved or recorded. Sensitive-header redaction is off by default
-in the desktop; Privacy controls newly captured headers, and Save trace can
-redact the exported copy. MCP access separately omits known authentication header
-values and all message bodies by default. See [current limitations](docs/limitations.md).
+in the desktop. You can redact newly captured headers in **Settings →
+Preferences**, or redact an exported copy when you save it. By default, MCP
+access omits known authentication header values and all message bodies. See [current limitations](docs/limitations.md).
 
 ## Run the Windows desktop
 
-Follow the [build-and-launch guide](docs/building.md#build-and-launch-the-windows-desktop)
-for the Windows toolchain, locked dependencies and desktop helpers. After launch:
+Install the Canary for your PC’s architecture, open Transmog, then follow these steps for **System proxy** mode.
 
 1. Choose **Set up HTTPS interception** and approve the current-user root
    certificate installation.
@@ -54,17 +52,15 @@ for the Windows toolchain, locked dependencies and desktop helpers. After launch
 3. Inspect captured traffic in the Traffic workspace.
 4. Choose **Stop proxy** to restore proxy settings and let active streams finish.
 
-See [building](docs/building.md#windows-desktop-shell) for an unsigned development
-installer and [Windows releases](docs/windows-release.md) for signed packaging
-and qualification.
+To capture from one app with its own proxy settings, use [Manual proxy](docs/product-shell.md#start-and-stop).
+To run from source, follow [Build and launch](docs/building.md#build-and-launch-the-windows-desktop).
 
 ## Record from the command line
 
-`transmog-cli.exe` runs without the desktop or a Rust installation. It is
-included in the desktop installer and also published separately. See
-[releases](https://github.com/erik-anderson/transmog/releases) and the [support
-capture guide](docs/cli-support-capture.md) for download and signature
-verification. In PowerShell, run:
+Open PowerShell in the folder containing the CLI. The installer includes
+`transmog-cli.exe`. If you downloaded the standalone ARM64 executable, use
+`.\transmog-cli-arm64.exe` in the command below. The [support capture
+guide](docs/cli-support-capture.md) covers download and signature verification.
 
 ```powershell
 .\transmog-cli.exe record --output .\support-trace.tmcap
@@ -93,16 +89,16 @@ to C++, C and .NET; the [dependency map](docs/dependencies.md) explains the stac
 
 ## Development
 
-Python 3.11 or newer is required. [Building](docs/building.md) owns prerequisites
-and setup; [testing](docs/testing.md) lists repository, browser, interoperability
-and Linux container gates. See the [documentation index](docs/README.md) for
-feature guides and contracts.
+Development requires Python 3.11 or newer. See [Building](docs/building.md)
+for setup and [Testing](docs/testing.md) for repository, browser and Linux
+container checks. The [documentation index](docs/README.md) lists feature guides
+and technical references.
 
 ## Security and license
 
-A trusted interception CA can read TLS traffic from clients that trust it. Protect
-its private key, inspect only authorized traffic, and remove the root when no
-longer needed. Diagnostics exclude private keys and traffic bodies by default.
+Clients that trust the interception root can accept certificates Transmog
+signs for HTTPS sites. Protect the root’s private key, inspect only authorized
+traffic, and remove the root when you finish using it. Diagnostics exclude private keys and traffic bodies by default.
 
 Transmog is licensed under the [MIT License](LICENSE). Dependency licenses are in
 [third-party notices](THIRD_PARTY_NOTICES.md).

@@ -32,7 +32,7 @@ private headers, URLs, bodies and notes before sharing; header redaction alone
 does not anonymize a trace.
 
 For evidence, frozen rules/assets, notes and context in one transfer, use
-**Files → Save case…**. [Portable cases](portable-investigations.md#desktop-transfer-and-package-apis-k3)
+**Files → Save case…**. [Portable cases](portable-investigations.md#desktop-transfer-and-package-apis)
 open through **Open case…**, normal file import or drag/drop. Inspection,
 forwarding, plaintext working copies and reviewed disabled rule import are
 separate actions.
@@ -156,10 +156,5 @@ evidence. A hash or saved configuration alone cannot recover an expired body.
 An imported trace shows historical attribution without enabling local automation
 or authorizing access to an author's filesystem paths.
 
-Save copy does not export the automation workspace, named variant definitions,
-script sources, external file dependencies or temporary preview scenes/reports.
-Use [Save case](portable-investigations.md#desktop-transfer-and-package-apis-k3)
-to combine reviewed evidence, source context, notes and selected saved response
-sets in a package with optional encryption. Importing its automation requires a
-separate review and leaves imported rules disabled. Case/rule CLI commands remain
-planned. See [response sets](automation.md#response-sets) for authoring and activation.
+To share the rules behind a change, use **Files → Save case…**. Save copy
+includes the observed traffic and its recorded rule effects.

@@ -1,16 +1,12 @@
 # Transmog desktop
 
-The Windows desktop is a Tauri/WebView2 adapter over `transmog-app`. WebUI
-workspaces own presentation; the application facade owns traffic, proxy
-lifecycle, capture, replay, persistence and diagnostics. Headless clients can
-use the same facade without Tauri or WebUI. See [architecture](architecture.md)
-for the dependency boundaries and [the desktop guide](../apps/desktop/README.md)
-for build commands.
+Use the main window to capture traffic, then select a request to inspect, edit
+or replay it. Capture viewers open saved traffic in separate windows.
+For source code and build instructions, see [desktop development](../apps/desktop/README.md).
 
 ## Software updates
 
-Windows x64 and ARM64 builds use the installer matching the installed app's
-architecture. The existing update controls and channel preferences apply to both.
+Updates use the installer for your configured channel and architecture (x64 or ARM64).
 
 Startup checks run after the window is ready and keep the workspace usable. An
 available release for the installed channel exposes an update action in the toolbar without taking
@@ -21,14 +17,13 @@ check, release notes and manual Check for updates. About also contains the
 transmog.net website link and Credits with complete dependency license texts.
 Offline startup stays quiet; a manual check reports a useful failure.
 
-While a **System proxy** run is active, update checks and installer downloads use
-its listener and follow the usual capture and recording settings. **Manual proxy**
-uses normal network configuration for updates. With HTTPS
-decryption enabled, their requests, redirects and responses appear in Traffic;
-with decryption disabled, Traffic shows the HTTPS tunnels. Each operation uses
-the current proxy state, including when it changes after a check. The updater
-trusts the app's public interception root while routing through it and continues
-to verify HTTPS certificates and installer signatures.
+While a **System proxy** run is active, update checks and installer downloads
+use its listener. With HTTPS decryption enabled, Traffic shows their requests,
+redirects and responses. With decryption disabled, it shows the tunnels. The
+updater uses the public interception root for that connection. In **Manual
+proxy** mode it follows the computer’s normal network settings. Each check or
+download uses the routing in effect when it starts. The updater verifies HTTPS
+certificates and installer signatures.
 
 Downloads show progress and can be cancelled. Installation follows signature and
 version verification, draft resolution, capture sealing, proxy shutdown, and
@@ -74,13 +69,16 @@ Connection selects all processes by default, with optional include or exclude
 lists.
 
 Open the routing button beside **Start proxy** and choose **Routing for next
-start**. **System
-proxy** applies the listener to the current user's Windows proxy settings. **Manual
-proxy** leaves those settings alone. Copy the bound address and configure it as
-the HTTP and HTTPS proxy in the app you want to debug. From another device,
-use the computer’s reachable LAN address and the same port. Transmog remembers the
-choice for the next new run and displays the current run's mode separately.
-Traffic enters the configured body buffer. Recording is a separate action.
+start**. **System proxy** configures the current user’s Windows proxy settings.
+With **Manual proxy**, start the listener, then copy its address into the target
+app’s HTTP and HTTPS proxy settings. The toolbar shows the running mode.
+Changing the saved mode takes effect on the next fresh start.
+
+For an app on another device, first enable **Allow remote computers to connect**
+under **Settings → Connection → Advanced proxy setup** and save the settings.
+Start a new listener, then configure the device with this computer’s reachable
+LAN address and the port shown in Transmog. [Listener settings](network-profiles.md#listener-and-outbound-settings)
+covers port selection. Recording to a file is a separate action.
 
 **Stop proxy** restores any Windows proxy settings owned by the run first, then
 shows **Finishing requests** while admitted requests, TLS handshakes and upgraded connections
@@ -210,13 +208,13 @@ held-key repeats do not start additional window or file operations.
 **Files → Save copy…** exports retained traffic with format-specific encryption,
 redaction and context choices. [Trace saving](trace-saving.md) covers formats,
 source metadata, import/recovery and conversion. **Save case…** shares selected
-rules and evidence through [portable cases](portable-investigations.md#desktop-transfer-and-package-apis-k3).
+rules and evidence through [portable cases](portable-investigations.md#desktop-transfer-and-package-apis).
 
 **Capture tools → Record to file** chooses a destination before starting its
 proxy and writes directly to that file without retaining entries in Traffic.
 Switching from live capture waits for active requests and offers cancellation
 while waiting. Choose **Headers only** or **Headers and bodies**. Stopping seals
-the file and restores Windows proxy settings. **Show in File Explorer** then
+the file and restores any Windows proxy settings the recording changed. **Show in File Explorer** then
 opens its folder with the saved recording selected. The [CLI
 recorder](cli-support-capture.md) also runs without the desktop; it is included
 in the installer and published separately.
@@ -254,21 +252,13 @@ are separate from captured traffic; failures saving either cannot block proxy
 restoration. See [product state and support](product-state-and-support.md) for
 retention preferences, diagnostics and support bundles.
 
-Captured text stays inert in the workbench. Raster decoding uses a sandboxed
-helper and images use an isolated resource origin. **Preview page…** is an
-explicit Windows-only flow with its own browser profile, warning and script
-choice; it serves captured resources while blocking uncaptured network access.
-See [safe previews](safe-previews.md) and [captured-page preview](captured-page-preview.md).
+Captured text stays inert in the workbench. Images use an isolated resource
+origin. **Preview page…** opens captured resources in a separate browser profile
+with an explicit script choice. The opening window owns the preview and its
+reports. Closing that window cancels preparation and closes its previews.
+See [safe previews](safe-previews.md), [page preview](captured-page-preview.md)
+and [case previews](portable-investigations.md#desktop-previews-and-saved-comparisons).
 
 Current support boundaries are in [limitations](limitations.md), future work in
 [the roadmap](roadmap.md), and interaction conventions in
 [UX design principles](ux-principles.md).
-
-## Related captured-page previews
-
-[Page previews](captured-page-preview.md) belong to their opening window, which
-owns preparation, reports and retained scenes. Closing it cancels preparation
-and closes its previews. The main window can use workspace auto-responses;
-capture viewers use baseline previews or explicitly selected case content. See
-[case previews](portable-investigations.md#desktop-previews-and-saved-comparisons)
-for frozen package response choices.

@@ -318,9 +318,22 @@ body dictionaries or paired-boundary sharing. Their total expanded length uses
 the packed object's u32 range, independently of the JSON record and HTTP chunk
 bounds. Index-only reads do not inflate them.
 
-Save trace also writes a `stream-summary` extension preserving `observed`,
-`evicted`, `clientBytes`, `serverBytes`, `openedAt` and `lastActivity`. Imported
-active stream state means open at capture, never an active local connection.
+Save copy writes a `stream-summary` extension with message counts (`observed`,
+`evicted`), byte counts by sender (`clientBytes`, `serverBytes`) and stream
+timing. `openedAt` is the first observation. `establishedAt` records when the
+stream opened, `endedAt` when it ended, and `observedUntil` the observation
+cutoff. The summary also carries `lastActivity` and `elapsedMillis` when
+known. An older summary with only `openedAt` gives no establishment time.
+An imported active stream was open when recorded.
+
+### Recorded rule effects
+
+A hook-effect record preserves the hook ID, its evaluation position
+(`chain_position`) and the observed exchange-local order (`effect_sequence`).
+A local response can include a `response_snapshot` with `status`, `bodyBytes`,
+`sha256` and `contentCodings`. These identify the encoded entity selected by
+the hook, before later edits or HTTP rules suppress a body. Separate body
+records describe the bytes retained for the client response.
 
 ## Shared connection context
 

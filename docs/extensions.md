@@ -9,23 +9,15 @@ For external-editor development, copy the [minimal starter](../extensions/starte
 edit its ID and JavaScript, and choose **Settings → Extensions → Load unpacked…**.
 The starter needs no build tools and demonstrates a read-only response viewer.
 
-`transmog-extensions` provides the UI-independent revision-1 visualizer metadata,
-native matching, input projection, output validation and `.tmext` container
-primitives. `transmog-extension-host` and `transmog-extension-supervisor` provide
-the isolated JavaScript worker and its bounded lifecycle. The installed
-`transmog-script-host.exe` runs either the traffic-script or extension protocol;
-each worker still has its own AppContainer, Job Object, runtime and IPC session.
-The standalone extension-host executable is a development test fixture and is
-not installed. `transmog-extension-registry`
-provides shared installation and active-instance ownership. `transmog-app`
-connects visible-message activation to retained headers and body ranges. Desktop Extensions
-settings provides installation and declaration management. The desktop inspector
-offers explicit selection, scoped retained context, opt-in live controls and host-owned structured rendering.
-The [bundled MAPI/HTTP extension](../extensions/mapi/README.md) uses the same
-package and sandbox contracts. Its independent TypeScript parser is covered by
-Microsoft-reference regression cases, and the visualizer has been manually
-verified to work. Its header viewer has no body-parser dependency. See the
-[MAPI qualification notes](../extensions/mapi/README.md#qualification) for details.
+Each visualizer declares the headers and body bytes it needs. The app checks
+those declarations, runs the JavaScript in an isolated worker and renders the
+result. The installed `transmog-script-host.exe` runs both visualizer and
+traffic-script workers. Each worker has its own AppContainer, Job Object and
+IPC session. The standalone extension host is a development fixture.
+
+The [bundled MAPI/HTTP extension](../extensions/mapi/README.md) uses these same
+interfaces. Its header viewer works independently of the body parser. See its
+[reference tests](../extensions/mapi/README.md#qualification) for parser coverage.
 
 The bundled **Binary formats** extension adds Protobuf, Bond Compact Binary,
 MessagePack, CBOR and BSON request/response body viewers. It uses the same package, sandbox,
@@ -163,8 +155,8 @@ body capability, open a body blob, read extension modules or start a worker.
 There is no per-installed-extension capture callback or full-capture label cache.
 
 The production-template performance probe is
-`node scripts/check-workspaces.mjs --traffic-perf-only --perf-output <path>`
-from `apps/desktop/ui`. It exercises 100,000 entries with no columns, 2,048
+`node apps/desktop/ui/scripts/check-workspaces.mjs --traffic-perf-only --perf-output <path>`
+from the repository root. It exercises 100,000 entries with no columns, 2,048
 installed declarations, and one/eight selected columns. It checks bounded DOM and
 label caches, no classification calls when off, no full query while scrolling,
 and continued row loading while label replies are delayed. Native Viewer checks
@@ -309,14 +301,10 @@ the exact completion packet is consumed. At most 32 watches, including initializ
 candidates, exist in one observer. The observer reads directory metadata only.
 The isolated `transmog-directory-watch` crate owns this native FFI boundary.
 
-The design was reviewed against [Chromium's Windows watcher](https://chromium.googlesource.com/chromium/src/+/main/base/files/file_path_watcher_win.cc)
-(source blob `a1dbf2a6d017be4dedc6fdbfe2dc6df4f1167231`). Like that implementation,
-it uses completion ownership, prompt rearming and explicit overflow handling.
-Unlike a general-purpose path watcher, developer roots stay pinned against
-replacement, and observation never widens to a parent outside the registered
-root. Child file replacement and nested-directory renames remain observable;
-moving or replacing the root requires turning observation off first. Native
-failures retain the last good visualization and offer manual reload.
+The watcher stays inside the registered development folder. It detects child
+file replacements and nested directory renames. Turn observation off before
+moving or replacing the root folder. On a watch failure, the app keeps the
+last successful visualization and offers manual reload.
 
 Each watch retains one bounded batch of up to 1,024 unique names and 32 KiB of
 name text. The first completion rearms promptly; a second unconsumed completion
