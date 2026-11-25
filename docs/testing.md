@@ -16,14 +16,18 @@ npm ci --ignore-scripts
 npm run check
 ```
 
-This checks ESLint across maintained TypeScript and Prettier formatting across
-TypeScript and `.mjs` files, excluding vendored/generated output. Rules live in
-[eslint.config.mjs](../eslint.config.mjs) and [.prettierrc.json](../.prettierrc.json).
+This runs Oxlint on maintained TypeScript and Prettier on TypeScript and `.mjs`
+files, excluding vendored and generated output. Rules live in
+[.oxlintrc.json](../.oxlintrc.json) and [.prettierrc.json](../.prettierrc.json).
+Oxlint also reports local values used only in `typeof` type queries because their
+initializers can still run in the shipped JavaScript.
 Use `npm run lint:fix` for fixes and formatting, `npm run format` for formatting
 alone, or `npm run lint` for lint alone.
 
-The root check and desktop UI check are different: the latter type-checks and
-builds the application using its own compiler. Both run in release qualification.
+Release qualification runs the root check and the desktop UI check. The desktop
+check builds the application, type-checks it with TypeScript 7 and uses the same
+compiler to validate generated script examples. Handler analysis uses Monaco's
+bundled parser in both the desktop worker and the authoring tests.
 
 ## Repository gate
 

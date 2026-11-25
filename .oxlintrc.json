@@ -1,0 +1,63 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript"],
+  "ignorePatterns": [
+    "*.js",
+    "*.jsx",
+    "*.mjs",
+    "*.cjs",
+    "*.vue",
+    "*.svelte",
+    "*.astro",
+    "node_modules/",
+    "dist/",
+    "target/",
+    "bin/",
+    "obj/",
+    "/.tools/",
+    "/.local/",
+    "/artifacts/",
+    "/third-party/",
+    "/third_party/",
+    "/apps/desktop/gen/",
+    "/e2e/playwright/test-results/",
+    "/e2e/playwright/playwright-report/"
+  ],
+  "options": {
+    "reportUnusedDisableDirectives": "error"
+  },
+  "rules": {
+    "curly": "error",
+    "eqeqeq": ["error", "always", { "null": "ignore" }],
+    "no-array-constructor": "error",
+    "no-case-declarations": "error",
+    "no-empty": "error",
+    "no-fallthrough": "error",
+    "no-prototype-builtins": "error",
+    "no-regex-spaces": "error",
+    "no-unused-vars": [
+      "error",
+      {
+        "argsIgnorePattern": "^_",
+        "varsIgnorePattern": "^_",
+        "caughtErrorsIgnorePattern": "^_",
+        "ignoreRestSiblings": true,
+        "reportVarsOnlyUsedAsTypes": true
+      }
+    ],
+    "no-useless-assignment": "error",
+    "no-var": "error",
+    "prefer-const": "error",
+    "prefer-rest-params": "error",
+    "prefer-spread": "error",
+    "preserve-caught-error": "error",
+    "typescript/ban-ts-comment": "error",
+    "typescript/consistent-type-imports": "error",
+    "typescript/no-empty-object-type": "error",
+    "typescript/no-explicit-any": "error",
+    "typescript/no-namespace": "error",
+    "typescript/no-require-imports": "error",
+    "typescript/no-unnecessary-type-constraint": "error",
+    "typescript/no-unsafe-function-type": "error"
+  }
+}

@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
-import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { build } from "esbuild";
-import ts from "../../../../node_modules/typescript/lib/typescript.js";
+import { build, transformSync } from "esbuild";
+// The worker re-exports this parser. Its underlying module also runs in Node.
+import { typescript as parser } from "monaco-editor/languages/features/typescript/lib/typescriptServices.js";
 import * as api from "../../../../crates/script-host/src/api.mjs";
 
 const compiled = await build({
@@ -18,15 +22,38 @@ const compiled = await build({
   format: "esm",
   write: false,
 });
-const { analyzeScript, handlerInsertion, handlers } = await import(
+const {
+  analyzeScript: analyzeWithParser,
+  handlerInsertion,
+  handlers,
+} = await import(
   "data:text/javascript;base64," + Buffer.from(compiled.outputFiles[0].text).toString("base64")
 );
+const compiler = fileURLToPath(new URL("bin/tsc", import.meta.resolve("typescript/package.json")));
 const declarationsPath = fileURLToPath(
   new URL("../../../../crates/proxy-script/generated/transmog-script.d.ts", import.meta.url),
 );
 const help = JSON.parse(
   await readFile(new URL("../../../../crates/proxy-script/help.json", import.meta.url), "utf8"),
 );
+
+function analyzeScript(source, language) {
+  return analyzeWithParser(parser, source, language);
+}
+
+function executeSample(source, loader, output = console) {
+  const { code } = transformSync(source, { loader, format: "cjs", target: "es2022" });
+  const module = { exports: {} };
+  new Function("module", "require", "console", code)(
+    module,
+    (specifier) => {
+      assert.equal(specifier, "transmog:api");
+      return api;
+    },
+    output,
+  );
+  return module.exports;
+}
 
 test("the menu covers exactly the runtime's documented phases", () => {
   assert.deepEqual(
@@ -41,7 +68,7 @@ test("source inspection ignores text and nested declarations and identifies repa
     'const text="export function onRequestHead() {}";',
     "function outer() { function onRequestHead() {} }",
   ]) {
-    assert.equal(analyzeScript(ts, source, "typescript").locations[0].action, "Add");
+    assert.equal(analyzeScript(source, "typescript").locations[0].action, "Add");
   }
   for (const source of [
     "function onRequestHead() {}",
@@ -53,23 +80,22 @@ test("source inspection ignores text and nested declarations and identifies repa
     "const local=()=>{}; export {local as onRequestHead};",
     'export * as onRequestHead from "transmog:api";',
   ]) {
-    const location = analyzeScript(ts, source, "typescript").locations[0];
+    const location = analyzeScript(source, "typescript").locations[0];
     assert.equal(location.action, "Review", source);
     assert.ok(location.reason);
   }
   const source = "// 🌍\r\nexport function onRequestHead() { return {}; }";
-  const location = analyzeScript(ts, source, "typescript").locations[0];
+  const location = analyzeScript(source, "typescript").locations[0];
   assert.equal(source.slice(location.start, location.end), "onRequestHead");
   assert.equal(
     analyzeScript(
-      ts,
       "export function onRequestHead(): unknown; export function onRequestHead() { return {}; }",
       "typescript",
     ).locations[0].action,
     "Go to",
   );
   assert.equal(
-    analyzeScript(ts, "if (false) { var onRequestHead; }", "javascript").locations[0].action,
+    analyzeScript("if (false) { var onRequestHead; }", "javascript").locations[0].action,
     "Review",
   );
 });
@@ -87,14 +113,10 @@ test("generated handlers avoid aliases shadowed by their local variables", () =>
     ]) {
       const inserted =
         source +
-        handlerInsertion(source, language, name, analyzeScript(ts, source, language), "\n").text;
+        handlerInsertion(source, language, name, analyzeScript(source, language), "\n").text;
       for (const enabled of [false, true]) {
         const text = enabled ? inserted.replace(" = false;", " = true;") : inserted;
-        const javascript = ts.transpileModule(text, {
-          compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-        }).outputText;
-        const exported = {};
-        new Function("exports", "require", javascript)(exported, () => api);
+        const exported = executeSample(text, language === "typescript" ? "ts" : "js");
         const result = exported[name]({
           request: { headers: [] },
           response: { headers: [] },
@@ -109,64 +131,55 @@ test("generated handlers avoid aliases shadowed by their local variables", () =>
 for (const language of ["typescript", "javascript"]) {
   test(
     language + " samples compile and only run example work when their switches are enabled",
-    () => {
+    async (t) => {
       let source = '"use strict";\r\n// keep this comment';
       for (const handler of handlers)
         source += handlerInsertion(
           source,
           language,
           handler.name,
-          analyzeScript(ts, source, language),
+          analyzeScript(source, language),
           "\r\n",
         ).text;
       assert.equal(source.startsWith('"use strict";\r\n// keep this comment'), true);
       assert.equal((source.match(/import \* as api /g) ?? []).length, 1);
       assert.equal((source.match(/ = false;/g) ?? []).length, 7);
-      assert.equal(analyzeScript(ts, source, language).handlers.length, 7);
-      const options = {
+      assert.equal(analyzeScript(source, language).handlers.length, 7);
+      const directory = await mkdtemp(join(tmpdir(), "transmog-handler-"));
+      t.after(() => rm(directory, { recursive: true, force: true }));
+      const loader = language === "typescript" ? "ts" : "js";
+      const name = `generated.${loader}`;
+      const compilerOptions = {
         strict: true,
         noEmit: true,
         allowJs: true,
         checkJs: false,
-        lib: ["lib.esnext.d.ts"],
+        lib: ["ESNext"],
         types: [],
-        target: ts.ScriptTarget.ESNext,
-        module: ts.ModuleKind.ESNext,
+        target: "ESNext",
+        module: "ESNext",
+        moduleResolution: "Bundler",
         skipLibCheck: true,
       };
-      const host = ts.createCompilerHost(options),
-        get = host.getSourceFile.bind(host),
-        name = "generated." + (language === "typescript" ? "ts" : "js");
-      host.getSourceFile = (file, ...args) =>
-        file === name
-          ? ts.createSourceFile(
-              file,
-              source,
-              ts.ScriptTarget.Latest,
-              true,
-              language === "typescript" ? ts.ScriptKind.TS : ts.ScriptKind.JS,
-            )
-          : get(file, ...args);
-      const program = ts.createProgram([name, declarationsPath], options, host);
-      assert.deepEqual(
-        ts
-          .getPreEmitDiagnostics(program)
-          .map((item) => ts.flattenDiagnosticMessageText(item.messageText, " ")),
-        [],
+      await writeFile(join(directory, name), source);
+      await writeFile(
+        join(directory, "tsconfig.json"),
+        JSON.stringify({ compilerOptions, files: [name, declarationsPath] }),
       );
+      const result = spawnSync(
+        process.execPath,
+        [compiler, "--project", directory, "--pretty", "false"],
+        {
+          encoding: "utf8",
+          timeout: 30_000,
+          windowsHide: true,
+        },
+      );
+      assert.ifError(result.error);
+      assert.equal(result.status, 0, result.stdout + result.stderr);
       const logs = [];
-      function execute(text) {
-        const javascript = ts.transpileModule(text, {
-          compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-        }).outputText;
-        const exports = {};
-        new Function("exports", "require", "console", javascript)(exports, () => api, {
-          info: (value) => logs.push(value),
-          warn: (value) => logs.push(value),
-        });
-        return exports;
-      }
-      const off = execute(source);
+      const output = { info: (value) => logs.push(value), warn: (value) => logs.push(value) };
+      const off = executeSample(source, loader, output);
       for (const handler of handlers)
         assert.deepEqual(
           off[handler.name](
@@ -182,7 +195,7 @@ for (const language of ["typescript", "javascript"]) {
           api.pass(),
         );
       assert.deepEqual(logs, []);
-      const on = execute(source.replaceAll(" = false;", " = true;"));
+      const on = executeSample(source.replaceAll(" = false;", " = true;"), loader, output);
       assert.deepEqual(on.onRequestHead({}).decision.edits.headers, [
         api.setHeader("User-Agent", "Transmog/1.0"),
       ]);
@@ -234,17 +247,14 @@ test("insertions reuse aliases and distinguish type-only imports from runtime he
       source,
       "typescript",
       "onRequestHead",
-      analyzeScript(ts, source, "typescript"),
+      analyzeScript(source, "typescript"),
       "\n",
     );
     assert.equal(
       (source + insertion.text).slice(insertion.selectionOffset, insertion.selectionOffset + 5),
       "false",
     );
-    assert.equal(
-      analyzeScript(ts, source + insertion.text, "typescript").handlers[0],
-      "onRequestHead",
-    );
+    assert.equal(analyzeScript(source + insertion.text, "typescript").handlers[0], "onRequestHead");
     if (source.includes("next")) assert.match(insertion.text, /return next\(\)/);
     if (source.includes("type \*")) assert.match(insertion.text, /import \* as api2/);
     if (source.includes("traffic")) assert.match(insertion.text, /traffic.setHeader/);

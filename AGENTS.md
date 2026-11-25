@@ -20,7 +20,7 @@ dependencies.
 
 For TypeScript or `.mjs` changes, install the root tooling with
 `npm ci --ignore-scripts` and run `npm run check` from the repository root.
-`npm run lint:fix` applies TypeScript ESLint fixes and Prettier formatting across
+`npm run lint:fix` applies Oxlint fixes and Prettier formatting across
 maintained TypeScript sources and JavaScript modules.
 
 Do not rerun validation after a merge or rebase when the only incoming commit

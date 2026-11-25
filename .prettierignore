@@ -1,4 +1,4 @@
-# Keep this aligned with the generated/vendor exclusions in eslint.config.mjs.
+# Keep this aligned with the generated/vendor exclusions in .oxlintrc.json.
 **/node_modules/
 **/dist/
 **/target/

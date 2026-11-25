@@ -9,6 +9,13 @@ export async function checkScriptDiagnostics(page, root) {
   await page.waitForFunction(
     () => document.querySelector("app-shell").shadowRoot.querySelector("script-editor").scriptReady,
   );
+  const previousSource = await scripts.evaluate((editor) => {
+    const previous = editor.sourceEditor.getValue();
+    editor.sourceEditor.setValue(
+      'import { pass } from "transmog:api";\nexport function onRequestHead() { return pass(); }\n',
+    );
+    return previous;
+  });
   const source = "file:///transmog-scripts/user-script/main.ts";
   const generated = "file:///transmog-script/main.js";
   const frame = {
@@ -71,6 +78,9 @@ export async function checkScriptDiagnostics(page, root) {
   const input = scripts.locator(".script-test");
   if (!(await input.evaluate((element) => element.open)))
     await input.locator(":scope > summary").click();
+  const mode = input.getByRole("combobox", { name: "Test mode", exact: true });
+  const previousMode = await mode.inputValue();
+  await mode.selectOption("callback");
   await testInSandbox(scripts);
   const details = scripts.locator(".script-test-result script-diagnostics");
   await details.locator(".developer-details > summary").click();
@@ -190,4 +200,6 @@ export async function checkScriptDiagnostics(page, root) {
       scriptTestDiagnostics: [],
     }),
   );
+  await mode.selectOption(previousMode);
+  await scripts.evaluate((editor, source) => editor.sourceEditor.setValue(source), previousSource);
 }

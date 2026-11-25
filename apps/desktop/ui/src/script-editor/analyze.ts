@@ -1,12 +1,8 @@
-import type * as TypeScript from "../../../../../node_modules/typescript/lib/typescript.js";
 import { handlers, type ScriptAnalysis } from "./handlers.js";
+import type { AstNode, BindingName, ScriptParser } from "./monaco-parser.js";
 
 /** Runs inside Monaco's TypeScript worker using its existing parser. */
-export function analyzeScript(
-  ts: typeof TypeScript,
-  source: string,
-  language: string,
-): ScriptAnalysis {
+export function analyzeScript(ts: ScriptParser, source: string, language: string): ScriptAnalysis {
   const file = ts.createSourceFile(
     "main." + (language === "javascript" ? "js" : "ts"),
     source,
@@ -14,11 +10,11 @@ export function analyzeScript(
     true,
     language === "javascript" ? ts.ScriptKind.JS : ts.ScriptKind.TS,
   );
-  const declarations = new Map<string, TypeScript.Node[]>();
+  const declarations = new Map<string, AstNode[]>();
   const imports: ScriptAnalysis["imports"] = [];
-  const bind = (name: string, node: TypeScript.Node) =>
+  const bind = (name: string, node: AstNode) =>
     declarations.set(name, [...(declarations.get(name) ?? []), node]);
-  const binding = (name: TypeScript.BindingName, node: TypeScript.Node) => {
+  const binding = (name: BindingName, node: AstNode) => {
     if (ts.isIdentifier(name)) {
       bind(name.text, node);
     } else {
@@ -29,7 +25,7 @@ export function analyzeScript(
       }
     }
   };
-  const collectHoistedVariables = (node: TypeScript.Node): void => {
+  const collectHoistedVariables = (node: AstNode): void => {
     if (ts.isFunctionLike(node) || ts.isClassLike(node) || ts.isModuleDeclaration(node)) {
       return;
     }
@@ -78,12 +74,8 @@ export function analyzeScript(
       for (const declaration of statement.declarationList.declarations) {
         binding(declaration.name, statement);
       }
-    } else if (
-      "name" in statement &&
-      statement.name &&
-      ts.isIdentifier(statement.name as TypeScript.Node)
-    ) {
-      bind((statement.name as TypeScript.Identifier).text, statement);
+    } else if ("name" in statement && statement.name && ts.isIdentifier(statement.name)) {
+      bind(statement.name.text, statement);
     }
     // An export alias can occupy a handler's public name independently of its local name.
     if (ts.isExportDeclaration(statement) && statement.exportClause) {
@@ -96,9 +88,7 @@ export function analyzeScript(
       }
     }
   }
-  const diagnostics = (
-    file as TypeScript.SourceFile & { parseDiagnostics: TypeScript.DiagnosticWithLocation[] }
-  ).parseDiagnostics;
+  const diagnostics = file.parseDiagnostics;
   const locations: ScriptAnalysis["locations"] = handlers.map((handler) => {
     const nodes = declarations.get(handler.name) ?? [];
     const implementations = nodes.filter((node) => ts.isFunctionDeclaration(node) && node.body);
@@ -120,7 +110,7 @@ export function analyzeScript(
         ].includes(item.kind),
       ) &&
       !diagnostics.some((item) => item.start >= node.pos && item.start <= node.end);
-    const name = node && "name" in node ? (node.name as TypeScript.Node | undefined) : undefined;
+    const name = node && "name" in node ? node.name : undefined;
     const start = (name ?? node)?.getStart(file) ?? diagnostics[0]?.start ?? 0;
     return {
       name: handler.name,
